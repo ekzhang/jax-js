@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "paths": {
+      "jax-js": ["."]
+    },
+    "types": ["@webgpu/types", "node"]
+  }
+}
