@@ -108,7 +108,7 @@ suite("unflatten()", () => {
 
   test("should reconstruct a nested tree", () => {
     const input = { a: [1, { b: 2 }], c: "hello" };
-    const [leaves, treedef] = flatten(input);
+    const [leaves, treedef] = flatten<number | string>(input);
     const reconstructed = unflatten(treedef, leaves);
     expect(reconstructed).toEqual(input);
   });
