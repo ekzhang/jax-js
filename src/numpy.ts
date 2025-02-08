@@ -2,6 +2,7 @@ import * as tf from "@tensorflow/tfjs-core";
 
 import { Array, DType } from "./core";
 import * as core from "./core";
+import { deepEqual } from "./utils";
 
 export { Array, DType };
 
@@ -45,8 +46,44 @@ export const moveaxis = core.moveaxis as (
 ) => Array;
 
 export function array(
-  values: tf.TensorLike,
+  values: Array | tf.TensorLike,
   { shape, dtype }: { shape?: number[]; dtype?: DType } = {}
 ): Array {
-  return new Array(tf.tensor(values, shape, dtype));
+  if (values instanceof Array) {
+    let data = values.data;
+    if (shape) {
+      data = tf.reshape(data, shape);
+    }
+    if (dtype) {
+      data = tf.cast(data, dtype);
+    }
+    return new Array(data);
+  } else {
+    return new Array(tf.tensor(values, shape, dtype));
+  }
+}
+
+/** Return if two arrays are element-wise equal within a tolerance. */
+export function allclose(
+  actual: ArrayLike,
+  expected: ArrayLike,
+  options?: { rtol?: number; atol?: number }
+): boolean {
+  const { rtol = 1e-5, atol = 1e-8 } = options ?? {};
+
+  const x = array(actual);
+  const y = array(expected);
+  if (!deepEqual(x.shape, y.shape)) {
+    return false;
+  }
+  return Boolean(
+    tf
+      .all(
+        tf.lessEqual(
+          tf.abs(tf.sub(x.data, y.data)),
+          tf.add(atol, tf.mul(rtol, y.data.abs()))
+        )
+      )
+      .dataSync()[0]
+  );
 }

@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, suite, test } from "vitest";
 import { jvp, numpy as np } from "jax-js";
 
 // test("has webgpu", async () => {
@@ -20,19 +20,27 @@ function deriv(f: (x: np.Array) => np.Array): (x: np.ArrayLike) => np.Array {
   };
 }
 
-test("can create array", async () => {
-  const x = 3.0;
+test("can create array", () => {
+  const x = np.array([1, 2, 3]);
+  expect(x.js()).toEqual([1, 2, 3]);
+});
 
-  const result = jvp(
-    (x: { a: np.Array; b: np.Array }) => x.a.add(x.b),
-    [{ a: 1, b: 2 }],
-    [{ a: 1, b: 0 }]
-  );
-  console.log(result[0].js());
-  console.log(result[1].js());
+suite("jax.jvp()", () => {
+  test("can take scalar derivatives", () => {
+    const x = 3.0;
+    expect(np.sin(x)).toBeClose(0.141120001);
+    expect(deriv(np.sin)(x)).toBeClose(-0.989992499);
+    expect(deriv(deriv(np.sin))(x)).toBeClose(-0.141120001);
+    expect(deriv(deriv(deriv(np.sin)))(x)).toBeClose(0.989992499);
+  });
 
-  console.log(np.sin(x).js());
-  console.log(deriv(np.sin)(x).js());
-  console.log(deriv(deriv(np.sin))(x).js());
-  console.log(deriv(deriv(deriv(np.sin)))(x).js());
+  test("can take jvp of pytrees", () => {
+    const result = jvp(
+      (x: { a: np.Array; b: np.Array }) => x.a.mul(x.a).add(x.b),
+      [{ a: 1, b: 2 }],
+      [{ a: 1, b: 0 }]
+    );
+    expect(result[0]).toBeClose(3);
+    expect(result[1]).toBeClose(2);
+  });
 });
