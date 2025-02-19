@@ -136,7 +136,7 @@ function newDynamic(main: MainTrace): Disposable {
 type TracerValue = Tracer | number | boolean;
 
 abstract class Trace {
-  constructor(public main: MainTrace) {}
+  constructor(readonly main: MainTrace) {}
 
   abstract pure(val: TracerValue): Tracer;
   abstract lift(val: Tracer): Tracer;
