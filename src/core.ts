@@ -14,7 +14,7 @@ import {
 } from "./tree";
 import { PPrint } from "./pprint";
 
-tf.setBackend("webgpu"); // TODO: support multiple devices, move arrays between devices
+tf.setBackend("cpu"); // TODO: support multiple devices, move arrays between devices
 
 export enum DType {
   Float32 = "float32",

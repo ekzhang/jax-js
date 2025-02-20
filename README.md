@@ -10,7 +10,7 @@ npm test
 
 ## Milestones
 
-- [ ] It works!
+- [x] It works!
 - [ ] Demos: Browser REPL / editor
 - [ ] Demos: Navier-Stokes, neural networks, statistics
 - [ ] We figure out the `dispose()` / linear types stuff
