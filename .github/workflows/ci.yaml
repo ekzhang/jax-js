@@ -1,4 +1,4 @@
-name: Website
+name: CI
 
 on:
   push:
@@ -6,8 +6,8 @@ on:
   pull_request:
 
 jobs:
-  build-site:
-    name: Check and build
+  build-test:
+    name: Build and test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,43 +17,26 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Build @jax-js/core
-        run: npm ci && npm run build
-
       - run: npm ci
-        working-directory: website
-
-      - run: npm run check
-        working-directory: website
-
-      - run: npm run lint
-        working-directory: website
 
       - run: npm run build
-        env:
-          BASE_PATH: "/${{ github.event.repository.name }}"
-        working-directory: website
 
-      - name: Upload artifacts
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: website/build
+      - run: npx playwright install
 
-  deploy:
-    name: Deploy to GitHub Pages
+      - run: npm test
+
+  format:
+    name: Format
     runs-on: ubuntu-latest
-    needs: build-site
-    if: github.ref == 'refs/heads/main'
-
-    permissions:
-      pages: write
-      id-token: write
-
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run format:check
