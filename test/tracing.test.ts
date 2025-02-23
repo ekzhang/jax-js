@@ -6,8 +6,8 @@ suite("jax.makeJaxpr()", () => {
     const { jaxpr, consts } = makeJaxpr(() => np.mul(2, 2))();
     expect(jaxpr.toString()).toMatchInlineSnapshot(`
       "{ lambda  .
-        let v_3:float32[] = mul 2 2
-        in ( v_3 ) }"
+        let 
+        in ( 4 ) }"
     `);
     expect(consts).toEqual([]);
   });
@@ -36,14 +36,25 @@ suite("jax.makeJaxpr()", () => {
     expect(jaxpr.toString()).toMatchInlineSnapshot(`
       "{ lambda v_1:float32[] .
         let v_3:float32[] = add v_1 2
-            v_6:float32[] = add 1 0
-            v_7:float32[] = mul v_3 v_1
-            v_8:float32[] = mul v_3 1
-            v_9:float32[] = mul v_6 v_1
-            v_10:float32[] = add v_8 v_9
+            v_10:float32[] = add v_3 v_1
         in ( v_10 ) }"
     `);
     expect(consts).toEqual([]);
+  });
+
+  test("composes with grad", () => {
+    const f = (x: np.Array) => {
+      const y = x.add(2);
+      return x.mul(x).add(y);
+    };
+    const { jaxpr, consts } = makeJaxpr(grad(f))(3);
+    expect(consts).toEqual([]);
+    expect(jaxpr.toString()).toMatchInlineSnapshot(`
+      "{ lambda v_1:float32[] .
+        let v_16:float32[] = add 1 v_1
+            v_18:float32[] = add v_16 v_1
+        in ( v_18 ) }"
+    `);
   });
 });
 

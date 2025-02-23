@@ -865,14 +865,24 @@ export class Lit {
   constructor(val: Array | number | boolean) {
     this.aval = ShapedArray.fromAval(getAval(val));
     const ar = pureArray(val);
-    if (!(ar instanceof Array)) {
-      throw new TypeError("Lit only supports defined Array values");
+    if (ndim(ar) !== 0 || !(ar instanceof Array)) {
+      throw new TypeError("Lit only supports scalar Array values");
     }
     this.val = ar;
+  }
+
+  get value(): number | boolean {
+    return this.val.data.dataSync()[0];
   }
 }
 
 export type Atom = Var | Lit;
+
+function atomIsLit(atom: Atom, literal?: number | boolean) {
+  return (
+    atom instanceof Lit && (literal === undefined || atom.value === literal)
+  );
+}
 
 /** A single statement / binding in a Jaxpr, in ANF form. */
 export class JaxprEqn {
@@ -883,8 +893,12 @@ export class JaxprEqn {
     readonly outBinders: Var[]
   ) {}
 
-  pprint(): PPrint {
-    const lhs = PPrint.pp(this.outBinders.join(" "));
+  pprint(usedVars?: Set<Var>): PPrint {
+    const lhs = PPrint.pp(
+      this.outBinders
+        .map((v) => (!usedVars || usedVars.has(v) ? v : "_"))
+        .join(" ")
+    );
     let rhs = PPrint.pp(this.primitive);
     // pprint params
     const paramsList = Object.entries(this.params).map(([k, v]) =>
@@ -923,8 +937,15 @@ export class Jaxpr {
   ) {}
 
   pprint(): PPrint {
+    const usedVars = new Set<Var>(
+      [...this.outs, ...this.eqns.flatMap((eqn) => eqn.inputs)].filter(
+        (x) => x instanceof Var
+      )
+    );
     const inBinders = this.inBinders.map((v) => v.toString()).join(", ");
-    const eqns = PPrint.prototype.concat(...this.eqns.map((e) => e.pprint()));
+    const eqns = PPrint.prototype.concat(
+      ...this.eqns.map((e) => e.pprint(usedVars))
+    );
     const outs = this.outs
       .map((x) => (x instanceof Var ? x.name : x.val.js()))
       .join(", ");
@@ -938,6 +959,72 @@ export class Jaxpr {
 
   toString(): string {
     return this.pprint().toString();
+  }
+
+  /**
+   * Produce a simplified Jaxpr with basic optimizations applied.
+   *  - Trim away unused variables.
+   *  - Fold away *1, *0, or +0 operations against literals.
+   */
+  simplify(): Jaxpr {
+    const context = new Map<Var, Atom>();
+    const newEqns: JaxprEqn[] = [];
+    for (const e of this.eqns) {
+      const inputs = e.inputs.map((x) =>
+        x instanceof Var ? (context.get(x) ?? x) : x
+      );
+      const eqn = new JaxprEqn(e.primitive, inputs, e.params, e.outBinders);
+
+      if (eqn.primitive === Primitive.Add) {
+        const [a, b] = inputs;
+        const c = eqn.outBinders[0];
+        if (atomIsLit(a, 0)) {
+          context.set(c, b);
+        } else if (atomIsLit(b, 0)) {
+          context.set(c, a);
+        } else if (atomIsLit(a) && atomIsLit(b)) {
+          context.set(c, new Lit((a as any).value + (b as any).value));
+        } else {
+          newEqns.push(eqn);
+        }
+      } else if (eqn.primitive === Primitive.Mul) {
+        const [a, b] = inputs;
+        const c = eqn.outBinders[0];
+        // TODO: handle *0 once we have shaped zero arrays
+        if (atomIsLit(a, 1)) {
+          context.set(c, b);
+        } else if (atomIsLit(b, 1)) {
+          context.set(c, a);
+        } else if (atomIsLit(a) && atomIsLit(b)) {
+          context.set(c, new Lit((a as any).value * (b as any).value));
+        } else {
+          newEqns.push(eqn);
+        }
+      } else {
+        newEqns.push(eqn);
+      }
+    }
+
+    const outs = this.outs.map((x) =>
+      x instanceof Var ? (context.get(x) ?? x) : x
+    );
+
+    // Skip unused output variables
+    const usedVars = new Set<Var>(outs.filter((x) => x instanceof Var));
+    const liveEqns: JaxprEqn[] = [];
+    for (let i = newEqns.length - 1; i >= 0; i--) {
+      const eqn = newEqns[i];
+      if (eqn.outBinders.some((v) => usedVars.has(v))) {
+        liveEqns.push(eqn);
+        for (const v of eqn.inputs) {
+          if (v instanceof Var) {
+            usedVars.add(v);
+          }
+        }
+      }
+    }
+
+    return new Jaxpr(this.inBinders, liveEqns.reverse(), outs);
   }
 }
 
@@ -1300,7 +1387,7 @@ export function makeJaxpr(
     if (outTree.value === undefined) {
       throw new Error("outTree was not set in makeJaxpr");
     }
-    return { jaxpr, consts, treedef: outTree.value };
+    return { jaxpr: jaxpr.simplify(), consts, treedef: outTree.value };
   };
 }
 
@@ -1585,7 +1672,7 @@ function partialEvalGraphToJaxpr(
   const outVars = tracersOut.map((t) => tracerToVar.get(t)!);
   const jaxpr = new Jaxpr(inBinders, eqns, outVars);
   typecheckJaxpr(jaxpr); // sanity check
-  return { jaxpr, consts };
+  return { jaxpr: jaxpr.simplify(), consts };
 }
 
 // implementation of vjp and grad
