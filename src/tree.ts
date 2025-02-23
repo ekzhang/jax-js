@@ -17,7 +17,7 @@ export class JsTreeDef {
   constructor(
     readonly nodeType: NodeType,
     readonly nodeMetadata: any, // Must be comparable with deepEqual.
-    readonly childTreedefs: JsTreeDef[]
+    readonly childTreedefs: JsTreeDef[],
   ) {}
 
   /** Returns a string representation of this tree definition. */
@@ -34,7 +34,7 @@ export class JsTreeDef {
         const parts: string[] = [];
         for (let i = 0; i < this.childTreedefs.length; i++) {
           parts.push(
-            `${quoteObjectKey(this.nodeMetadata[i])}: ${this.childTreedefs[i].toString(false)}`
+            `${quoteObjectKey(this.nodeMetadata[i])}: ${this.childTreedefs[i].toString(false)}`,
           );
         }
         return `{${parts.join(", ")}}`;
@@ -98,7 +98,7 @@ export function structure<T>(tree: JsTree<T>): JsTreeDef {
 /** Reconstruct a structured object from the flattened representation. */
 export function unflatten<T>(
   treedef: JsTreeDef,
-  leaves: Iterable<T>
+  leaves: Iterable<T>,
 ): JsTree<T> {
   return _unflatten(treedef, leaves[Symbol.iterator]());
 }
@@ -118,7 +118,7 @@ function _unflatten<T>(treedef: JsTreeDef, leaves: Iterator<T>): JsTree<T> {
       for (let i = 0; i < treedef.childTreedefs.length; i++) {
         obj[treedef.nodeMetadata[i]] = _unflatten(
           treedef.childTreedefs[i],
-          leaves
+          leaves,
         );
       }
       return obj;

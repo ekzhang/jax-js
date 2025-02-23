@@ -24,7 +24,7 @@ suite("jax.makeJaxpr()", () => {
       np.array([
         [2, 4, 10],
         [1, 1, 1],
-      ])
+      ]),
     );
     expect(jaxpr.toString()).toMatchInlineSnapshot(`
       "{ lambda v_1:float32[2,3] .
@@ -86,7 +86,7 @@ suite("jax.linearize()", () => {
         r1: x.a.mul(x.a).add(x.b),
         r2: x.b,
       }),
-      { a: 1, b: 2 }
+      { a: 1, b: 2 },
     );
     expect(y.r1).toBeAllclose(3);
     expect(y.r2).toBeAllclose(2);

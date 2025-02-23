@@ -2,14 +2,14 @@
 export class PPrint {
   constructor(
     readonly indents: number[],
-    readonly lines: string[]
+    readonly lines: string[],
   ) {}
 
   /** Add a fixed amount of indentation to each line. */
   indent(spaces: number): PPrint {
     return new PPrint(
       this.indents.map((i) => i + spaces),
-      this.lines
+      this.lines,
     );
   }
 
@@ -17,7 +17,7 @@ export class PPrint {
   concat(...items: PPrint[]): PPrint {
     return new PPrint(
       (this.indents ?? []).concat(...items.map((i) => i.indents)),
-      (this.lines ?? []).concat(...items.map((i) => i.lines))
+      (this.lines ?? []).concat(...items.map((i) => i.lines)),
     );
   }
 
@@ -34,8 +34,8 @@ export class PPrint {
         .slice(0, -1)
         .concat(
           s + " ".repeat(other.indents[0]) + other.lines[0],
-          ...indentedBlock.lines.slice(1)
-        )
+          ...indentedBlock.lines.slice(1),
+        ),
     );
   }
 

@@ -28,21 +28,21 @@ export const greater = core.greater as (x: ArrayLike, y: ArrayLike) => Array;
 export const less = core.less as (x: ArrayLike, y: ArrayLike) => Array;
 export const transpose = core.transpose as (
   x: ArrayLike,
-  perm?: number[]
+  perm?: number[],
 ) => Array;
 export const broadcast = core.broadcast as (
   x: ArrayLike,
   shape: number[],
-  axes: number[]
+  axes: number[],
 ) => Array;
 export const reduceSum = core.reduceSum as (
   x: ArrayLike,
-  axis?: number | number[]
+  axis?: number | number[],
 ) => Array;
 export const moveaxis = core.moveaxis as (
   x: ArrayLike,
   src: number,
-  dst: number
+  dst: number,
 ) => Array;
 
 /** Compute the number of dimensions of an array. */
@@ -50,7 +50,7 @@ export const ndim = core.ndim as (x: ArrayLike) => number;
 
 export function array(
   values: Array | tf.TensorLike,
-  { shape, dtype }: { shape?: number[]; dtype?: DType } = {}
+  { shape, dtype }: { shape?: number[]; dtype?: DType } = {},
 ): Array {
   if (values instanceof Array) {
     let data = values.data;
@@ -70,7 +70,7 @@ export function array(
 export function allclose(
   actual: ArrayLike,
   expected: ArrayLike,
-  options?: { rtol?: number; atol?: number }
+  options?: { rtol?: number; atol?: number },
 ): boolean {
   const { rtol = 1e-5, atol = 1e-8 } = options ?? {};
 
@@ -84,9 +84,9 @@ export function allclose(
       .all(
         tf.lessEqual(
           tf.abs(tf.sub(x.data, y.data)),
-          tf.add(atol, tf.mul(rtol, y.data.abs()))
-        )
+          tf.add(atol, tf.mul(rtol, y.data.abs())),
+        ),
       )
-      .dataSync()[0]
+      .dataSync()[0],
   );
 }

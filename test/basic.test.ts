@@ -38,7 +38,7 @@ suite("jax.jvp()", () => {
     const result = jvp(
       (x: { a: np.Array; b: np.Array }) => x.a.mul(x.a).add(x.b),
       [{ a: 1, b: 2 }],
-      [{ a: 1, b: 0 }]
+      [{ a: 1, b: 0 }],
     );
     expect(result[0]).toBeAllclose(3);
     expect(result[1]).toBeAllclose(2);
@@ -156,7 +156,7 @@ suite("jax.jacfwd()", () => {
         [2, 0, 0],
         [0, 4, 0],
         [0, 0, 6],
-      ])
+      ]),
     );
   });
 });

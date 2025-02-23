@@ -21,26 +21,26 @@ type WithArgsSubtype<F extends (args: any[]) => any, T> =
 export const jvp = core.jvp as <F extends (...args: any[]) => JsTree<Array>>(
   f: WithArgsSubtype<F, JsTree<ArrayLike>>,
   primals: MapJsTree<Parameters<F>, Array, ArrayLike>,
-  tangents: MapJsTree<Parameters<F>, Array, ArrayLike>
+  tangents: MapJsTree<Parameters<F>, Array, ArrayLike>,
 ) => [ReturnType<F>, ReturnType<F>];
 
 /** Vectorize an operation on a batched axis for one or more inputs. */
 export const vmap = core.vmap as <F extends (...args: any[]) => JsTree<Array>>(
   f: WithArgsSubtype<F, JsTree<ArrayLike>>,
-  inAxes: MapJsTree<Parameters<F>, Array, number | null>
+  inAxes: MapJsTree<Parameters<F>, Array, number | null>,
 ) => F;
 
 /** Compute the Jacobian evaluated column-by-column by forward-mode AD. */
 export const jacfwd = core.jacfwd as <F extends (x: Array) => Array>(
   f: F,
-  x: Array
+  x: Array,
 ) => F;
 
 /** Construct a Jaxpr by dynamically tracing a function with example inputs. */
 export const makeJaxpr = core.makeJaxpr as unknown as <
   F extends (...args: any[]) => JsTree<Array>,
 >(
-  f: WithArgsSubtype<F, JsTree<ArrayLike>>
+  f: WithArgsSubtype<F, JsTree<ArrayLike>>,
 ) => (...args: Parameters<F>) => {
   jaxpr: core.Jaxpr;
   consts: Array[];
@@ -68,7 +68,7 @@ export const vjp = core.vjp as <F extends (...args: any[]) => JsTree<Array>>(
 ) => [
   ReturnType<F>,
   (
-    cotangents: MapJsTree<ReturnType<F>, Array, ArrayLike>
+    cotangents: MapJsTree<ReturnType<F>, Array, ArrayLike>,
   ) => MapJsTree<Parameters<F>, ArrayLike, Array>,
 ];
 
@@ -77,7 +77,7 @@ export const vjp = core.vjp as <F extends (...args: any[]) => JsTree<Array>>(
  * first argument.
  */
 export const grad = core.grad as <F extends (...args: any[]) => JsTree<Array>>(
-  f: WithArgsSubtype<F, JsTree<ArrayLike>>
+  f: WithArgsSubtype<F, JsTree<ArrayLike>>,
 ) => (
   ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
 ) => MapJsTree<Parameters<F>[0], ArrayLike, Array>;

@@ -20,7 +20,7 @@ suite("JsTreeDef.toString()", () => {
     const objTreedef = new JsTreeDef(
       NodeType.Object,
       ["a", "b"],
-      [JsTreeDef.leaf, JsTreeDef.leaf]
+      [JsTreeDef.leaf, JsTreeDef.leaf],
     );
     expect(objTreedef.toString()).toBe("JsTreeDef({a: *, b: *})");
   });
@@ -30,7 +30,7 @@ suite("JsTreeDef.toString()", () => {
     const objTreedef = new JsTreeDef(
       NodeType.Object,
       ["not-valid", "validKey"],
-      [JsTreeDef.leaf, JsTreeDef.leaf]
+      [JsTreeDef.leaf, JsTreeDef.leaf],
     );
     // "not-valid" is not a valid identifier, so it should be quoted (using JSON.stringify).
     const expected = `JsTreeDef({${JSON.stringify("not-valid")}: *, validKey: *})`;

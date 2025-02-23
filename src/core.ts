@@ -89,7 +89,7 @@ export function reduceSum(x: TracerValue, axis?: number | number[]) {
 function bind1(
   prim: Primitive,
   args: TracerValue[],
-  params: Record<string, any> = {}
+  params: Record<string, any> = {},
 ) {
   const [results] = bind(prim, args, params);
   return results;
@@ -110,7 +110,7 @@ let dynamicTrace: MainTrace | null = null;
  */
 function newMain(
   traceType: any,
-  globalData: any | null = null
+  globalData: any | null = null,
 ): Disposable & MainTrace {
   const level = traceStack.length;
   const main = { level, traceType, globalData };
@@ -148,7 +148,7 @@ abstract class Trace {
   abstract processPrimitive(
     primitive: Primitive,
     tracers: Tracer[],
-    params: Record<string, any>
+    params: Record<string, any>,
   ): Tracer[];
 }
 
@@ -216,7 +216,7 @@ class ShapedArray implements AbstractValue {
 
   constructor(
     readonly shape: number[],
-    readonly dtype: DType
+    readonly dtype: DType,
   ) {}
 
   static fromAval(aval: AbstractValue) {
@@ -317,7 +317,7 @@ function getAval(x: TracerValue): AbstractValue {
 function bind(
   prim: Primitive,
   args: TracerValue[],
-  params: Record<string, any> = {}
+  params: Record<string, any> = {},
 ) {
   const topTrace = findTopTrace(args);
   const tracers = args.map((arg) => fullRaise(topTrace, arg));
@@ -351,7 +351,7 @@ function fullRaise(trace: Trace, val: TracerValue): Tracer {
     return trace.lift(val);
   } else if (val._trace.main.level > level) {
     throw new Error(
-      `Can't lift Tracer level ${val._trace.main.level} to level ${level}`
+      `Can't lift Tracer level ${val._trace.main.level} to level ${level}`,
     );
   } else {
     throw new Error(`Different traces at same level: ${val._trace}, ${trace}.`);
@@ -366,7 +366,7 @@ class EvalTrace extends Trace {
   processPrimitive(
     primitive: Primitive,
     tracers: Array[],
-    params: Record<string, any>
+    params: Record<string, any>,
   ): Tracer[] {
     return implRules[primitive](tracers, params);
   }
@@ -408,7 +408,7 @@ const implRules: Record<Primitive, ImplRule> = {
   },
   [Primitive.Broadcast](
     [x],
-    { shape, axes }: { shape: number[]; axes: number[] }
+    { shape, axes }: { shape: number[]; axes: number[] },
   ) {
     let data = x.data;
     for (const axis of axes.toSorted()) {
@@ -431,7 +431,7 @@ class JVPTracer extends Tracer {
   constructor(
     trace: Trace,
     readonly primal: Tracer,
-    readonly tangent: Tracer
+    readonly tangent: Tracer,
   ) {
     super(trace);
   }
@@ -457,10 +457,10 @@ class JVPTrace extends Trace {
   processPrimitive(
     primitive: Primitive,
     tracers: JVPTracer[],
-    params: Record<string, any>
+    params: Record<string, any>,
   ): JVPTracer[] {
     const [primalsIn, tangentsIn] = unzip2(
-      tracers.map((x) => [x.primal, x.tangent])
+      tracers.map((x) => [x.primal, x.tangent]),
     );
     const jvpRule: JvpRule | undefined = jvpRules[primitive];
     if (jvpRule === undefined) {
@@ -468,7 +468,7 @@ class JVPTrace extends Trace {
     }
     const [primalsOut, tangentsOut] = jvpRule(primalsIn, tangentsIn, params);
     return zip(primalsOut, tangentsOut).map(
-      ([x, t]) => new JVPTracer(this, x, t)
+      ([x, t]) => new JVPTracer(this, x, t),
     );
   }
 }
@@ -476,7 +476,7 @@ class JVPTrace extends Trace {
 type JvpRule = (
   primal: Tracer[],
   tangents: Tracer[],
-  params: any
+  params: any,
 ) => [Tracer[], Tracer[]];
 
 const jvpRules: Partial<Record<Primitive, JvpRule>> = {
@@ -512,13 +512,13 @@ const jvpRules: Partial<Record<Primitive, JvpRule>> = {
 function jvpFlat(
   f: (...x: TracerValue[]) => TracerValue[],
   primals: TracerValue[],
-  tangents: TracerValue[]
+  tangents: TracerValue[],
 ): [Tracer[], Tracer[]] {
   using main = newMain(JVPTrace);
   // console.info("creating new jvp main", traceStack);
   const trace = new JVPTrace(main);
   const tracersIn = zip(primals, tangents).map(
-    ([x, t]) => new JVPTracer(trace, pureArray(x), pureArray(t))
+    ([x, t]) => new JVPTracer(trace, pureArray(x), pureArray(t)),
   );
   const outs = f(...tracersIn);
   const tracersOut = outs.map((out) => fullRaise(trace, out) as JVPTracer);
@@ -528,7 +528,7 @@ function jvpFlat(
 export function jvp(
   f: (...x: any[]) => any,
   primals: any[],
-  tangents: any[]
+  tangents: any[],
 ): [any, any] {
   const [primalsFlat, inTree] = treeFlatten(primals);
   const [tangentsFlat, inTree2] = treeFlatten(tangents);
@@ -541,7 +541,7 @@ export function jvp(
   const [primalsOutFlat, tangentsOutFlat] = jvpFlat(
     flatFun,
     primalsFlat,
-    tangentsFlat
+    tangentsFlat,
   );
   if (outTree.value === undefined) {
     throw new Error("outTree was not set in jvp");
@@ -559,7 +559,7 @@ class TreeMismatchError extends TypeError {
 
 function flattenFun(
   f: any,
-  inTree: JsTreeDef
+  inTree: JsTreeDef,
 ): [any, { value: JsTreeDef | undefined }] {
   const store: { value: JsTreeDef | undefined } = { value: undefined };
   const flatFun = (...argsFlat: any[]) => {
@@ -584,7 +584,7 @@ function moveBatchAxis(
   axisSize: number,
   src: number | null,
   dst: number,
-  x: Tracer
+  x: Tracer,
 ) {
   if (src === null) {
     // not_mapped
@@ -611,7 +611,7 @@ class BatchTracer extends Tracer {
   constructor(
     trace: Trace,
     readonly val: Tracer,
-    readonly batchDim: number | null
+    readonly batchDim: number | null,
   ) {
     super(trace);
   }
@@ -649,7 +649,7 @@ class BatchTrace extends Trace {
   processPrimitive(
     primitive: Primitive,
     tracers: BatchTracer[],
-    params: Record<string, any>
+    params: Record<string, any>,
   ): BatchTracer[] {
     const [valsIn, bdimsIn] = unzip2(tracers.map((t) => [t.val, t.batchDim]));
     const vmapRule = vmapRules[primitive];
@@ -660,10 +660,10 @@ class BatchTrace extends Trace {
       this.axisSize,
       valsIn,
       bdimsIn,
-      params
+      params,
     );
     return zip(valOuts, bdimOuts).map(
-      ([x, bd]) => new BatchTracer(this, x, bd)
+      ([x, bd]) => new BatchTracer(this, x, bd),
     );
   }
 
@@ -676,7 +676,7 @@ type VmapRule = (
   axisSize: number,
   valsIn: Tracer[],
   dimsIn: (number | null)[],
-  params: any
+  params: any,
 ) => [Tracer[], (number | null)[]];
 
 function handleScalarBroadcasting(nd: number, x: Tracer, d: number | null) {
@@ -694,7 +694,7 @@ function broadcastBatcher(op: (...x: Tracer[]) => Tracer) {
   return (
     axisSize: number,
     args: Tracer[],
-    dims: (number | null)[]
+    dims: (number | null)[],
   ): ReturnType<VmapRule> => {
     if (args.length === 0) {
       throw new Error("Empty list in broadcastBatcher");
@@ -710,14 +710,14 @@ function broadcastBatcher(op: (...x: Tracer[]) => Tracer) {
       zip(args, dims).every(
         ([x, d]) =>
           ndim(x) === 0 ||
-          (deepEqual(x.shape, args[idx].shape) && d === dims[idx])
+          (deepEqual(x.shape, args[idx].shape) && d === dims[idx]),
       )
     ) {
       return [[op(...args)], [dims[idx]]];
     }
 
     args = args.map((x, i) =>
-      ndim(x) > 0 ? moveBatchAxis(axisSize, dims[i], 0, x) : x
+      ndim(x) > 0 ? moveBatchAxis(axisSize, dims[i], 0, x) : x,
     );
     // Now the batch axis has been added to the front. Handle special-case of
     // scalar broadcasting, since unmapped axes may have a singleton axis
@@ -732,7 +732,7 @@ function vectorizedUnopBatchingRule(op: (x: Tracer) => Tracer) {
   return (
     axisSize: number,
     [x]: Tracer[],
-    [xBdim]: (number | null)[]
+    [xBdim]: (number | null)[],
   ): ReturnType<VmapRule> => {
     return [[op(x)], [xBdim]];
   };
@@ -748,7 +748,7 @@ const vmapRules: Partial<Record<Primitive, VmapRule>> = {
     axisSize: number,
     [x]: Tracer[],
     [xBdim]: (number | null)[],
-    { axis }: { axis: number[] }
+    { axis }: { axis: number[] },
   ): ReturnType<VmapRule> {
     if (xBdim === null) {
       return [[reduceSum(x, axis)], [null]];
@@ -762,7 +762,7 @@ const vmapRules: Partial<Record<Primitive, VmapRule>> = {
 function vmapFlat(
   f: (...x: TracerValue[]) => TracerValue[],
   inAxes: number[],
-  args: TracerValue[]
+  args: TracerValue[],
 ): Tracer[] {
   let axisSize: number | undefined = undefined;
   for (let i = 0; i < args.length; i++) {
@@ -776,7 +776,7 @@ function vmapFlat(
         axisSize = size;
       } else if (axisSize !== size) {
         throw new TypeError(
-          "vmap requires all mapped axes to have the same size"
+          "vmap requires all mapped axes to have the same size",
         );
       }
     }
@@ -793,20 +793,20 @@ function vmapFlat(
     const tracersIn = args.map((x, i) =>
       inAxes[i] === null
         ? pureArray(x)
-        : new BatchTracer(trace, pureArray(x), inAxes[i])
+        : new BatchTracer(trace, pureArray(x), inAxes[i]),
     );
     const outs = f(...tracersIn);
     const tracersOut = outs.map((out) => fullRaise(trace, out) as BatchTracer);
     [valsOut, bdimsOut] = unzip2(tracersOut.map((t) => [t.val, t.batchDim]));
   }
   return zip(valsOut, bdimsOut).map(([valOut, bdim]) =>
-    moveBatchAxis(axisSize, bdim, 0, valOut)
+    moveBatchAxis(axisSize, bdim, 0, valOut),
   ); // outs_transposed
 }
 
 export function vmap(
   f: (...x: any[]) => any,
-  inAxes: any[]
+  inAxes: any[],
 ): (...x: any[]) => any {
   return (...args: any[]) => {
     const [argsFlat, inTree] = treeFlatten(args);
@@ -890,19 +890,19 @@ export class JaxprEqn {
     readonly primitive: Primitive,
     readonly inputs: Atom[],
     readonly params: Record<string, any>,
-    readonly outBinders: Var[]
+    readonly outBinders: Var[],
   ) {}
 
   pprint(usedVars?: Set<Var>): PPrint {
     const lhs = PPrint.pp(
       this.outBinders
         .map((v) => (!usedVars || usedVars.has(v) ? v : "_"))
-        .join(" ")
+        .join(" "),
     );
     let rhs = PPrint.pp(this.primitive);
     // pprint params
     const paramsList = Object.entries(this.params).map(([k, v]) =>
-      PPrint.pp(`${k}=${v}`)
+      PPrint.pp(`${k}=${v}`),
     );
     if (paramsList.length > 0) {
       rhs = rhs
@@ -917,8 +917,8 @@ export class JaxprEqn {
       PPrint.pp(
         this.inputs
           .map((x) => (x instanceof Var ? x.name : JSON.stringify(x.val.js())))
-          .join(" ")
-      )
+          .join(" "),
+      ),
     );
     return lhs.stack(PPrint.pp(" = ")).stack(rhs);
   }
@@ -933,18 +933,18 @@ export class Jaxpr {
   constructor(
     readonly inBinders: Var[],
     readonly eqns: JaxprEqn[],
-    readonly outs: Atom[]
+    readonly outs: Atom[],
   ) {}
 
   pprint(): PPrint {
     const usedVars = new Set<Var>(
       [...this.outs, ...this.eqns.flatMap((eqn) => eqn.inputs)].filter(
-        (x) => x instanceof Var
-      )
+        (x) => x instanceof Var,
+      ),
     );
     const inBinders = this.inBinders.map((v) => v.toString()).join(", ");
     const eqns = PPrint.prototype.concat(
-      ...this.eqns.map((e) => e.pprint(usedVars))
+      ...this.eqns.map((e) => e.pprint(usedVars)),
     );
     const outs = this.outs
       .map((x) => (x instanceof Var ? x.name : x.val.js()))
@@ -953,7 +953,7 @@ export class Jaxpr {
       PPrint.pp("let ")
         .stack(eqns)
         .concat(PPrint.pp(`in ( ${outs} ) }`))
-        .indent(2)
+        .indent(2),
     );
   }
 
@@ -971,7 +971,7 @@ export class Jaxpr {
     const newEqns: JaxprEqn[] = [];
     for (const e of this.eqns) {
       const inputs = e.inputs.map((x) =>
-        x instanceof Var ? (context.get(x) ?? x) : x
+        x instanceof Var ? (context.get(x) ?? x) : x,
       );
       const eqn = new JaxprEqn(e.primitive, inputs, e.params, e.outBinders);
 
@@ -1006,7 +1006,7 @@ export class Jaxpr {
     }
 
     const outs = this.outs.map((x) =>
-      x instanceof Var ? (context.get(x) ?? x) : x
+      x instanceof Var ? (context.get(x) ?? x) : x,
     );
 
     // Skip unused output variables
@@ -1031,7 +1031,7 @@ export class Jaxpr {
 export class JaxprType {
   constructor(
     readonly inTypes: ShapedArray[],
-    readonly outTypes: ShapedArray[]
+    readonly outTypes: ShapedArray[],
   ) {}
 
   toString(): string {
@@ -1057,7 +1057,7 @@ function typecheckJaxpr(jaxpr: Jaxpr): JaxprType {
     for (const [outBinder, outType] of zip(eqn.outBinders, outTypes)) {
       if (!outType.equals(outBinder.aval)) {
         throw new TypeError(
-          `Output binder type mismatch in ${eqn.primitive}: ${outBinder} vs ${outType}`
+          `Output binder type mismatch in ${eqn.primitive}: ${outBinder} vs ${outType}`,
         );
       }
       if (env.has(outBinder)) {
@@ -1112,7 +1112,7 @@ function jaxprAsFun(jaxpr: Jaxpr) {
 class JaxprTracer extends Tracer {
   constructor(
     trace: Trace,
-    readonly aval: ShapedArray
+    readonly aval: ShapedArray,
   ) {
     super(trace);
   }
@@ -1147,20 +1147,20 @@ class JaxprTrace extends Trace {
   processPrimitive(
     primitive: Primitive,
     tracers: JaxprTracer[],
-    params: Record<string, any>
+    params: Record<string, any>,
   ): JaxprTracer[] {
     const avalsIn = tracers.map((t) => t.aval);
     const avalsOut = abstractEvalRules[primitive](avalsIn, params);
     const outTracers = avalsOut.map((aval) =>
-      this.builder.newTracer(this, aval)
+      this.builder.newTracer(this, aval),
     );
     this.builder.addEqn(
       new JaxprEqn(
         primitive,
         tracers.map((t) => this.builder.getVar(t)),
         params,
-        outTracers.map((t) => this.builder.addVar(t))
-      )
+        outTracers.map((t) => this.builder.addVar(t)),
+      ),
     );
     return outTracers;
   }
@@ -1214,7 +1214,7 @@ class JaxprBuilder {
 
   build(
     inTracers: JaxprTracer[],
-    outTracers: JaxprTracer[]
+    outTracers: JaxprTracer[],
   ): { jaxpr: Jaxpr; consts: Tracer[] } {
     // Initially, concatenate the constants as the first few inputs.
     let [constVars, consts] = unzip2(this.constVals.entries());
@@ -1250,14 +1250,14 @@ function _inlineLiterals(jaxpr: Jaxpr, consts: Tracer[]): [Jaxpr, Tracer[]] {
         eqn.primitive,
         eqn.inputs.map((x) => literals.get(x) ?? x),
         eqn.params,
-        eqn.outBinders
-      )
+        eqn.outBinders,
+      ),
   );
   const newOuts = jaxpr.outs.map((x) => literals.get(x) ?? x);
   const newJaxpr = new Jaxpr(
     [...constBinders, ...jaxpr.inBinders.slice(consts.length)],
     newEqns,
-    newOuts
+    newOuts,
   );
   typecheckJaxpr(newJaxpr); // Double-check for sanity.
   return [newJaxpr, newConsts];
@@ -1350,20 +1350,20 @@ const abstractEvalRules: Record<Primitive, AbstractEvalRule> = {
     return [
       new ShapedArray(
         perm.map((i) => x.shape[i]),
-        x.dtype
+        x.dtype,
       ),
     ];
   },
   [Primitive.Broadcast](
     [x],
-    { shape, axes }: { shape: number[]; axes: number[] }
+    { shape, axes }: { shape: number[]; axes: number[] },
   ) {
     return [new ShapedArray(shape, x.dtype)];
   },
 };
 
 export function makeJaxpr(
-  f: (...args: any[]) => any
+  f: (...args: any[]) => any,
 ): (...argsIn: any) => { jaxpr: Jaxpr; consts: Tracer[]; treedef: JsTreeDef } {
   return (...argsIn) => {
     const [avalsIn, inTree] = treeFlatten(argsIn);
@@ -1376,11 +1376,11 @@ export function makeJaxpr(
 
     const trace = new JaxprTrace(main);
     const tracersIn = avalsIn.map((aval) =>
-      trace.newArg(typeof aval === "object" ? aval : pureArray(aval))
+      trace.newArg(typeof aval === "object" ? aval : pureArray(aval)),
     );
     const outs = fFlat(...tracersIn);
     const tracersOut = outs.map(
-      (out: Tracer) => fullRaise(trace, out) as JaxprTracer
+      (out: Tracer) => fullRaise(trace, out) as JaxprTracer,
     );
     const { jaxpr, consts } = builder.build(tracersIn, tracersOut);
 
@@ -1397,7 +1397,7 @@ export function makeJaxpr(
 class PartialVal {
   constructor(
     readonly val: Tracer | null,
-    readonly aval: ShapedArray
+    readonly aval: ShapedArray,
   ) {}
 
   static known(val: Tracer): PartialVal {
@@ -1419,21 +1419,21 @@ class PartialVal {
 
 function partialEvalFlat(
   f: (...args: any[]) => any,
-  pvalsIn: PartialVal[]
+  pvalsIn: PartialVal[],
 ): { jaxpr: Jaxpr; pvalsOut: PartialVal[]; consts: Tracer[] } {
   const main = newMain(PartialEvalTrace);
   const trace = new PartialEvalTrace(main);
   const tracersIn = pvalsIn.map((pval) => trace.newArg(pval));
   const outs = f(...tracersIn);
   const tracersOut: PartialEvalTracer[] = outs.map((out: TracerValue) =>
-    fullRaise(trace, out)
+    fullRaise(trace, out),
   );
   const pvalsOut = tracersOut.map((t) => t.pval);
   const unknownTracersIn = tracersIn.filter((t) => !t.pval.isKnown);
   const unknownTracersOut = tracersOut.filter((t) => !t.pval.isKnown);
   const { jaxpr, consts } = partialEvalGraphToJaxpr(
     unknownTracersIn,
-    unknownTracersOut
+    unknownTracersOut,
   );
   return { jaxpr, pvalsOut, consts };
 }
@@ -1447,7 +1447,7 @@ function partialEvalFlat(
  */
 function linearizeFlatUtil(
   f: (...args: any[]) => any,
-  primalsIn: Tracer[]
+  primalsIn: Tracer[],
 ): { primalsOut: Tracer[]; jaxpr: Jaxpr; consts: Tracer[] } {
   const pvalsIn = [
     ...primalsIn.map(PartialVal.known),
@@ -1463,7 +1463,7 @@ function linearizeFlatUtil(
   const primalPvals = pvalsOut.slice(0, pvalsOut.length / 2);
   if (!primalPvals.every((pval) => pval.isKnown)) {
     throw new TypeError(
-      "Not all primal values are known after partial evaluation"
+      "Not all primal values are known after partial evaluation",
     );
   }
   const primalsOut = primalPvals.map((pval) => pval.val!);
@@ -1472,7 +1472,7 @@ function linearizeFlatUtil(
 
 function linearizeFlat(
   f: (...args: any[]) => any,
-  primalsIn: Tracer[]
+  primalsIn: Tracer[],
 ): [Tracer[], (...args: any[]) => any] {
   const { primalsOut, jaxpr, consts } = linearizeFlatUtil(f, primalsIn);
   const fLin = (...tangents: Tracer[]) =>
@@ -1488,7 +1488,7 @@ export function linearize(
   const [fFlat, outTree] = flattenFun(f, inTree);
   const [primalsOutFlat, fLinFlat] = linearizeFlat(
     fFlat,
-    primalsInFlat.map(pureArray)
+    primalsInFlat.map(pureArray),
   );
   if (outTree.value === undefined) {
     throw new Error("outTree was not set in linearize");
@@ -1529,7 +1529,7 @@ class PartialEvalTracer extends Tracer {
   constructor(
     trace: Trace,
     readonly pval: PartialVal,
-    readonly recipe: JaxprRecipe | null
+    readonly recipe: JaxprRecipe | null,
   ) {
     super(trace);
   }
@@ -1580,13 +1580,13 @@ class PartialEvalTrace extends Trace {
   processPrimitive(
     primitive: Primitive,
     tracers: PartialEvalTracer[],
-    params: Record<string, any>
+    params: Record<string, any>,
   ): Tracer[] {
     if (tracers.every((t) => t.pval.isKnown)) {
       return bind(
         primitive,
         tracers.map((t) => t.fullLower()),
-        params
+        params,
       );
     }
     const tracersIn = tracers.map((t) => this.instantiateConst(t));
@@ -1601,7 +1601,7 @@ class PartialEvalTrace extends Trace {
       tracerRefsOut: [], // Populated later on
     };
     const tracersOut = avalsOut.map(
-      (aval) => new PartialEvalTracer(this, PartialVal.unknown(aval), recipe)
+      (aval) => new PartialEvalTracer(this, PartialVal.unknown(aval), recipe),
     );
     recipe.tracerRefsOut = tracersOut.map((t) => new WeakRef(t));
     return tracersOut;
@@ -1614,7 +1614,7 @@ class PartialEvalTrace extends Trace {
  */
 function partialEvalGraphToJaxpr(
   tracersIn: PartialEvalTracer[],
-  tracersOut: PartialEvalTracer[]
+  tracersOut: PartialEvalTracer[],
 ): { jaxpr: Jaxpr; consts: Tracer[] } {
   const tracerToVar = new Map<PartialEvalTracer, Var>();
   const constidToVar = new Map<Tracer, Var>();
@@ -1627,7 +1627,7 @@ function partialEvalGraphToJaxpr(
   }
 
   for (const t of toposort(tracersOut, (t) =>
-    t.recipe?.type === "JaxprEqn" ? t.recipe.tracersIn : []
+    t.recipe?.type === "JaxprEqn" ? t.recipe.tracersIn : [],
   )) {
     if (!t.recipe) {
       throw new TypeError("Tracer is missing a recipe, cannot construct Jaxpr");
@@ -1658,7 +1658,7 @@ function partialEvalGraphToJaxpr(
           }
         }
         eqns.push(
-          new JaxprEqn(t.recipe.prim, tracersIn, t.recipe.params, outBinders)
+          new JaxprEqn(t.recipe.prim, tracersIn, t.recipe.params, outBinders),
         );
       }
     }
@@ -1695,7 +1695,7 @@ class UndefPrimal {
 function evalJaxprTransposed(
   jaxpr: Jaxpr,
   args: (Tracer | UndefPrimal)[],
-  cotangents: Tracer[]
+  cotangents: Tracer[],
 ): Tracer[] {
   const knownPrimals = new Map<Var, Tracer>();
   for (let i = 0; i < jaxpr.inBinders.length; i++) {
@@ -1739,7 +1739,7 @@ function evalJaxprTransposed(
     const primalsIn = eqn.inputs.map((v) =>
       v instanceof Lit
         ? v.val
-        : (knownPrimals.get(v) ?? new UndefPrimal(v.aval))
+        : (knownPrimals.get(v) ?? new UndefPrimal(v.aval)),
     );
     const cotangentsOut = eqn.outBinders.map(readCotangent);
     const rule = transposeRules[eqn.primitive];
@@ -1773,7 +1773,7 @@ class NonlinearError extends TypeError {
 type TransposeRule = (
   cotangents: Tracer[],
   primals: (Tracer | UndefPrimal)[],
-  params: any
+  params: any,
 ) => (Tracer | null)[];
 
 const transposeRules: Partial<Record<Primitive, TransposeRule>> = {
@@ -1803,7 +1803,7 @@ const transposeRules: Partial<Record<Primitive, TransposeRule>> = {
 
 function vjpFlat(
   f: (...x: Tracer[]) => Tracer[],
-  primalsIn: Tracer[]
+  primalsIn: Tracer[],
 ): [Tracer[], (...cotangents: Tracer[]) => Tracer[]] {
   const { primalsOut, jaxpr, consts } = linearizeFlatUtil(f, primalsIn);
   const transposeInputs = [
@@ -1825,7 +1825,7 @@ export function vjp(
   const [fFlat, outTree] = flattenFun(f, inTree);
   const [primalsOutFlat, fVjpFlat] = vjpFlat(
     fFlat,
-    primalsInFlat.map(pureArray)
+    primalsInFlat.map(pureArray),
   );
   if (outTree.value === undefined) {
     throw new Error("outTree was not set in vjp");
