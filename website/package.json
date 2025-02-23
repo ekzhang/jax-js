@@ -20,20 +20,23 @@
     "@sveltejs/kit": "^2.17.2",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "@tailwindcss/vite": "^4.0.8",
+    "@types/prettier": "^2.7.3",
     "eslint": "^9.21.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-svelte": "^2.46.1",
     "globals": "^15.15.0",
     "svelte-check": "^4.1.4",
     "tailwindcss": "^4.0.8",
-    "typescript": "~5.7.3",
     "typescript-eslint": "^8.24.1",
     "vite": "^6.1.1"
   },
   "dependencies": {
     "@rich_harris/svelte-split-pane": "^2.0.0",
+    "@rollup/browser": "^4.34.8",
     "lucide-svelte": "^0.475.0",
     "monaco-editor": "^0.52.2",
-    "svelte": "^5.20.2"
+    "prettier": "^3.5.2",
+    "svelte": "^5.20.2",
+    "typescript": "~5.7.3"
   }
 }

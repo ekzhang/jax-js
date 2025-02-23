@@ -1,7 +1,13 @@
 <script lang="ts">
   import { SplitPane } from "@rich_harris/svelte-split-pane";
+  import type { Plugin } from "@rollup/browser";
   import { ArrowRightIcon, PaletteIcon, PlayIcon } from "lucide-svelte";
+  import { format } from "prettier";
+  import * as prettierParserTypescript from "prettier/parser-typescript";
+  import * as prettierPluginEstree from "prettier/plugins/estree";
+
   import ReplEditor from "$lib/repl/ReplEditor.svelte";
+  import { jaxSrc } from "$lib/jax-js-source";
 
   const codeSamples: {
     title: string;
@@ -14,7 +20,7 @@
 const f = (x: np.Array) => x.mul(x);
 const df = grad(f);
 
-const x = np.array([1, 2, 3]);
+const x = np.array(3);
 console.log(f(x).js());
 console.log(df(x).js());
 `,
@@ -39,6 +45,84 @@ const y = np.dot(X, np.array([1, 2])).add(3);
 
   let selected = $state(0);
   let replEditor: ReplEditor;
+
+  async function handleFormat() {
+    const code = replEditor.getText();
+    try {
+      const formattedCode = await format(code, {
+        parser: "typescript",
+        plugins: [prettierParserTypescript, prettierPluginEstree as any],
+      });
+      replEditor.setText(formattedCode);
+    } catch (e: any) {
+      // TODO: Display the error in the console.
+      alert(e.toString());
+    }
+  }
+
+  async function handleRun() {
+    const ts = await import("typescript");
+    const { rollup } = await import("@rollup/browser");
+
+    const userCode = replEditor.getText();
+
+    // Create a simple virtual module plugin to resolve our in-memory modules.
+    const virtualPlugin: Plugin = {
+      name: "virtual",
+      resolveId(id) {
+        console.log("resolving", id);
+        // We treat 'index.ts' as the user code entry point.
+        if (id === "index.ts" || id === "@jax-js/core") {
+          return id;
+        } else {
+          console.log("Module not found: " + id);
+          return "<empty>";
+        }
+      },
+      load(id) {
+        if (id === "index.ts") {
+          return userCode;
+        } else if (id === "@jax-js/core") {
+          return jaxSrc;
+        } else if (id === "<empty>") {
+          return "export default {}";
+        } else {
+          return null;
+        }
+      },
+    };
+
+    const typescriptPlugin: Plugin = {
+      name: "typescript",
+      transform(code, id) {
+        console.log(code.length, id);
+        if (id.endsWith(".ts")) {
+          return ts.transpileModule(code, {
+            compilerOptions: {
+              module: ts.ModuleKind.ESNext,
+              target: ts.ScriptTarget.ES2017,
+            },
+          }).outputText;
+        }
+        return null;
+      },
+    };
+
+    // Use @rollup/browser to bundle the code.
+    const bundle = await rollup({
+      input: "index.ts",
+      plugins: [typescriptPlugin, virtualPlugin],
+    });
+
+    const { output } = await bundle.generate({
+      file: "bundle.js",
+      format: "iife",
+    });
+
+    const bundledCode = output[0].code;
+
+    eval(bundledCode);
+  }
 </script>
 
 <div class="h-dvh">
@@ -97,19 +181,24 @@ const y = np.dot(X, np.array([1, 2])).add(3);
             <div class="px-4 py-1 flex items-center gap-4">
               <button
                 class="bg-green-600 hover:bg-green-500 text-white px-4 py-0.5 flex items-center"
+                onclick={handleRun}
               >
                 <PlayIcon size={16} class="mr-1.5" />
                 Run
               </button>
               <button
                 class="bg-gray-600 hover:bg-gray-500 text-white px-4 py-0.5 flex items-center"
+                onclick={handleFormat}
               >
                 <PaletteIcon size={16} class="mr-1.5" />
                 Format
               </button>
             </div>
             <div class="flex-1 min-h-0">
-              <ReplEditor bind:this={replEditor} />
+              <ReplEditor
+                initialText={codeSamples[selected].code}
+                bind:this={replEditor}
+              />
             </div>
           </div>
         {/snippet}

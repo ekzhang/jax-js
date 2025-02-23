@@ -2,9 +2,15 @@
   import { onDestroy, onMount } from "svelte";
   import type * as Monaco from "monaco-editor/esm/vs/editor/editor.api";
 
+  export let initialText: string;
+
   let containerEl: HTMLDivElement;
   let editor: Monaco.editor.IStandaloneCodeEditor;
   let monaco: typeof Monaco;
+
+  export function getText() {
+    return editor?.getValue() ?? "";
+  }
 
   export function setText(text: string) {
     editor?.setValue(text);
@@ -18,15 +24,7 @@
       automaticLayout: true,
     });
     const model = monaco.editor.createModel(
-      `import { grad, numpy as np } from "@jax-js/core";
-
-const f = (x: np.Array) => x.mul(x);
-const df = grad(f);
-
-const x = np.array([1, 2, 3]);
-console.log(f(x).js());
-console.log(df(x).js());
-`,
+      initialText,
       "typescript",
       monaco.Uri.parse("file:///main.ts"),
     );
