@@ -20,3 +20,4 @@ npm test
 - [ ] Convert Jaxprs into a tree data structure
 - [ ] Pattern matchers for kernel fusion
 - [ ] Kernel codegen, or synthesis
+- [ ] Import tfjs models
