@@ -71,9 +71,46 @@ export class AluExp {
     return AluExp.cmpne(this, AluExp.const(DType.Bool, true));
   }
 
+  /** Simplify the expression by replacing any known patterns. */
+  simplify(): AluExp {
+    const src = this.src.map((x) => x.simplify());
+    const { op } = this;
+
+    // Folding with one item being a no-op constant.
+    if (AluGroup.Binary.has(op)) {
+      for (let i = 0; i < 2; i++) {
+        if (src[i].op !== AluOp.Const) continue;
+        const x = src[i].arg;
+        if (op === AluOp.Add && x === 0) return src[1 - i];
+        if (op === AluOp.Sub && i === 1 && x === 0) return src[1 - i];
+        if (op === AluOp.Mul && x === 1) return src[1 - i];
+        if (op === AluOp.Mul && x === 0) return AluExp.const(this.dtype, 0);
+        if (op === AluOp.Idiv && i === 1 && x === 1) return src[1 - i];
+      }
+    }
+
+    // Select statement.
+    if (op === AluOp.Where) {
+      if (src[0].op === AluOp.Const) return src[src[0].arg ? 1 : 2];
+    }
+
+    // If any src was simplified, should construct a new expression.
+    const newExp = src.every((s, i) => s === this.src[i])
+      ? this
+      : new AluExp(op, this.dtype, src, this.arg);
+
+    // Constant folding.
+    if (src.every((x) => x.op === AluOp.Const) && !AluGroup.Variable.has(op)) {
+      return AluExp.const(this.dtype, newExp.evaluate({}));
+    }
+
+    return newExp;
+  }
+
   /** Resolve this to a value, or `undefined` if not possible. */
   resolve(): any | undefined {
-    if (this.op === AluOp.Const) return this.arg;
+    const x = this.simplify();
+    if (x.op === AluOp.Const) return x.arg;
     return undefined;
   }
 
@@ -163,4 +200,5 @@ export const AluGroup = {
   Binary: new Set([AluOp.Add, AluOp.Sub, AluOp.Mul, AluOp.Idiv, AluOp.Mod]),
   Unary: new Set([AluOp.Sin, AluOp.Cos]),
   Compare: new Set([AluOp.Cmplt, AluOp.Cmpne]),
+  Variable: new Set([AluOp.Special, AluOp.GlobalIndex]),
 };

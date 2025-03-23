@@ -10,7 +10,6 @@ npm test
 
 ## Next on Eric's mind
 
-- Basic AluExp simplifications, remove `0+` or `/1` or `*1`
 - Reduce verbosity of, one line per operation
 - Sync reading of array data
 - "Array" interface to replace tfjs (`await` to get data)

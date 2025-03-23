@@ -160,6 +160,7 @@ function constToWgsl(dtype: DType, value: any): string {
 
 /** Compiles an expression into WebGPU shader source code. */
 function pipelineSource(nargs: number, exp: AluExp): string {
+  exp = exp.simplify();
   const args = Array.from({ length: nargs }, (_, i) => `in${i}`);
 
   // binding(0): uniforms

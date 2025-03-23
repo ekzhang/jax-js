@@ -56,6 +56,7 @@ export class CPUBackend implements Backend {
   }
 
   executeSync(exp: AluExp, inputs: Slot[], outputs: Slot[]): void {
+    exp = exp.simplify();
     const inputBuffers = inputs.map((slot) => this.#getBuffer(slot));
     const outputBuffers = outputs.map((slot) => this.#getBuffer(slot));
 
