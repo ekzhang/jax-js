@@ -1,5 +1,5 @@
 import { AluExp, AluGroup, AluOp, DType } from "../alu";
-import { Backend, Slot, SlotError } from "../backend";
+import { Backend, Executable, Slot, SlotError } from "../backend";
 import { DEBUG } from "../utils";
 
 /** Implementation of `Backend` that uses WebGPU in browsers. */
@@ -87,26 +87,27 @@ export class WebGPUBackend implements Backend {
     return this.syncReader.read(buffer, start, count);
   }
 
-  async execute(
+  async prepare(
+    nargs: number,
     exp: AluExp,
-    inputs: Slot[],
-    outputs: Slot[],
-    abort?: AbortSignal,
-  ): Promise<void> {
-    const inputBuffers = inputs.map((slot) => this.#getBuffer(slot));
-    const outputBuffers = outputs.map((slot) => this.#getBuffer(slot));
-    const nargs = inputs.length;
-    const pipeline = await this.pipelines.get(pipelineSource(nargs, exp));
-    if (abort?.aborted) return; // Do not submit if already aborted.
-    pipelineSubmit(this.device, pipeline, inputBuffers, outputBuffers);
+  ): Promise<Executable<GPUComputePipeline>> {
+    const pipeline = await this.pipelines.prepare(pipelineSource(nargs, exp));
+    return new Executable(nargs, exp, pipeline);
   }
 
-  executeSync(exp: AluExp, inputs: Slot[], outputs: Slot[]): void {
+  prepareSync(nargs: number, exp: AluExp): Executable<GPUComputePipeline> {
+    const pipeline = this.pipelines.prepareSync(pipelineSource(nargs, exp));
+    return new Executable(nargs, exp, pipeline);
+  }
+
+  dispatch(
+    exe: Executable<GPUComputePipeline>,
+    inputs: Slot[],
+    outputs: Slot[],
+  ): void {
     const inputBuffers = inputs.map((slot) => this.#getBuffer(slot));
     const outputBuffers = outputs.map((slot) => this.#getBuffer(slot));
-    const nargs = inputs.length;
-    const pipeline = this.pipelines.getSync(pipelineSource(nargs, exp));
-    pipelineSubmit(this.device, pipeline, inputBuffers, outputBuffers);
+    pipelineSubmit(this.device, exe.data, inputBuffers, outputBuffers);
   }
 
   #getBuffer(slot: Slot): GPUBuffer {
@@ -343,15 +344,13 @@ class ShaderPipelineCache {
     this.inProgress = new Map();
   }
 
-  async get(code: string): Promise<GPUComputePipeline> {
+  async prepare(code: string): Promise<GPUComputePipeline> {
     const existingPipeline = this.cache.get(code);
-    if (existingPipeline) {
-      return existingPipeline;
-    }
+    if (existingPipeline) return existingPipeline;
+
     const existingPromise = this.inProgress.get(code);
-    if (existingPromise) {
-      return await existingPromise;
-    }
+    if (existingPromise) return await existingPromise;
+
     if (DEBUG >= 2) {
       console.info("=========== WebGPU shader ===========\n" + code);
     }
@@ -386,11 +385,10 @@ class ShaderPipelineCache {
     return pipeline;
   }
 
-  getSync(code: string): GPUComputePipeline {
+  prepareSync(code: string): GPUComputePipeline {
     const existingPipeline = this.cache.get(code);
-    if (existingPipeline) {
-      return existingPipeline;
-    }
+    if (existingPipeline) return existingPipeline;
+
     if (DEBUG >= 2) {
       console.info("=========== WebGPU shader ===========\n" + code);
     }

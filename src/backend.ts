@@ -50,16 +50,29 @@ export interface Backend {
   /** Read a range of bytes from a buffer, blocking variant. */
   readSync(slot: Slot, start?: number, count?: number): ArrayBuffer;
 
-  /** Run a backend operation. */
-  execute(
-    exp: AluExp,
-    inputs: Slot[],
-    outputs: Slot[],
-    abort?: AbortSignal,
-  ): Promise<void>;
+  /** Prepare an expression to be executed later. */
+  prepare(nargs: number, exp: AluExp): Promise<Executable<any>>;
 
-  /** Run a backend operation, blocking variant. */
-  executeSync(exp: AluExp, inputs: Slot[], outputs: Slot[]): void;
+  /** Prepare an expression to be executed later, blocking variant. */
+  prepareSync(nargs: number, exp: AluExp): Executable<any>;
+
+  /**
+   * Run a backend operation that was previously prepared.
+   *
+   * The operation may not run immedaitely, but operations are guaranteed to run
+   * in the dispatch order. Also, `read()` will wait for all pending operations
+   * on that slot to finish.
+   */
+  dispatch(exe: Executable<any>, inputs: Slot[], outputs: Slot[]): void;
+}
+
+export class Executable<T> {
+  constructor(
+    readonly nargs: number,
+    readonly exp: AluExp,
+    /** Backends store extra data here, and it's only used by that backend. */
+    readonly data: T,
+  ) {}
 }
 
 export class SlotError extends Error {

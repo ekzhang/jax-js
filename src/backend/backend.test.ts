@@ -19,12 +19,14 @@ describe.each(["cpu", "webgpu"])("Backend '%s'", (backendName) => {
       const arg1 = accessorAlu(0, shape, gidx);
       const arg2 = accessorAlu(1, shape.flip([true]), gidx);
 
-      await backend.execute(AluExp.mul(arg1, arg2), [a, b], [c]);
+      const exe1 = await backend.prepare(2, AluExp.mul(arg1, arg2));
+      backend.dispatch(exe1, [a, b], [c]);
 
       const buf = await backend.read(c);
       expect(new Float32Array(buf)).toEqual(new Float32Array([6, 10, 12]));
 
-      await backend.execute(AluExp.add(arg1, arg2), [a, b], [c]);
+      const exe2 = await backend.prepare(2, AluExp.add(arg1, arg2));
+      backend.dispatch(exe2, [a, b], [c]);
       const buf2 = await backend.read(c);
       expect(new Float32Array(buf2)).toEqual(new Float32Array([7, 7, 7]));
     } finally {
@@ -40,11 +42,27 @@ describe.each(["cpu", "webgpu"])("Backend '%s'", (backendName) => {
 
     const a = backend.malloc(200 * 4);
     try {
-      const gidx = AluExp.special(DType.Int32, "gidx", 3);
-      await backend.execute(AluExp.cast(DType.Float32, gidx), [], [a]);
+      const gidx = AluExp.special(DType.Int32, "gidx", 200);
+      const exe = await backend.prepare(0, AluExp.cast(DType.Float32, gidx));
+      backend.dispatch(exe, [], [a]);
       const buf = await backend.read(a);
-      const arr = new Float32Array(buf);
-      expect(arr).toEqual(new Float32Array(range(0, 200)));
+      expect(new Float32Array(buf)).toEqual(new Float32Array(range(0, 200)));
+    } finally {
+      backend.decRef(a);
+    }
+  });
+
+  test("can run synchronous operations", async ({ skip }) => {
+    const backend = await getBackend(backendName);
+    if (!backend) return skip();
+
+    const a = backend.malloc(4 * 4);
+    try {
+      const gidx = AluExp.special(DType.Int32, "gidx", 4);
+      const exe = backend.prepareSync(0, AluExp.cast(DType.Float32, gidx));
+      backend.dispatch(exe, [], [a]);
+      const buf = backend.readSync(a);
+      expect(new Float32Array(buf)).toEqual(new Float32Array([0, 1, 2, 3]));
     } finally {
       backend.decRef(a);
     }

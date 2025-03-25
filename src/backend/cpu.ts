@@ -1,5 +1,5 @@
 import { AluExp } from "../alu";
-import { Backend, Slot, SlotError } from "../backend";
+import { Backend, Executable, Slot, SlotError } from "../backend";
 
 /** Most basic implementation of `Backend` for testing. */
 export class CPUBackend implements Backend {
@@ -51,12 +51,16 @@ export class CPUBackend implements Backend {
     return buffer.slice(start, start + count);
   }
 
-  async execute(exp: AluExp, inputs: Slot[], outputs: Slot[]): Promise<void> {
-    return this.executeSync(exp, inputs, outputs);
+  async prepare(nargs: number, exp: AluExp): Promise<Executable<void>> {
+    return this.prepareSync(nargs, exp);
   }
 
-  executeSync(exp: AluExp, inputs: Slot[], outputs: Slot[]): void {
-    exp = exp.simplify();
+  prepareSync(nargs: number, exp: AluExp): Executable<void> {
+    return new Executable(nargs, exp, undefined);
+  }
+
+  dispatch(exe: Executable<void>, inputs: Slot[], outputs: Slot[]): void {
+    const exp = exe.exp.simplify();
     const inputBuffers = inputs.map((slot) => this.#getBuffer(slot));
     const outputBuffers = outputs.map((slot) => this.#getBuffer(slot));
 
