@@ -329,19 +329,17 @@ export class CodeGenerator {
     // Export section
     let export_section_bytes: number[] = [];
     const num_exports =
-      Object.keys(this.exported_functions).length +
-      (this.memory.is_export ? 1 : 0);
+      this.exported_functions.size + (this.memory.is_export ? 1 : 0);
     concat(export_section_bytes, encode_unsigned(num_exports));
     if (this.memory.is_export) {
       concat(export_section_bytes, encode_string(this.memory.a_string));
       export_section_bytes.push(0x02);
       export_section_bytes.push(0x00); // one memory at index 0
     }
-    for (const key in this.exported_functions) {
-      const name = this.exported_functions.get(parseInt(key))!;
+    for (const [key, name] of this.exported_functions.entries()) {
       concat(export_section_bytes, encode_string(name));
       export_section_bytes.push(0x00);
-      concat(export_section_bytes, encode_unsigned(parseInt(key)));
+      concat(export_section_bytes, encode_unsigned(key));
     }
     emitted_bytes.push(0x07);
     concat(emitted_bytes, encode_unsigned(export_section_bytes.length));
