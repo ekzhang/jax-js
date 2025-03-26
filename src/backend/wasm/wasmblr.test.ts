@@ -55,7 +55,7 @@ suite("CodeGenerator", () => {
     expect(factorial(7)).toBe(5040);
   });
 
-  test("can run SIMD on i32x4", async () => {
+  test("can run SIMD on f32x4", async () => {
     const cg = new CodeGenerator();
 
     cg.memory.pages(1).export("memory");
