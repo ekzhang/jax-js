@@ -93,12 +93,14 @@ export class WebGPUBackend implements Backend {
     nargs: number,
     exp: AluExp,
   ): Promise<Executable<GPUComputePipeline>> {
-    const pipeline = await this.pipelines.prepare(pipelineSource(nargs, exp));
+    const src = pipelineSource(this.device, nargs, exp);
+    const pipeline = await this.pipelines.prepare(src);
     return new Executable(nargs, exp, pipeline);
   }
 
   prepareSync(nargs: number, exp: AluExp): Executable<GPUComputePipeline> {
-    const pipeline = this.pipelines.prepareSync(pipelineSource(nargs, exp));
+    const src = pipelineSource(this.device, nargs, exp);
+    const pipeline = this.pipelines.prepareSync(src);
     return new Executable(nargs, exp, pipeline);
   }
 
@@ -173,7 +175,7 @@ function constToWgsl(dtype: DType, value: any): string {
 }
 
 /** Compiles an expression into WebGPU shader source code. */
-function pipelineSource(nargs: number, exp: AluExp): string {
+function pipelineSource(device: GPUDevice, nargs: number, exp: AluExp): string {
   exp = exp.simplify();
   const args = Array.from({ length: nargs }, (_, i) => `in${i}`);
 
@@ -198,8 +200,10 @@ function pipelineSource(nargs: number, exp: AluExp): string {
     `@group(0) @binding(${nargs + 1}) var<storage, read_write> result : array<f32>;`,
   );
 
+  const workgroupSize = device.limits.maxComputeWorkgroupSizeX;
+
   kernel.push(
-    "\n@compute @workgroup_size(64)",
+    `\n@compute @workgroup_size(${workgroupSize})`,
     "fn main(@builtin(global_invocation_id) id : vec3<u32>) {",
     "  if (id.x >= uniforms.len) { return; }",
     "  let gidx: i32 = i32(id.x);",
@@ -320,11 +324,13 @@ function pipelineSubmit(
     ],
   });
 
+  const workgroupSize = device.limits.maxComputeWorkgroupSizeX;
+
   const commandEncoder = device.createCommandEncoder();
   const passEncoder = commandEncoder.beginComputePass();
   passEncoder.setPipeline(pipeline);
   passEncoder.setBindGroup(0, bindGroup);
-  passEncoder.dispatchWorkgroups(Math.ceil(len / 64));
+  passEncoder.dispatchWorkgroups(Math.ceil(len / workgroupSize));
   passEncoder.end();
   device.queue.submit([commandEncoder.finish()]);
 }

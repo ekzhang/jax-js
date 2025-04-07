@@ -57,7 +57,27 @@ async function createBackend(
     const { WebGPUBackend } = await import("./backend/webgpu");
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) return null;
-    const device = await adapter.requestDevice();
+
+    const importantLimits: Exclude<keyof GPUSupportedLimits, "__brand">[] = [
+      "maxBufferSize",
+      "maxComputeInvocationsPerWorkgroup",
+      "maxComputeWorkgroupSizeX", // All of our workgroups use X.
+      "maxComputeWorkgroupSizeY",
+      "maxComputeWorkgroupSizeZ",
+      "maxComputeWorkgroupStorageSize",
+      "maxComputeWorkgroupsPerDimension",
+      "maxStorageBufferBindingSize",
+      "maxStorageBuffersPerShaderStage",
+      "maxStorageTexturesPerShaderStage",
+    ];
+
+    const device = await adapter.requestDevice({
+      requiredFeatures: ["timestamp-query"],
+      requiredLimits: Object.fromEntries(
+        importantLimits.map((feature) => [feature, adapter.limits[feature]]),
+      ),
+    });
+
     return new WebGPUBackend(device);
   } else {
     throw new Error(`Backend not found: ${backendType}`);
