@@ -245,7 +245,7 @@ class ShapedArray implements AbstractValue {
 class ConcreteArray extends ShapedArray {
   readonly arrayAbstractionLevel: number = 2;
 
-  constructor(readonly val: tf.Tensor) {
+  constructor(readonly val: Array) {
     super(val.shape, val.dtype as any);
   }
 }
@@ -270,7 +270,7 @@ export class Array extends Tracer {
   }
 
   get aval(): AbstractValue {
-    return new ConcreteArray(this.data);
+    return new ConcreteArray(this);
   }
 
   /** Return a simple string representation of the array's dimensions. */
@@ -302,7 +302,7 @@ function getAval(x: TracerValue): AbstractValue {
   if (x instanceof Tracer) {
     return x.aval;
   } else if (typeof x === "boolean" || typeof x === "number") {
-    return new ConcreteArray(tf.scalar(x));
+    return new ConcreteArray(new Array(tf.scalar(x)));
   } else {
     throw new TypeError(`Unknown value: ${x}`);
   }
