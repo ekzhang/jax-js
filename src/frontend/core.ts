@@ -1,14 +1,12 @@
 /** @file Core library internals and interpreter stack, based on Autodidax. */
 
 import { DType } from "../alu";
-import { DEBUG } from "../utils";
+import { DEBUG, range } from "../utils";
 import {
   JsTreeDef,
   flatten as treeFlatten,
   unflatten as treeUnflatten,
 } from "../tree";
-
-const JsArray = globalThis.Array;
 
 export enum Primitive {
   Add = "add",
@@ -62,7 +60,7 @@ export function broadcast(x: TracerValue, shape: number[], axes: number[]) {
 export function reduceSum(x: TracerValue, axis?: number | number[]) {
   if (axis === null) {
     if (x instanceof Tracer) {
-      axis = [...JsArray(x.shape.length).keys()];
+      axis = range(x.shape.length);
     } else {
       axis = [];
     }

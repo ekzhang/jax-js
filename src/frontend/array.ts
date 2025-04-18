@@ -15,6 +15,7 @@ import {
   isPermutation,
   RecursiveArray,
   recursiveFlatten,
+  repeat,
 } from "../utils";
 import {
   getAval,
@@ -231,30 +232,47 @@ export class Array extends Tracer {
     );
   }
 
-  #binaryCustom(
+  static #binaryCustom(
     name: string,
     custom: (src: AluExp[]) => AluExp,
-    other: Array,
+    [lhs, rhs]: [Array, Array],
   ): Array {
-    if (!deepEqual(this.shape, other.shape)) {
-      throw new Error(`Shape mismatch in ${name}`); // todo: broadcasting, maybe at the jax level
+    if (lhs.#dtype !== rhs.#dtype) {
+      throw new Error(
+        `Dtype mismatch in ${name}: ${lhs.dtype} vs ${rhs.dtype}`,
+      ); // todo: dtype casting
     }
-    if (this.#dtype !== other.#dtype) {
-      throw new Error(`Dtype mismatch in ${name}`); // todo: dtype casting
+    if (lhs.#backend !== rhs.#backend) {
+      throw new Error(
+        `Backend mismatch in ${name}: ${lhs.#backend} vs ${rhs.#backend}`,
+      );
+    }
+    if (!deepEqual(lhs.shape, rhs.shape)) {
+      const newShape = generalBroadcast(lhs.shape, rhs.shape);
+      lhs = lhs.#reshape(
+        lhs.#st
+          .reshape(repeat(1, newShape.length - lhs.ndim).concat(lhs.shape))
+          .expand(newShape),
+      );
+      rhs = rhs.#reshape(
+        rhs.#st
+          .reshape(repeat(1, newShape.length - rhs.ndim).concat(rhs.shape))
+          .expand(newShape),
+      );
     }
 
     // Short circuit if both are already AluExp.
-    if (this.#source instanceof AluExp && other.#source instanceof AluExp) {
-      const exp = custom([this.#source, other.#source]);
-      return new Array(exp, this.#st, exp.dtype, this.#backend);
+    if (lhs.#source instanceof AluExp && rhs.#source instanceof AluExp) {
+      const exp = custom([lhs.#source, rhs.#source]);
+      return new Array(exp, lhs.#st, exp.dtype, lhs.#backend);
     }
 
-    const gidx = gidxVar(this.#st.size);
+    const gidx = gidxVar(lhs.#st.size);
 
     const inputs: Slot[] = [];
     const src: AluExp[] = [];
 
-    for (const ar of [this, other]) {
+    for (const ar of [lhs, rhs]) {
       if (ar.#source instanceof AluExp) {
         src.push(accessorAluExp(ar.#source, ar.#st, gidx));
       } else {
@@ -264,25 +282,25 @@ export class Array extends Tracer {
     }
 
     const exp = custom(src);
-    const kernel = new Kernel(src.length, this.#st.size, exp);
-    const output = this.#backend.malloc(kernel.size * 4);
+    const kernel = new Kernel(src.length, lhs.#st.size, exp);
+    const output = lhs.#backend.malloc(kernel.size * 4);
     const pending = [
-      ...this.#pending,
-      ...other.#pending,
+      ...lhs.#pending,
+      ...rhs.#pending,
       new PendingExecute(kernel, inputs, [output]),
     ];
     return new Array(
       output,
-      ShapeTracker.fromShape(this.shape),
+      ShapeTracker.fromShape(lhs.shape),
       exp.dtype,
-      this.#backend,
+      lhs.#backend,
       pending,
     );
   }
 
   #binary(op: AluOp, other: Array): Array {
     const custom = (src: AluExp[]) => new AluExp(op, this.#dtype, src);
-    return this.#binaryCustom(op, custom, other);
+    return Array.#binaryCustom(op, custom, [this, other]);
   }
 
   /**
@@ -381,11 +399,11 @@ export class Array extends Tracer {
         // TODO: handle NaN
         const custom = ([x, y]: AluExp[]) =>
           AluExp.mul(AluExp.cmpne(x, y), AluExp.cmplt(x, y).not());
-        return [x.#binaryCustom("greater", custom, y)];
+        return [Array.#binaryCustom("greater", custom, [x, y])];
       },
       [Primitive.Less]([x, y]) {
         const custom = ([x, y]: AluExp[]) => AluExp.cmplt(x, y);
-        return [x.#binaryCustom("less", custom, y)];
+        return [Array.#binaryCustom("less", custom, [x, y])];
       },
       [Primitive.Transpose]([x], { perm }: { perm?: number[] }) {
         return [x.#transpose(perm)];
@@ -606,4 +624,43 @@ export function eye(
     dtype,
     getBackend(backend),
   );
+}
+
+/**
+ * Implements a NumPy-style generalized broadcast rule on two array shapes.
+ *
+ * "When operating on two arrays, NumPy compares their shapes element-wise. It
+ * starts with the trailing (i.e. rightmost) dimension and works its way left.
+ * Two dimensions are compatible when:
+ *   1. they are equal, or
+ *   2. one of them is 1."
+ *
+ * Throws a TypeError if the broadcast is not possible.
+ *
+ * <https://numpy.org/doc/stable/user/basics.broadcasting.html#general-broadcasting-rules>
+ */
+export function generalBroadcast(a: number[], b: number[]): number[] {
+  const out: number[] = [];
+  let i = a.length - 1;
+  let j = b.length - 1;
+  for (; i >= 0 && j >= 0; i--, j--) {
+    const x = a[i];
+    const y = b[j];
+    if (x === y) {
+      out.push(x);
+    } else if (x === 1) {
+      out.push(y);
+    } else if (y === 1) {
+      out.push(x);
+    } else {
+      throw new TypeError(`Incompatible array broadcast shapes: ${a} vs ${b}`);
+    }
+  }
+  for (; i >= 0; i--) {
+    out.push(a[i]);
+  }
+  for (; j >= 0; j--) {
+    out.push(b[j]);
+  }
+  return out.reverse();
 }

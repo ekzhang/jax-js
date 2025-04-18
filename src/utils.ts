@@ -53,12 +53,24 @@ export function deepEqual(a: any, b: any): boolean {
   return true;
 }
 
-export function range(start: number, stop: number, step: number = 1): number[] {
+export function range(
+  start: number,
+  stop?: number,
+  step: number = 1,
+): number[] {
+  if (stop === undefined) {
+    stop = start;
+    start = 0;
+  }
   const result = [];
   for (let i = start; i < stop; i += step) {
     result.push(i);
   }
   return result;
+}
+
+export function repeat<T>(value: T, count: number): T[] {
+  return Array.from({ length: count }, () => value);
 }
 
 export function isPermutation(axis: number[], n: number): boolean {

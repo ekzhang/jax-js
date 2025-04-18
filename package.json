@@ -33,7 +33,7 @@
   "license": "MIT",
   "scripts": {
     "build": "tsup",
-    "build:watch": "tsup --watch",
+    "build:watch": "tsup --watch src",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest"

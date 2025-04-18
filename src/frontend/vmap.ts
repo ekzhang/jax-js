@@ -24,8 +24,6 @@ import {
 import { flatten as treeFlatten, unflatten as treeUnflatten } from "../tree";
 import { jvp } from "./jvp";
 
-const JsArray = globalThis.Array;
-
 function mappedAval(batchDim: number, aval: AbstractValue) {
   const shape = [...aval.shape];
   shape.splice(batchDim, 1);
@@ -35,7 +33,7 @@ function mappedAval(batchDim: number, aval: AbstractValue) {
 /** Move one axis to a different index. */
 export function moveaxis(x: TracerValue, src: number, dst: number) {
   const t = pureArray(x);
-  const perm = [...JsArray(t.shape.length).keys()];
+  const perm = range(t.shape.length);
   perm.splice(src, 1);
   perm.splice(dst, 0, src);
   return transpose(t, perm);
