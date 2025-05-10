@@ -31,12 +31,13 @@ npm test
   - [x] Create `class Array {}` wrappers
   - [x] Reduction operations
 - [ ] Kernel tuning (see `tuner.ts`)
-  - [ ] "Unroll" optimizations (multiple values/loop iters per thread, e.g., matmul)
+  - [ ] "Upcast" optimizations (compute a tile per thread, e.g., matmul)
+  - [ ] "Unroll" optimizations (multiple loop iters per thread, e.g., matmul)
   - [ ] "Group" optimizations (multiple threads per value, e.g., matvec)
-  - [ ] "Upcast" optimizations (i.e., Wasm SIMD)
 - [ ] We figure out the `dispose()` / refcount / linear types stuff
 - [ ] Demos: Navier-Stokes, neural networks, statistics
 - [ ] Wasm backend (needs malloc)
+  - [ ] SIMD support for Wasm backend
 - [ ] Device switching with `.to()` between webgpu/cpu/wasm
 - [ ] `jit()` support via Jaxprs and kernel fusion
 - [ ] Other dtypes like int32 and bool
