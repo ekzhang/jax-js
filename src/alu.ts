@@ -118,16 +118,16 @@ export class AluExp {
 
   /** Substitute variables in this AluExp to values. */
   substitute(variables: Record<string, AluExp>): AluExp {
-    if (this.op === AluOp.Variable && Object.hasOwn(variables, this.arg)) {
-      if (this.dtype !== variables[this.arg].dtype) {
-        throw new Error(
-          `Type mismatch: ${this.dtype} vs ${variables[this.arg].dtype}`,
-        );
+    return this.rewrite((exp) => {
+      if (exp.op === AluOp.Variable && Object.hasOwn(variables, exp.arg)) {
+        if (exp.dtype !== variables[exp.arg].dtype) {
+          throw new Error(
+            `Type mismatch: ${exp.dtype} vs ${variables[exp.arg].dtype}`,
+          );
+        }
+        return variables[exp.arg];
       }
-      return variables[this.arg];
-    }
-    const src = this.src.map((x) => x.substitute(variables));
-    return new AluExp(this.op, this.dtype, src, this.arg);
+    });
   }
 
   #computeRange(): [number, number] {
@@ -252,30 +252,32 @@ export class AluExp {
    * Simplify the expression by replacing any known patterns and deduping
    * identical subexpressions.
    */
-  simplify(): AluExp {
+  simplify(cache: Map<bigint, AluExp> = new Map()): AluExp {
     // Cache this to avoid recomputing if it's called twice.
     if (this.#simplified !== undefined) return this.#simplified;
-    return (this.#simplified = this.#simplify(new Map()));
-  }
 
-  #simplify(seen: Map<bigint, AluExp>): AluExp {
+    // Extra help: `cache` can be used cache across multiple calls.
     const hash = this.getHash();
-    if (seen.has(hash)) return seen.get(hash)!;
-    const simplified = this.#simplifyInner(seen);
+    if (cache.has(hash)) {
+      return (this.#simplified = cache.get(hash)!);
+    }
+    const simplified = this.#simplifyInner(cache);
     const simplifiedHash = simplified.getHash();
-    if (seen.has(simplifiedHash)) {
-      const prevSimplified = seen.get(simplifiedHash)!;
-      seen.set(hash, prevSimplified);
+    if (cache.has(simplifiedHash)) {
+      const prevSimplified = cache.get(simplifiedHash)!;
+      cache.set(hash, prevSimplified);
+      this.#simplified = prevSimplified;
       return prevSimplified;
     } else {
-      seen.set(hash, simplified);
-      seen.set(simplifiedHash, simplified);
+      cache.set(hash, simplified);
+      cache.set(simplifiedHash, simplified);
+      this.#simplified = simplified;
       return simplified;
     }
   }
 
-  #simplifyInner(seen: Map<bigint, AluExp>): AluExp {
-    const src = this.src.map((x) => x.#simplify(seen));
+  #simplifyInner(cache: Map<bigint, AluExp>): AluExp {
+    const src = this.src.map((x) => x.simplify(cache));
     const { op } = this;
 
     // Folding with one item being a no-op constant.
@@ -337,8 +339,8 @@ export class AluExp {
       if (mul.src[0].op === AluOp.Mod) {
         const [x, y] = mul.src[0].src;
         if (check(x)) {
-          return AluExp.mod(mod.src[0], AluExp.mul(mod.src[1], y)).#simplify(
-            seen,
+          return AluExp.mod(mod.src[0], AluExp.mul(mod.src[1], y)).simplify(
+            cache,
           );
         }
       }
@@ -353,10 +355,10 @@ export class AluExp {
           if (A % B === 0) {
             let ret = numer.src[1 - i]; // x
             if (A / B !== 1) ret = AluExp.mul(ret, AluExp.i32(A / B));
-            return ret.#simplify(seen);
+            return ret.simplify(cache);
           }
         }
-        // (x * A + C) / B => x * (A / B) + floor(C / B)
+        // (x * A + C) / B => x * (A / B) + trunc(C / B)
         for (let j = 0; j < 2; j++) {
           if (
             numer.op === AluOp.Add &&
@@ -368,9 +370,27 @@ export class AluExp {
               let ret = numer.src[j].src[1 - i]; // x
               if (A / B !== 1) ret = AluExp.mul(ret, AluExp.i32(A / B));
               ret = AluExp.add(ret, AluExp.idiv(numer.src[1 - j], B));
-              return ret.#simplify(seen);
+              return ret.simplify(cache);
             }
           }
+        }
+      }
+    }
+    if (
+      op === AluOp.Mod &&
+      src[1].#isConstInt() &&
+      src[1].arg > 0 &&
+      src[0].min >= 0
+    ) {
+      const [numer, denom] = src;
+      const B = denom.arg;
+      for (let i = 0; i < 2; i++) {
+        // (x + A) % B => x % B + (A % B); when x+A>=0, B>0
+        if (numer.op === AluOp.Add && numer.src[i].#isConstInt()) {
+          const A = numer.src[i].arg;
+          let ret = numer.src[1 - i]; // x
+          if (A % B !== 0) ret = AluExp.add(ret, AluExp.i32(A % B));
+          return ret.simplify(cache);
         }
       }
     }
@@ -432,7 +452,7 @@ export class AluExp {
         case AluOp.Mul:
           return this.dtype === DType.Bool ? x && y : x * y;
         case AluOp.Idiv:
-          return Math.floor(x / y);
+          return Math.trunc(x / y); // Consistent with signed Mod.
         case AluOp.Mod:
           return x % y;
         case AluOp.Min:
