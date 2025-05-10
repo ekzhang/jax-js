@@ -644,6 +644,10 @@ export class ShapeTracker {
     );
   }
 
+  get lastStrides(): number[] {
+    return this.views[this.views.length - 1].strides;
+  }
+
   get shape(): number[] {
     return this.views[this.views.length - 1].shape;
   }

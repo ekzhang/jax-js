@@ -2,7 +2,7 @@ import { DType } from "./alu";
 import { Array, array, eye, scalar } from "./frontend/array";
 import * as core from "./frontend/core";
 import * as vmapModule from "./frontend/vmap";
-import { deepEqual, RecursiveArray } from "./utils";
+import { deepEqual } from "./utils";
 
 export { Array, array, DType, eye, scalar };
 

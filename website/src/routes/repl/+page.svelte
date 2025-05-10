@@ -94,6 +94,7 @@ const y = np.dot(X, np.array([1, 2])).add(3);
     const { rollup } = await import("@rollup/browser");
 
     await jax.init();
+    jax.setBackend("webgpu");
 
     const userCode = replEditor.getText();
 

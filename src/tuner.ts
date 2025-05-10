@@ -24,18 +24,14 @@
 
 import { accessorGlobal, AluExp, AluOp, AluVar, DType, Kernel } from "./alu";
 import { ShapeTracker, unravelAlu } from "./shape";
-import { DEBUG, deepEqual, prod } from "./utils";
-
-// gidx = (0 ... dim.local ... dim.reduce)
-// ridx = (dim.groups .[group index].
-//         dim.reduce .[reduce loop].
-//         dim.unroll .[upcast]. dim.upcast)
-// uidx = (dim.upcast .[unroll]. ...)
-// result[gidx + uidx] = <<< eval(kernel.exp) >>>;
+import { DEBUG, deepEqual, lexCompare, prod, range } from "./utils";
 
 export interface TuneResult {
   /** New expression with GlobalView ops and gidx/ridx lowered. */
   exp: AluExp;
+
+  /** Expression for indexing the result array, if upcasting. */
+  outputIdxExp?: AluExp;
 
   /**
    * Number of threads in a group.
@@ -55,9 +51,10 @@ export interface TuneResult {
 
 /** Stores dimensions of the kernel's applied shape. Globals start at 0. */
 class TuneDims {
-  st: ShapeTracker; // Shape tracker for the optimizations.
+  st: ShapeTracker; // Shape tracker including reduction axes.
+  outputSt: ShapeTracker; // Shape tracker including only output axes.
 
-  // local: number; // TODO: Split gidx -> global and local dimensions during tuning.
+  // local: number; // TODO: Split gidx -> global and local axes during tuning.
   groups: number; // Reductions start here, with groups.
   reduce: number; // Single reduction thread.
   unroll: number; // Upcast along the reduce dimension.
@@ -65,10 +62,77 @@ class TuneDims {
 
   constructor(shape: number[]) {
     this.st = ShapeTracker.fromShape(shape);
+    this.outputSt = ShapeTracker.fromShape(shape.slice(0, -1));
     this.groups = this.st.shape.length - 1;
     this.reduce = this.st.shape.length - 1;
     this.unroll = this.st.shape.length;
     this.upcast = this.st.shape.length;
+  }
+
+  applyUpcast(axis: number, amount: number) {
+    if (axis >= this.groups)
+      throw new Error("Cannot upcast along reduction axis");
+    const length = this.st.shape[axis];
+    if (length % amount !== 0)
+      throw new Error(`Upcast by ${amount} on axis length ${length}`);
+    this.st = this.st
+      .reshape([
+        ...this.st.shape.slice(0, axis),
+        length / amount,
+        amount,
+        ...this.st.shape.slice(axis + 1),
+      ])
+      .permute([
+        ...range(axis + 1),
+        ...range(axis + 2, this.st.shape.length + 1),
+        axis + 1,
+      ]);
+    this.outputSt = this.outputSt
+      .reshape([
+        ...this.outputSt.shape.slice(0, axis),
+        length / amount,
+        amount,
+        ...this.outputSt.shape.slice(axis + 1),
+      ])
+      .permute([
+        ...range(axis + 1),
+        ...range(axis + 2, this.outputSt.shape.length + 1),
+        axis + 1,
+      ]);
+  }
+
+  applyUnroll(axis: number, amount: number) {
+    if (axis < this.groups) throw new Error("Cannot unroll non-reduce axis");
+    if (axis >= this.unroll) throw new Error("Axis already unrolled");
+    const length = this.st.shape[axis];
+    if (length % amount !== 0)
+      throw new Error(`Unroll by ${amount} on axis length ${length}`);
+    // We're unrolling away the whole axis.
+    if (length === amount) {
+      this.st = this.st.permute([
+        ...range(axis),
+        ...range(axis + 1, this.upcast),
+        axis,
+        ...range(this.upcast, this.st.shape.length),
+      ]);
+      if (axis < this.reduce) this.reduce--;
+      this.unroll--;
+    } else {
+      this.st = this.st
+        .reshape([
+          ...this.st.shape.slice(0, axis),
+          length / amount,
+          amount,
+          ...this.st.shape.slice(axis + 1),
+        ])
+        .permute([
+          ...range(axis + 1),
+          ...range(axis + 2, this.upcast + 1), // Move to just before upcast
+          axis + 1,
+          ...range(this.upcast + 1, this.st.shape.length + 1),
+        ]);
+      this.upcast++;
+    }
   }
 }
 
@@ -95,8 +159,8 @@ export function tuneNullopt(kernel: Kernel): TuneResult {
 
 /** Tuning for WebGPU kernels. */
 export function tuneWebgpu(kernel: Kernel): TuneResult {
-  if (!kernel.reduction) return tuneNullopt(kernel);
   const { exp, reduction } = kernel;
+  if (!reduction) return tuneNullopt(kernel);
 
   // 1. Check that kernel GlobalView ops have consistent src[], where the last
   //    dimension is reduction, and others are gidx.
@@ -117,6 +181,8 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
       return tuneNullopt(kernel);
     }
   }
+  if (shape[shape.length - 1] !== reduction.size)
+    throw new Error("Invariant violation: shape doesn't match reduction size.");
 
   // 2. Collect all shape trackers for kernel GlobalView ops.
   const sts: ShapeTracker[] = globalViews.map((gv) => gv.arg[1]);
@@ -127,7 +193,42 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
 
   // 3. Apply heuristic optimizations based on the shape trackers.
   const dim = new TuneDims(shape);
-  void reduction; // TODO: Edit the `dim` object to reflect new dims.
+
+  // Try to do upcasts of non-reduce axes, with amount = 3,4.
+  // Heuristic is based on strides, and borrowed from tinygrad.
+  const upcastedAxis = new Set<number>();
+  while (prod(dim.st.shape.slice(0, dim.groups)) >= 1024) {
+    const choices: number[][] = [];
+    const composedSts = sts.map((st) => st.compose(dim.st));
+    for (let axis = 0; axis < dim.groups; axis++) {
+      for (const amount of [3, 4]) {
+        // Axis is not upcasted, divisible, and has a buffer with stride 0 on
+        // that axis (mem coalescing) while not already a stride-0 upcast.
+        if (
+          !upcastedAxis.has(axis) &&
+          dim.st.shape[axis] % amount === 0 &&
+          composedSts.some(
+            (st) =>
+              st.lastStrides[axis] === 0 &&
+              st.lastStrides.slice(dim.unroll).every((stride) => stride > 0),
+          )
+        ) {
+          let nonzeroStrides = 0;
+          let totalStrides = 0;
+          for (const st of composedSts) {
+            nonzeroStrides += st.lastStrides[axis] > 0 ? 1 : 0;
+            totalStrides += st.lastStrides[axis];
+          }
+          choices.push([nonzeroStrides, totalStrides, axis, amount]);
+        }
+      }
+    }
+    if (choices.length > 0) {
+      choices.sort(lexCompare);
+      dim.applyUpcast(choices[0][2], choices[0][3]);
+      upcastedAxis.add(choices[0][2]);
+    }
+  }
 
   // 4. Return the tuned kernel result.
   const indices: AluExp[] = [];
@@ -165,6 +266,16 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
     }
   });
 
+  const outputGidx = dim.outputSt.shape.slice(0, dim.groups);
+  const outputUpcast = dim.outputSt.shape.slice(dim.groups);
+  const [outputIdxExp, _] = dim.outputSt.toAluExp([
+    ...unravelAlu(
+      outputGidx,
+      AluExp.special(DType.Int32, "gidx", prod(outputGidx)),
+    ),
+    ...unravelAlu(outputUpcast, AluVar.upcast), // Needs later substitution.
+  ]);
+
   // Sanity-check that reduction size looks correct.
   if (prod(dim.st.shape.slice(dim.groups, dim.upcast)) !== reduction.size) {
     throw new Error(
@@ -175,6 +286,7 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
 
   return {
     exp: newExp,
+    outputIdxExp,
     groups: prod(dim.st.shape.slice(dim.groups, dim.reduce)),
     reduce: prod(dim.st.shape.slice(dim.reduce, dim.unroll)),
     unroll: prod(dim.st.shape.slice(dim.unroll, dim.upcast)),

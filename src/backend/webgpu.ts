@@ -188,8 +188,17 @@ function pipelineSource(
   device: GPUDevice,
   kernel: Kernel,
 ): { shader: string; grid: [number, number] } {
-  const tune = tuneWebgpu(kernel); // TODO: Use this
-  const exp = tune.exp;
+  const tune = tuneWebgpu(kernel);
+
+  if (tune.groups ?? 1 > 1) {
+    throw new Error("WebGPU backend does not support group optimization yet");
+  }
+  if (tune.unroll ?? 1 > 1) {
+    throw new Error("WebGPU backend does not support unrolling yet");
+  }
+  if (tune.upcast ?? 1 > 1) {
+    throw new Error("WebGPU backend does not support upcasting yet");
+  }
 
   const { nargs } = kernel;
   const args = Array.from({ length: nargs }, (_, i) => `in${i}`);
@@ -238,23 +247,27 @@ function pipelineSource(
   const gensym = () => `alu${gensymCount++}`;
 
   const usedArgs = Array.from({ length: nargs }, () => false);
-  const references = new Map<AluExp, number>();
-  const seen = new Set<AluExp>();
-  const countReferences = (exp: AluExp) => {
-    references.set(exp, (references.get(exp) ?? 0) + 1);
+  kernel.exp.fold((exp) => {
     if (exp.op === AluOp.GlobalIndex) usedArgs[exp.arg] = true;
-    if (!seen.has(exp)) {
-      seen.add(exp);
-      for (const src of exp.src) countReferences(src);
-    }
-  };
-  countReferences(exp);
+  });
 
   // Insert phony assignments for inputs that are not in use.
   // https://github.com/gpuweb/gpuweb/discussions/4582#discussioncomment-9146686
   for (let i = 0; i < args.length; i++) {
     if (!usedArgs[i]) emit(`_ = &${args[i]};`);
   }
+
+  // TODO: Fix reference counting for upcast / unroll substitution.
+  const references = new Map<AluExp, number>();
+  const seen = new Set<AluExp>();
+  const countReferences = (exp: AluExp) => {
+    references.set(exp, (references.get(exp) ?? 0) + 1);
+    if (!seen.has(exp)) {
+      seen.add(exp);
+      for (const src of exp.src) countReferences(src);
+    }
+  };
+  countReferences(tune.exp);
 
   const expContext = new Map<AluExp, string>();
   const gen = (exp: AluExp): string => {
@@ -308,16 +321,16 @@ function pipelineSource(
   };
 
   if (!kernel.reduction) {
-    emit(`result[gidx] = ${gen(exp)};`);
+    emit(`result[gidx] = ${gen(tune.exp)};`);
   } else {
     // Simple, unoptimized reduction kernel.
     const re = kernel.reduction;
     emit(
       `var acc: ${dtypeToWgsl(re.dtype)} = ${constToWgsl(re.dtype, re.identity)};`,
-      `for (var ridx: i32 = 0; ridx < ${re.size}; ridx++) {`,
+      `for (var ridx: i32 = 0; ridx < ${tune.reduce}; ridx++) {`,
       pushIndent,
     );
-    const item = gen(exp);
+    const item = gen(tune.exp);
     if (re.op === AluOp.Add) emit(`acc += ${item};`);
     else if (re.op === AluOp.Mul) emit(`acc *= ${item};`);
     else if (re.op === AluOp.Min) emit(`acc = min(acc, ${item});`);

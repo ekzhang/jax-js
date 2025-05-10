@@ -62,6 +62,16 @@ export function deepEqual(a: any, b: any): boolean {
   return true;
 }
 
+/** Compare two arrays of numbers lexicographically. */
+export function lexCompare(a: number[], b: number[]): number {
+  const minLength = Math.min(a.length, b.length);
+  for (let i = 0; i < minLength; i++) {
+    if (a[i] < b[i]) return -1;
+    if (a[i] > b[i]) return 1;
+  }
+  return a.length - b.length;
+}
+
 export function range(
   start: number,
   stop?: number,

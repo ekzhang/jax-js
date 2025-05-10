@@ -521,7 +521,7 @@ export class AluExp {
   }
 
   /** Generic fold() operation with a reducer over the expression tree. */
-  #treeFold<T = void>(reducer: (exp: AluExp, mappedSrc: T[]) => T): T {
+  fold<T = void>(reducer: (exp: AluExp, mappedSrc: T[]) => T): T {
     const visited = new Map<AluExp, T>();
     const recurse = (exp: AluExp): T => {
       if (visited.has(exp)) return visited.get(exp)!;
@@ -535,7 +535,7 @@ export class AluExp {
 
   /** Rewrite the expression recursively using a visitor. */
   rewrite(visitor: (exp: AluExp) => AluExp | undefined | null): AluExp {
-    return this.#treeFold<AluExp>((exp, newSrc) => {
+    return this.fold<AluExp>((exp, newSrc) => {
       if (
         newSrc.length === exp.src.length &&
         newSrc.every((s, i) => s === exp.src[i])
@@ -552,7 +552,7 @@ export class AluExp {
   /** Collect all nodes that satisfy a predicate. */
   collect(predicate: (exp: AluExp) => boolean): AluExp[] {
     const result: AluExp[] = [];
-    this.#treeFold((exp) => {
+    this.fold((exp) => {
       if (predicate(exp)) result.push(exp);
     });
     return result;
