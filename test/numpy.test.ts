@@ -1,8 +1,7 @@
-import { grad, init, jvp, numpy as np, setBackend } from "@jax-js/core";
+import { grad, init, jvp, numpy as np } from "@jax-js/core";
 import { expect, suite, test } from "vitest";
 
-await init("webgpu");
-setBackend("webgpu");
+await init("cpu");
 
 suite("jax.numpy.eye()", () => {
   test("computes a square matrix", () => {
