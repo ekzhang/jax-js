@@ -33,6 +33,7 @@ npm test
   - [x] "Upcast" optimizations (compute a tile per thread, e.g., matmul)
   - [ ] "Unroll" optimizations (multiple loop iters per thread, e.g., matmul)
   - [ ] "Group" optimizations (multiple threads per value, e.g., matvec)
+  - [ ] Blocks respect local dimensions
 - [ ] We figure out the `dispose()` / refcount / linear types stuff
 - [ ] Demos: Navier-Stokes, neural networks, statistics
 - [ ] Wasm backend (needs malloc)

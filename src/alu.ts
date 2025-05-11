@@ -512,7 +512,7 @@ export class AluExp {
         return globals(gid, bufidx);
       }
       case AluOp.GlobalView: {
-        // Note: Doesn't take into account reductions / ridx.
+        // Note: This branch is very slow.
         if (!globals) throw new Error("Missing globals function");
         const gid: number = this.arg[0];
         const st: ShapeTracker = this.arg[1];

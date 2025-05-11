@@ -9,22 +9,22 @@
 <main class="mx-auto my-12 px-4 sm:px-6 max-w-screen-md">
   <div class="mb-10">
     <h1 class="text-6xl text-center font-bold mb-4">jax-js</h1>
-    <p class="italic text-center">
-      Numerical computing foundations for the web
-    </p>
+    <p class="italic text-center">Numerical foundations for the web</p>
   </div>
 
   <p class="mb-6">
-    Have you ever wanted to use NumPy or PyTorch from the browser?
+    Have you ever wanted to use NumPy or PyTorch in your browser?
   </p>
 
   <pre class="mb-6 text-center"><code>npm install @jax-js/core</code></pre>
 
   <p class="mb-6">
-    <code>jax-js</code> brings high-performance WebAssembly and GPU kernels to
-    JavaScript. Develop, run, and distribute neural networks, data
-    visualizations, image algorithms, and all sorts of other numerical
-    applications. <code>jax-js</code> aims for feature parity with Python libraries.
+    This is a machine learning framework that brings high-performance,
+    <a href="https://docs.jax.dev/en/latest/" target="_blank" class="link"
+      >JAX</a
+    >-style Wasm and WebGPU kernels to JavaScript. Run neural networks, image
+    algorithms, simulations, and all sorts of other numerical applications
+    without leaving the browser.
   </p>
 
   <div class="mb-6 grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4">
@@ -44,13 +44,13 @@
   </div>
 
   <p class="mb-6">
-    Like the <a href="https://jax.dev" target="_blank" class="link"
-      >JAX Python library</a
-    >
-    it's based on, <code>jax-js</code> is carefully optimized, including a JIT
-    compiler and GPU kernel scheduler. It's also
-    <strong>extremely fast and portable</strong>, running on Chrome, Firefox,
-    Safari, iOS, and Android, while having best-in-class performance.
+    <code>jax-js</code> is likely the most portable ML framework, since it runs
+    anywhere a browser can run (Chrome, Firefox, Safari, iOS, and Android). It's
+    also simple but optimized, including a JIT compiler and GPU kernel scheduler
+    based on a pared-down version of
+    <a href="https://github.com/tinygrad/tinygrad" target="_blank" class="link"
+      >tinygrad</a
+    >.
   </p>
 
   <div class="mb-6 border h-48 flex items-center justify-center square-grid">
@@ -61,13 +61,13 @@
   </div>
 
   <p class="mb-6">
-    How is this possible? <code>jax-js</code> compiles math into optimized
-    WebAssembly, WebGL, and WebGPU code on modern browsers. Its generated code
-    is even faster than specialized neural network libraries like
+    The built-in compiler lets it achieve best-in-class performance on the web.
+    <code>jax-js</code> compiles math into optimized WebAssembly, WebGL, and
+    WebGPU code on modern browsers. Its generated code is multiple times faster
+    than other browser ML frameworks like
     <a href="https://www.tensorflow.org/js/" target="_blank" class="link"
-      >Google's TensorFlow</a
-    >
-    at running their own models.
+      >TensorFlow.js</a
+    > (Google).
   </p>
 
   <p class="mb-6">
@@ -78,13 +78,13 @@
   </p>
 
   <p class="mb-6">
-    NumPy (2005), PyTorch (2016), and JAX (2018) revolutionized numerical
-    computing and sparked a flourishing ecosystem in Python. <code>jax-js</code>
-    aspires to provide that same foundation for JavaScript.
+    NumPy, PyTorch, and JAX revolutionized numerical computing in Python.
+    <code>jax-js</code> aspires to provide that same general foundation for JavaScript—the
+    world's largest software platform.
   </p>
 
   <p>
-    Try it in the
+    It's still in development, but you can try it in the
     <a href="{base}/repl" class="link">jax-js REPL</a>.
   </p>
 </main>

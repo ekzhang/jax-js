@@ -291,7 +291,7 @@ const y = np.dot(X, np.array([1, 2])).add(3);
         </p>
         <p class="text-sm mb-4">
           The goal is having NumPy and JAX-like APIs <em>in the browser</em>, on
-          WASM or WebGPU — with JIT compilation.
+          Wasm or WebGPU — with JIT compilation.
         </p>
 
         <pre class="mb-4 text-sm bg-gray-100 px-2 py-1 rounded"><code
