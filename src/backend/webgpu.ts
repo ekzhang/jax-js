@@ -190,8 +190,7 @@ function pipelineSource(
 ): { shader: string; grid: [number, number] } {
   const tune = tuneWebgpu(kernel);
   if (DEBUG >= 3) {
-    console.info(kernel.exp.toString());
-    console.info(tune.exp.toString());
+    console.info(`kernel.exp: ${kernel.exp}\ntune.exp: ${tune.exp}`);
   }
 
   const { nargs, reduction: re } = kernel;

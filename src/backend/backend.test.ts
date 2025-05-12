@@ -167,7 +167,7 @@ suite.each(backendTypes)("backend:%s", (backendType) => {
   test("performs 64x64 matmul", async () => {
     const backend = getBackend(backendType);
 
-    // This shouold trigger an optimization via Upcast/Unroll.
+    // This should trigger an optimization via Upcast/Unroll.
     const n = 64;
     const array = new Float32Array(n * n);
     for (let i = 0; i < array.length; ++i) array[i] = 1.0;

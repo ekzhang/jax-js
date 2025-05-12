@@ -296,15 +296,27 @@ export class Array extends Tracer {
 
     // Short circuit if all are already AluExp.
     if (arrays.every((ar) => ar.#source instanceof AluExp)) {
-      const exp = custom(arrays.map((ar) => ar.#source as AluExp));
-      // BUG: What if their shape trackers are different?
-      return new Array(exp, arrays[0].#st, exp.dtype, arrays[0].#backend);
+      if (arrays.every((ar) => deepEqual(ar.#st, arrays[0].#st))) {
+        // All are AluExp and have the same shape tracker.
+        const exp = custom(arrays.map((ar) => ar.#source as AluExp));
+        return new Array(exp, arrays[0].#st, exp.dtype, backend);
+      }
+      // If their shape trackers are different, we need to normalize them.
+      const exp = custom(
+        arrays.map((ar) => {
+          const src = ar.#source as AluExp;
+          if (ar.#st.contiguous) return src;
+          return accessorAluExp(src, ar.#st, unravelAlu(newShape, AluVar.idx));
+        }),
+      );
+      const st = ShapeTracker.fromShape(newShape);
+      return new Array(exp, st, exp.dtype, backend);
     }
 
     const inputs: Slot[] = [];
     const src: AluExp[] = [];
     for (const ar of arrays) {
-      const indices = unravelAlu(ar.#st.shape, AluVar.gidx);
+      const indices = unravelAlu(newShape, AluVar.gidx);
       if (ar.#source instanceof AluExp) {
         src.push(accessorAluExp(ar.#source, ar.#st, indices));
       } else {

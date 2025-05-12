@@ -10,6 +10,7 @@ npm test
 
 ## Next on Eric's mind
 
+- Add movement ops to arrays / the frontend primitive
 - How many threads to create per workgroup, depends on hardware
 - Should I define matmul in terms of `jit()`, or make it a separate primitive
   - Maybe the primitive can be some kind of einsum for dot/vecdot/matmul/diagonal/…

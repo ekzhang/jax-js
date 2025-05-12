@@ -172,6 +172,12 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
   const { exp, reduction } = kernel;
   if (!reduction) return tuneNullopt(kernel);
 
+  const globalIndexes = exp.collect((exp) => exp.op === AluOp.GlobalIndex);
+  if (globalIndexes.length > 0) {
+    if (DEBUG >= 4) console.log("Tuning: Found GlobalIndex ops, skipping opt.");
+    return tuneNullopt(kernel);
+  }
+
   // 1. Check that kernel GlobalView ops have consistent src[], where the last
   //    dimension is reduction, and others are gidx.
   const globalViews = exp.collect((exp) => exp.op === AluOp.GlobalView);
