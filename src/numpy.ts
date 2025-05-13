@@ -148,8 +148,17 @@ export function fliplr(x: ArrayLike): Array {
   return flip(x, 1);
 }
 
+/** Flatten an array to 1D without changing its data. */
+export function flatten(x: ArrayLike): Array {
+  return fudgeArray(x).flatten();
+}
+
+/** Flatten an array to 1D without changing its data. Alias for flatten. */
+export function ravel(x: ArrayLike): Array {
+  return fudgeArray(x).ravel();
+}
+
 // Alternate or equivalent names for functions, from numpy.
-export const permuteDims = transpose;
 
 // Version of pureArray with fudged types.
 const fudgeArray = pureArray as (x: ArrayLike) => Array;

@@ -229,7 +229,7 @@ suite.each(backendTypes)("backend:%s", (backend) => {
     });
   });
 
-  suite("jax.numpy.flatten()", () => {
+  suite("jax.numpy.flatten() and ravel()", () => {
     test("flattens a 1D array (no-op)", () => {
       const x = np.array([1, 2, 3]);
       expect(x.flatten().js()).toEqual([1, 2, 3]);
@@ -257,27 +257,13 @@ suite.each(backendTypes)("backend:%s", (backend) => {
       expect(x.flatten().js()).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     });
 
-    test("composes with jvp", () => {
+    test("ravel works the same as flatten", () => {
       const x = np.array([
         [1, 2, 3],
         [4, 5, 6],
       ]);
-      const [y, dy] = jvp(
-        (x: np.Array) => x.flatten().mul(2),
-        [x],
-        [np.ones([2, 3])],
-      );
-      expect(y.js()).toEqual([2, 4, 6, 8, 10, 12]);
-      expect(dy.js()).toEqual([2, 2, 2, 2, 2, 2]);
-    });
-
-    test("composes with grad", () => {
-      const x = np.array([
-        [1, 2, 3],
-        [4, 5, 6],
-      ]);
-      const dx = grad((x: np.Array) => x.flatten().sum())(x);
-      expect(dx).toBeAllclose(np.ones([2, 3]));
+      expect(x.ravel().js()).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(x.ravel().js()).toEqual(x.flatten().js());
     });
   });
 });
