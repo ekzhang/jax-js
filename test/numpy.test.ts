@@ -245,8 +245,14 @@ suite.each(backendTypes)("backend:%s", (backend) => {
 
     test("flattens a 3D array", () => {
       const x = np.array([
-        [[1, 2], [3, 4]],
-        [[5, 6], [7, 8]],
+        [
+          [1, 2],
+          [3, 4],
+        ],
+        [
+          [5, 6],
+          [7, 8],
+        ],
       ]);
       expect(x.flatten().js()).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     });
