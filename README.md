@@ -47,7 +47,7 @@ import { numpy as np, setBackend } from "@jax-js/jax";
 setBackend("webgpu");
 
 const x = np.ones([4096, 4096]);
-const y = x.matmul(x); // JIT-compiled into a GPU kernel
+const y = np.dot(x, x); // JIT-compiled into a matrix multiplication kernel
 ```
 
 ## Development
