@@ -246,8 +246,8 @@ function vmapJaxpr(
     shape.splice(dims[i], 0, axisSize); // Insert the mapped axis into the shape.
     return new ShapedArray(shape, v.aval.dtype);
   });
-  const { jaxpr: newJaxpr, consts: newConsts } = makeJaxpr(
-    (...args: Tracer[]) => vmapFlat(jaxprAsFun(jaxpr), dims, args),
+  const { jaxpr: newJaxpr, consts: newConsts } = makeJaxpr((args: Tracer[]) =>
+    vmapFlat(jaxprAsFun(jaxpr), dims, args),
   )(inAvals);
   const result = { newJaxpr, newConsts };
 

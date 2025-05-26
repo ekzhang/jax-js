@@ -6,6 +6,7 @@ import {
   makeJaxpr,
   numpy as np,
   vjp,
+  vmap,
 } from "@jax-js/jax";
 import { expect, suite, test } from "vitest";
 
@@ -186,5 +187,16 @@ suite("jax.jit()", () => {
     expect(grad(f)(10)).toBeAllclose(20);
     expect(grad(grad(f))(10)).toBeAllclose(2);
     expect(grad(jit(grad(f)))(10)).toBeAllclose(2);
+  });
+
+  test("vmap-of-jit", () => {
+    const s = jit((x: np.Array) => x.sum());
+    const ar = np.array([
+      [1, 2, 3],
+      [4, 5, 6],
+    ]);
+    expect(s(ar).js()).toEqual(21);
+    expect(vmap(s, [0])(ar).js()).toEqual([6, 15]);
+    expect(vmap(s, [1])(ar).js()).toEqual([5, 7, 9]);
   });
 });
