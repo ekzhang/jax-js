@@ -85,10 +85,11 @@ suite.each(backendTypes)("backend:%s", (backend) => {
       const y = np.array([4, 5, 6]);
       const z = np.array([true, false, true]);
       const f = ({ x, y }: { x: np.Array; y: np.Array }) =>
-        np.where(z, x, y).sum();
+        np.where(z.ref, x, y).sum();
       const grads = grad(f)({ x, y });
       expect(grads.x.js()).toEqual([1, 0, 1]);
       expect(grads.y.js()).toEqual([0, 1, 0]);
+      z.dispose();
     });
 
     test("where broadcasting", () => {
@@ -155,7 +156,7 @@ suite.each(backendTypes)("backend:%s", (backend) => {
 
     test("composes with grad", () => {
       const x = np.ones([3, 4]);
-      const dx = grad((x: np.Array) => x.transpose().sum())(x);
+      const dx = grad((x: np.Array) => x.transpose().sum())(x.ref);
       expect(dx).toBeAllclose(x);
     });
   });
