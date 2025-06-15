@@ -111,7 +111,7 @@ suite("jax.linearize()", () => {
   });
 
   test("works for simple arrays", () => {
-    const [y, lin] = linearize((x: np.Array) => x.mul(x), np.array([2, 3]));
+    const [y, lin] = linearize((x: np.Array) => x.ref.mul(x), np.array([2, 3]));
     expect(y).toBeAllclose(np.array([4, 9]));
     expect(lin(np.array([1, 0]))).toBeAllclose(np.array([4, 0]));
     expect(lin(np.array([0, 1]))).toBeAllclose(np.array([0, 6]));
@@ -144,7 +144,7 @@ suite("jax.vjp()", () => {
 
 suite("jax.grad()", () => {
   test("works for a simple scalar function", () => {
-    const f = (x: np.Array) => x.mul(x).mul(x); // d/dx (x^3) = 3x^2
+    const f = (x: np.Array) => x.ref.mul(x.ref).mul(x); // d/dx (x^3) = 3x^2
     const df = grad(f);
     expect(df(4)).toBeAllclose(48);
     expect(df(5)).toBeAllclose(75);

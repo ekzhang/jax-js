@@ -46,6 +46,15 @@ class JVPTracer extends Tracer {
   toString(): string {
     return `JVPTracer(${this.primal.toString()}, ${this.tangent.toString()})`;
   }
+
+  get ref() {
+    this.primal.ref, this.tangent.ref;
+    return this;
+  }
+  dispose() {
+    this.primal.dispose();
+    this.tangent.dispose();
+  }
 }
 
 class JVPTrace extends Trace {
@@ -87,26 +96,28 @@ const jvpRules: Record<Primitive, JvpRule> = {
     return [[x.add(y)], [dx.add(dy)]];
   },
   [Primitive.Mul]([x, y], [dx, dy]) {
-    return [[x.mul(y)], [x.mul(dy).add(dx.mul(y))]];
+    return [[x.ref.mul(y.ref)], [x.mul(dy).add(dx.mul(y))]];
   },
   [Primitive.Neg]([x], [dx]) {
     return [[x.neg()], [dx.neg()]];
   },
   [Primitive.Sin]([x], [dx]) {
-    return [[sin(x)], [cos(x).mul(dx)]];
+    return [[sin(x.ref)], [cos(x).mul(dx)]];
   },
   [Primitive.Cos]([x], [dx]) {
-    return [[cos(x)], [neg(sin(x)).mul(dx)]];
+    return [[cos(x.ref)], [neg(sin(x)).mul(dx)]];
   },
   [Primitive.ReduceSum]([x], [dx], { axis }: { axis: number[] }) {
     return [[reduceSum(x, axis)], [reduceSum(dx, axis)]];
   },
-  [Primitive.Compare]([x, y], _tangents, { op }: { op: CompareOp }) {
+  [Primitive.Compare]([x, y], tangents, { op }: { op: CompareOp }) {
+    for (const t of tangents) t.dispose();
     const primal = compare(x, y, op);
     return [[primal], [zerosLike(primal)]];
   },
-  [Primitive.Where]([cond, x, y], [_, dx, dy]) {
-    return [[where(cond, x, y)], [where(cond, dx, dy)]];
+  [Primitive.Where]([cond, x, y], [dcond, dx, dy]) {
+    dcond.dispose();
+    return [[where(cond.ref, x, y)], [where(cond, dx, dy)]];
   },
   [Primitive.Transpose]([x], [dx], { perm }: { perm: number[] }) {
     return [[transpose(x, perm)], [transpose(dx, perm)]];

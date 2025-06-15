@@ -87,6 +87,14 @@ class BatchTracer extends Tracer {
     return `BatchTracer(${this.val.toString()}, ${this.batchDim})`;
   }
 
+  get ref() {
+    this.val.ref;
+    return this;
+  }
+  dispose() {
+    this.val.dispose();
+  }
+
   fullLower(): Tracer {
     if (this.batchDim === null) {
       return this.val.fullLower();

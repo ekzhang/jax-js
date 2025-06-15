@@ -375,21 +375,55 @@ function typecheckAtom(env: Set<Var>, x: Atom): ShapedArray {
 export function evalJaxpr(jaxpr: Jaxpr, args: Tracer[]): Tracer[] {
   const env = new Map<Var, Tracer>();
 
+  // Number of usages of each variable, in an eqn or the output.
+  // Needed for reference tracking / move semantics.
+  const usageCount = new Map<Var, number>();
+  for (const x of jaxpr.eqns.flatMap((eqn) => eqn.inputs).concat(jaxpr.outs)) {
+    if (x instanceof Var) usageCount.set(x, (usageCount.get(x) ?? 0) + 1);
+  }
+
+  const remainingRefs = new Map<Var, number>();
+
   // TODO: Use correct backend when constructing scalar() here.
-  const read = (x: Atom) =>
-    x instanceof Var ? env.get(x)! : scalar(x.value, { dtype: x.dtype });
-  const write = (v: Var, val: Tracer) => {
-    if (env.has(v)) throw new Error(`Variable already bound: ${v}`);
-    env.set(v, val);
+  const read = (x: Atom) => {
+    if (x instanceof Var) {
+      remainingRefs.set(x, (remainingRefs.get(x) ?? 0) - 1);
+      return env.get(x)!;
+    } else {
+      return scalar(x.value, { dtype: x.dtype });
+    }
   };
 
-  for (const [v, arg] of zip(jaxpr.inBinders, args)) write(v, arg);
-  for (const eqn of jaxpr.eqns) {
-    const inVals = eqn.inputs.map(read);
-    const outVals = bind(eqn.primitive, inVals, eqn.params);
-    for (const [v, val] of zip(eqn.outBinders, outVals)) write(v, val);
+  const write = (v: Var, val: Tracer) => {
+    if (env.has(v)) throw new Error(`Variable already bound: ${v}`);
+    let refCount = usageCount.get(v) ?? 0;
+    if (refCount) {
+      env.set(v, val);
+      remainingRefs.set(v, refCount);
+      while (refCount-- > 1) val.ref;
+    } else {
+      val.dispose(); // If variable not used, dispose immediately.
+    }
+  };
+
+  try {
+    for (const [v, arg] of zip(jaxpr.inBinders, args)) write(v, arg);
+    for (const eqn of jaxpr.eqns) {
+      const inVals = eqn.inputs.map(read);
+      const outVals = bind(eqn.primitive, inVals, eqn.params);
+      for (const [v, val] of zip(eqn.outBinders, outVals)) write(v, val);
+    }
+    return jaxpr.outs.map(read);
+  } catch (error) {
+    // Clean up any remaining references on error, to avoid leaking memory.
+    for (let [v, refCount] of remainingRefs.entries()) {
+      if (refCount > 0) {
+        const tracer = env.get(v)!;
+        while (refCount--) tracer.dispose();
+      }
+    }
+    throw error;
   }
-  return jaxpr.outs.map(read);
 }
 
 /** Convert a Jaxpr to a callable function by evaluating it. */
@@ -409,6 +443,12 @@ class JaxprTracer extends Tracer {
   toString(): string {
     return `JaxprTracer(${this.aval.strShort()})`;
   }
+
+  // JaxprTracer does not hold any resources, no need to be reference counted.
+  get ref() {
+    return this;
+  }
+  dispose() {}
 }
 
 /** Analogous to the 'DynamicJaxprTrace' class in JAX. */

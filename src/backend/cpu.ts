@@ -6,12 +6,12 @@ import { tuneNullopt } from "../tuner";
 export class CPUBackend implements Backend {
   type: BackendType = "cpu";
 
-  readonly buffers: Map<Slot, { ref: number; buffer: ArrayBuffer }>;
-  nextSlot: number;
+  #buffers: Map<Slot, { ref: number; buffer: ArrayBuffer }>;
+  #nextSlot: number;
 
   constructor() {
-    this.buffers = new Map();
-    this.nextSlot = 1;
+    this.#buffers = new Map();
+    this.#nextSlot = 1;
   }
 
   malloc(size: number, initialData?: ArrayBuffer): Slot {
@@ -23,23 +23,23 @@ export class CPUBackend implements Backend {
       new Uint8Array(buffer).set(new Uint8Array(initialData));
     }
 
-    const slot = this.nextSlot++;
-    this.buffers.set(slot, { buffer, ref: 1 });
+    const slot = this.#nextSlot++;
+    this.#buffers.set(slot, { buffer, ref: 1 });
     return slot;
   }
 
   incRef(slot: Slot): void {
-    const buffer = this.buffers.get(slot);
+    const buffer = this.#buffers.get(slot);
     if (!buffer) throw new SlotError(slot);
     buffer.ref++;
   }
 
   decRef(slot: Slot): void {
-    const buffer = this.buffers.get(slot);
+    const buffer = this.#buffers.get(slot);
     if (!buffer) throw new SlotError(slot);
     buffer.ref--;
     if (buffer.ref === 0) {
-      this.buffers.delete(slot);
+      this.#buffers.delete(slot);
     }
   }
 
@@ -107,7 +107,7 @@ export class CPUBackend implements Backend {
   }
 
   #getBuffer(slot: Slot): ArrayBuffer {
-    const buffer = this.buffers.get(slot);
+    const buffer = this.#buffers.get(slot);
     if (!buffer) throw new SlotError(slot);
     return buffer.buffer;
   }

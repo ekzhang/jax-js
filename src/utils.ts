@@ -62,6 +62,20 @@ export function deepEqual(a: any, b: any): boolean {
   return true;
 }
 
+/** Splits the list based on a condition, `false` first then `true`. */
+export function partitionList<T>(which: boolean[], array: T[]): [T[], T[]] {
+  const falseList: T[] = [];
+  const trueList: T[] = [];
+  for (let i = 0; i < which.length; i++) {
+    if (which[i]) {
+      trueList.push(array[i]);
+    } else {
+      falseList.push(array[i]);
+    }
+  }
+  return [falseList, trueList];
+}
+
 /** Compare two arrays of numbers lexicographically. */
 export function lexCompare(a: number[], b: number[]): number {
   const minLength = Math.min(a.length, b.length);

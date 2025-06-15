@@ -28,44 +28,71 @@ import {
   Trace,
   Tracer,
   TracerValue,
+  UseAfterFreeError,
 } from "./core";
 import { Jaxpr } from "./jaxpr";
 import { jitCompile } from "./jit";
 
 const JsArray = globalThis.Array;
 
+/**
+ * An executable operation that will be dispatched to the backend.
+ *
+ * This holds a reference to all input buffers used in the operation. After the
+ * operation is dispatched, the references should be released.
+ */
 export class PendingExecute {
   prepared: Executable | null = null;
   submitted = false;
   #promise: Promise<void> | null = null; // for prepare
+  #rc = 1; // since this could be held by multiple arrays, cancel when it hits 0
 
   constructor(
+    readonly backend: Backend,
     readonly kernel: Kernel,
     readonly inputs: Slot[],
     readonly outputs: Slot[],
-  ) {}
+  ) {
+    // Take a reference to all input buffers, while this execution is pending.
+    // The reference is dropped after submit() or cancellation.
+    for (const slot of inputs) this.backend.incRef(slot);
+  }
 
-  async prepare(backend: Backend) {
+  // Change the reference count of the PendingExecute object.
+  // Used when copying the object to a new Array, or disposing an array.
+  updateRc(delta: number) {
+    if (this.#rc <= 0) throw new Error("internal: PendingExecute used rc<=0");
+    this.#rc += delta;
+    if (this.#rc <= 0 && !this.submitted) {
+      // Cancel operation, release the references held to all input buffers.
+      for (const slot of this.inputs) this.backend.decRef(slot);
+    }
+  }
+
+  async prepare() {
     if (this.prepared) return;
     if (this.#promise) {
       await this.#promise;
       return;
     }
     this.#promise = (async () => {
-      this.prepared = await backend.prepare(this.kernel);
+      this.prepared = await this.backend.prepare(this.kernel);
     })();
     await this.#promise;
   }
 
-  prepareSync(backend: Backend) {
+  prepareSync() {
     if (this.prepared) return;
-    this.prepared = backend.prepareSync(this.kernel);
+    this.prepared = this.backend.prepareSync(this.kernel);
   }
 
-  submit(backend: Backend) {
+  submit() {
     if (this.submitted) return;
-    if (!this.prepared) throw new Error("Not prepared yet");
-    backend.dispatch(this.prepared, this.inputs, this.outputs);
+    if (this.#rc <= 0) throw new Error("internal: PendingExecute used rc<=0");
+    if (!this.prepared) throw new Error("internal: Not prepared yet");
+    this.submitted = true;
+    this.backend.dispatch(this.prepared, this.inputs, this.outputs);
+    for (const slot of this.inputs) this.backend.decRef(slot);
   }
 }
 
@@ -89,6 +116,7 @@ export class Array extends Tracer {
   #source: AluExp | Slot;
   #st: ShapeTracker;
   #backend: Backend;
+  #rc: number; // reference count for this specific Array object
   #pendingSet: Set<PendingExecute> | null; // only if source is `Slot`
 
   constructor(
@@ -104,20 +132,47 @@ export class Array extends Tracer {
     this.#source = source;
     this.#st = st;
     this.#backend = backend;
+    this.#rc = 1;
     this.#pendingSet = new Set(pending);
+
+    if (!(source instanceof AluExp)) {
+      backend.incRef(source); // decRef() is called when this.#rc hits 0.
+    }
   }
 
   get aval() {
     return new ShapedArray(this.#st.shape, this.#dtype);
   }
 
+  /** Return a simple string representation of the array's dimensions. */
+  toString(): string {
+    return `Array:${this.#dtype}[${this.shape.join(",")}]`;
+  }
+
   get backend(): BackendType {
     return this.#backend.type;
   }
 
-  /** Return a simple string representation of the array's dimensions. */
-  toString(): string {
-    return `Array:${this.#dtype}[${this.shape.join(",")}]`;
+  #check() {
+    if (this.#rc <= 0) throw new UseAfterFreeError(this);
+  }
+
+  get ref() {
+    this.#check();
+    this.#rc++;
+    return this;
+  }
+
+  dispose() {
+    this.#check();
+    if (this.#rc-- === 0) {
+      // Free any pending executables that haven't been submitted yet.
+      for (const exe of this.#pending) exe.updateRc(-1);
+      // If this has an array source, free it from the backend.
+      if (typeof this.#source === "number") {
+        this.#backend.decRef(this.#source);
+      }
+    }
   }
 
   /** Get the pending executes as a list, trimming if already submitted. */
@@ -154,17 +209,17 @@ export class Array extends Tracer {
   }
 
   #reshape(st: ShapeTracker): Array {
-    return new Array(
-      this.#source,
-      st,
-      this.#dtype,
-      this.#backend,
-      this.#pending,
-    );
+    this.#check();
+    const pending = this.#pending;
+    for (const exe of pending) exe.updateRc(+1);
+    const ar = new Array(this.#source, st, this.#dtype, this.#backend, pending);
+    this.dispose(); // After constructing Array, so we don't free this.#source early.
+    return ar;
   }
 
   /** Move axes to the rightmost dimension of the shape. */
   #moveAxesDown(axis: number[]): Array {
+    this.#check();
     if (axis.length === 0) return this.reshape(this.shape.concat(1));
     const newShape: number[] = [];
     const keptAxes: number[] = [];
@@ -182,12 +237,14 @@ export class Array extends Tracer {
   }
 
   #transpose(perm: number[]): Array {
+    this.#check();
     if (!isPermutation(perm, this.ndim))
       throw new Error(`Invalid perm for transpose: ${JSON.stringify(perm)}`);
     return this.#reshape(this.#st.permute(perm));
   }
 
   #unary(op: AluOp) {
+    this.#check();
     // Short circuit if the array is already AluExp.
     if (this.#source instanceof AluExp) {
       const exp = new AluExp(op, this.#dtype, [this.#source]);
@@ -200,10 +257,13 @@ export class Array extends Tracer {
     ]);
     const kernel = new Kernel(1, this.#st.size, exp);
     const output = this.#backend.malloc(kernel.size * 4);
-    const pending = [
-      ...this.#pending,
-      new PendingExecute(kernel, [this.#source], [output]),
-    ];
+    const pending = [...this.#pending];
+    for (const exe of pending) exe.updateRc(+1);
+    pending.push(
+      new PendingExecute(this.#backend, kernel, [this.#source], [output]),
+    );
+
+    this.dispose(); // Dispose of inputs after creating PendingExecute.
     return new Array(
       output,
       ShapeTracker.fromShape(this.shape),
@@ -228,6 +288,8 @@ export class Array extends Tracer {
     const n = arrays.length;
     const backend = arrays[0].#backend;
     if (n === 0) throw new TypeError(`No inputs for ${name}`);
+
+    for (const ar of arrays) ar.#check();
 
     let dtype: DType | undefined;
     for (let i = 0; i < n; i++) {
@@ -301,10 +363,11 @@ export class Array extends Tracer {
     const exp = custom(src);
     const kernel = new Kernel(inputs.length, arrays[0].#st.size, exp);
     const output = backend.malloc(kernel.size * 4);
-    const pending = [
-      ...arrays.flatMap((ar) => ar.#pending),
-      new PendingExecute(kernel, inputs, [output]),
-    ];
+    const pending = [...arrays.flatMap((ar) => ar.#pending)];
+    for (const exe of pending) exe.updateRc(+1);
+    pending.push(new PendingExecute(backend, kernel, inputs, [output]));
+
+    for (const ar of arrays) ar.dispose(); // Dispose of inputs after creating PendingExecute.
     return new Array(
       output,
       ShapeTracker.fromShape(newShape),
@@ -316,6 +379,7 @@ export class Array extends Tracer {
 
   /** Reduce the last dimension of the array by an operation. */
   #reduce(op: AluOp): Array {
+    this.#check();
     if (this.ndim === 0) throw new Error("Cannot reduce a scalar");
     const shape = this.shape;
     const reduction = new Reduction(this.#dtype, op, shape[shape.length - 1]);
@@ -346,10 +410,11 @@ export class Array extends Tracer {
 
     const kernel = new Kernel(inputs.length, newSize, exp, reduction);
     const output = this.#backend.malloc(kernel.size * 4);
-    const pending = [
-      ...this.#pending,
-      new PendingExecute(kernel, inputs, [output]),
-    ];
+    const pending = [...this.#pending];
+    for (const exe of pending) exe.updateRc(+1);
+    pending.push(new PendingExecute(this.#backend, kernel, inputs, [output]));
+
+    this.dispose(); // Dispose of inputs after creating PendingExecute.
     return new Array(
       output,
       ShapeTracker.fromShape(newShape),
@@ -368,12 +433,18 @@ export class Array extends Tracer {
    * Calling this twice is a no-op.
    */
   #realize(): void {
+    this.#check();
     const indices = unravelAlu(this.#st.shape, AluVar.gidx);
     if (this.#source instanceof AluExp) {
       const exp = accessorAluExp(this.#source, this.#st, indices);
       const kernel = new Kernel(0, this.#st.size, exp);
       const output = this.#backend.malloc(kernel.size * 4);
-      const pendingItem = new PendingExecute(kernel, [], [output]);
+      const pendingItem = new PendingExecute(
+        this.#backend,
+        kernel,
+        [],
+        [output],
+      );
       this.#source = output;
       this.#st = ShapeTracker.fromShape(this.shape);
       this.#pendingSet = new Set([pendingItem]);
@@ -383,7 +454,12 @@ export class Array extends Tracer {
       const exp = accessorGlobal(this.#dtype, 0, this.#st, indices);
       const kernel = new Kernel(1, this.#st.size, exp);
       const output = this.#backend.malloc(kernel.size * 4);
-      const pendingItem = new PendingExecute(kernel, [this.#source], [output]);
+      const pendingItem = new PendingExecute(
+        this.#backend,
+        kernel,
+        [this.#source],
+        [output],
+      );
       this.#source = output;
       this.#st = ShapeTracker.fromShape(this.shape);
       this.#pendingSet ??= new Set();
@@ -397,10 +473,11 @@ export class Array extends Tracer {
     const pending = this.#pending;
     if (pending) {
       // Compile all pending executables concurrently.
-      await Promise.all(pending.map((exe) => exe.prepare(this.#backend)));
-      for (const p of pending) p.submit(this.#backend);
+      await Promise.all(pending.map((exe) => exe.prepare()));
+      for (const p of pending) p.submit();
     }
     const buf = await this.#backend.read(this.#source as Slot);
+    this.dispose();
     return this.dtype === DType.Float32
       ? new Float32Array(buf)
       : new Int32Array(buf);
@@ -408,14 +485,16 @@ export class Array extends Tracer {
 
   /** Wait for this array to be placed on the backend, if needed. */
   async wait(): Promise<void> {
+    this.#check();
     if (this.#source instanceof AluExp) return;
     const pending = this.#pending;
     if (pending) {
       // Compile all pending executables concurrently.
-      await Promise.all(pending.map((exe) => exe.prepare(this.#backend)));
-      for (const p of pending) p.submit(this.#backend);
+      await Promise.all(pending.map((exe) => exe.prepare()));
+      for (const p of pending) p.submit();
     }
     await this.#backend.read(this.#source, 0, 0);
+    this.dispose();
   }
 
   /**
@@ -425,10 +504,11 @@ export class Array extends Tracer {
   dataSync(): Float32Array | Int32Array {
     this.#realize();
     for (const p of this.#pending) {
-      p.prepareSync(this.#backend);
-      p.submit(this.#backend);
+      p.prepareSync();
+      p.submit();
     }
     const buf = this.#backend.readSync(this.#source as Slot);
+    this.dispose();
     return this.dtype === DType.Float32
       ? new Float32Array(buf)
       : new Int32Array(buf);
@@ -507,8 +587,9 @@ export class Array extends Tracer {
         const { outputs, pending } = jp.execute(
           tracers.map((x) => x._realizeSource()),
         );
-        // Dispatch order of pending kernels is important.
-        pending.splice(0, 0, ...args.flatMap((x) => x.#pending));
+        const prevPending = args.flatMap((x) => x.#pending);
+        for (const exe of prevPending) exe.updateRc(+1);
+        pending.splice(0, 0, ...prevPending); // Dispatch order of pending kernels is important.
         return outputs.map((source, i) => {
           return new Array(
             source,

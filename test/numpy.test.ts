@@ -37,7 +37,7 @@ suite.each(backendTypes)("backend:%s", (backend) => {
 
     test("can be multiplied", () => {
       const x = np.eye(3, 5).mul(-42);
-      expect(x.sum()).toBeAllclose(-126);
+      expect(x.ref.sum()).toBeAllclose(-126);
       expect(x).toBeAllclose([
         [-42, 0, 0, 0, 0],
         [0, -42, 0, 0, 0],
@@ -104,7 +104,7 @@ suite.each(backendTypes)("backend:%s", (backend) => {
     test("computes equal", () => {
       const x = np.array([1, 2, 3, 4]);
       const y = np.array([4, 5, 3, 4]);
-      expect(np.equal(x, y).js()).toEqual([false, false, true, true]);
+      expect(np.equal(x.ref, y.ref).js()).toEqual([false, false, true, true]);
       expect(np.notEqual(x, y).js()).toEqual([true, true, false, false]);
     });
 
@@ -145,11 +145,11 @@ suite.each(backendTypes)("backend:%s", (backend) => {
         [4, 5, 6],
       ]);
       const [y, dy] = jvp(
-        (x: np.Array) => x.transpose().mul(x.transpose()),
+        (x: np.Array) => x.ref.transpose().mul(x.transpose()),
         [x],
         [np.ones([2, 3])],
       );
-      expect(y).toBeAllclose(x.mul(x).transpose());
+      expect(y).toBeAllclose(x.ref.mul(x.ref).transpose());
       expect(dy).toBeAllclose(x.mul(2).transpose());
     });
 
@@ -214,11 +214,11 @@ suite.each(backendTypes)("backend:%s", (backend) => {
         [1, 2, 3],
         [4, 5, 6],
       ]);
-      expect(np.flip(x).js()).toEqual([
+      expect(np.flip(x.ref).js()).toEqual([
         [6, 5, 4],
         [3, 2, 1],
       ]);
-      expect(np.flip(x, 0).js()).toEqual([
+      expect(np.flip(x.ref, 0).js()).toEqual([
         [4, 5, 6],
         [1, 2, 3],
       ]);

@@ -2,13 +2,15 @@ import { numpy as np } from "@jax-js/jax";
 import { expect } from "vitest";
 
 expect.extend({
-  toBeAllclose(received: np.ArrayLike, expected: np.ArrayLike) {
+  toBeAllclose(actual: np.ArrayLike, expected: np.ArrayLike) {
     const { isNot } = this;
+    const actualArray = np.array(actual);
+    const expectedArray = np.array(expected);
     return {
-      pass: np.allclose(received, expected),
+      pass: np.allclose(actualArray.ref, expectedArray.ref),
       message: () => `expected array to be${isNot ? " not" : ""} allclose`,
-      actual: np.array(received).js(),
-      expected: np.array(expected).js(),
+      actual: actualArray.js(),
+      expected: expectedArray.js(),
     };
   },
 });

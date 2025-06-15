@@ -208,6 +208,55 @@ export abstract class Tracer {
   abstract get aval(): AbstractValue;
   abstract toString(): string;
 
+  /**
+   * Access an array by reference, incrementing the reference count.
+   *
+   * jax-js handles freeing arrays by using "move" semantics, like in Rust/C++.
+   * Whenever you pass an array into a function, that function should consume
+   * the array, and it will no longer be usable. For example, if you had:
+   *
+   * ```
+   * const x = np.array([1, 2, 3]);
+   * const y = np.add(x, x);
+   * ```
+   *
+   * The second line does not work because the first parameter consumes `x`, and
+   * then the second parameter will already have been freed / disposed.
+   *
+   * To fix this, you can write:
+   *
+   * ```
+   * const y = np.add(x.ref, x);
+   * ```
+   *
+   * Under the hood, every access to `.ref` increments the internal reference
+   * count of the array. The reference count starts at 1. When it hits 0, the
+   * memory behind the array is freed.
+   */
+  abstract get ref(): this;
+
+  /**
+   * Manually decrement the reference count of the array.
+   *
+   * Arrays are created with reference count 1. Whenever it is used as argument
+   * to a function or other operation, it is disposed (i.e., reference count
+   * decreases by 1) automatically. Whenever a `.ref` is created, the reference
+   * count increases.
+   *
+   * You generally don't need to call this function directly since arrays are
+   * automatically disposed after being passed into an operation. One common
+   * exception is when writing a function and ignoring one of its arguments. In
+   * that case, by convention you should dispose of that argument manually.
+   *
+   * ```
+   * function myCustomOperation(a: np.Array, b: np.Array) {
+   *   b.dispose(); // Needed to satisfy "move" rules.
+   *   return a.add(1);
+   * }
+   * ```
+   */
+  abstract dispose(): void;
+
   get shape() {
     return this.aval.shape;
   }
@@ -410,4 +459,12 @@ export function flattenFun(
     return outFlat;
   };
   return [flatFun, store];
+}
+
+export class UseAfterFreeError extends ReferenceError {
+  constructor(tracer: Tracer) {
+    super(
+      `Referenced tracer ${tracer.toString()} freed, please use .ref move semantics`,
+    );
+  }
 }

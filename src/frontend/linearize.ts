@@ -2,7 +2,7 @@
 
 import { DType } from "../alu";
 import { flatten as treeFlatten, unflatten as treeUnflatten } from "../tree";
-import { invertPermutation, toposort, unzip2 } from "../utils";
+import { invertPermutation, partitionList, toposort, unzip2 } from "../utils";
 import { pureArray, scalar, zeros } from "./array";
 import {
   AbstractValue,
@@ -70,12 +70,16 @@ function partialEvalFlat(
   const main = newMain(PartialEvalTrace);
   const trace = new PartialEvalTrace(main);
   const tracersIn = pvalsIn.map((pval) => trace.newArg(pval));
+  const unknownTracersIn = tracersIn
+    .filter((t) => !t.pval.isKnown)
+    .map((t) => t.ref);
+
   const outs = f(...tracersIn);
   const tracersOut: PartialEvalTracer[] = outs.map((out: TracerValue) =>
     fullRaise(trace, out),
   );
-  const pvalsOut = tracersOut.map((t) => t.pval);
-  const unknownTracersIn = tracersIn.filter((t) => !t.pval.isKnown);
+
+  const pvalsOut = tracersOut.map((t) => t.pval); // Ownership either transferred here, or in the next line.
   const unknownTracersOut = tracersOut.filter((t) => !t.pval.isKnown);
   const { jaxpr, consts } = partialEvalGraphToJaxpr(
     unknownTracersIn,
@@ -160,35 +164,33 @@ type JaxprRecipe =
       // Note: Not really a constant, actually just a "known" value translated
       // into unknown for abstract evaluation rules.
       type: "Const";
-      val: Tracer;
+      val: Tracer; // holds reference
     }
   | {
       type: "JaxprEqn";
       prim: Primitive;
-      tracersIn: PartialEvalTracer[];
+      tracersIn: PartialEvalTracer[]; // holds reference
       params: Record<string, any>;
       avalsOut: ShapedArray[];
       tracerRefsOut: WeakRef<PartialEvalTracer>[];
     };
 
 class PartialEvalTracer extends Tracer {
+  #rc: number; // PartialEvalTracer reference count, used to free references.
+
+  // Note: Either pval is known and recipe is null, or pval is unknown and
+  // recipe describes how to compute the value.
   constructor(
     trace: Trace,
     readonly pval: PartialVal,
     readonly recipe: JaxprRecipe | null,
   ) {
     super(trace);
+    this.#rc = 1;
   }
 
   get aval(): AbstractValue {
     return this.pval.aval;
-  }
-
-  fullLower(): Tracer {
-    if (this.pval.isKnown) {
-      return this.pval.val!;
-    }
-    return this;
   }
 
   toString(): string {
@@ -198,10 +200,39 @@ class PartialEvalTracer extends Tracer {
       return `PartialEvalTracer<${this.recipe.type}>(${this.pval.toString()})`;
     }
   }
+
+  get ref() {
+    this.#rc++;
+    return this;
+  }
+  dispose() {
+    if (--this.#rc === 0) {
+      // Clear reference to the recipe and pval, if needed.
+      if (this.pval.isKnown) {
+        this.pval.val!.dispose();
+      } else if (this.recipe) {
+        if (this.recipe.type === "Const") {
+          this.recipe.val.dispose();
+        } else if (this.recipe.type === "JaxprEqn") {
+          this.recipe.tracersIn.forEach((t) => t.dispose());
+        }
+      }
+    }
+  }
+
+  fullLower(): Tracer {
+    if (this.pval.isKnown) {
+      const val = this.pval.val!.ref;
+      this.dispose();
+      return val;
+    }
+    return this;
+  }
 }
 
 class PartialEvalTrace extends Trace {
   newArg(pval: PartialVal) {
+    if (pval.isKnown) return new PartialEvalTracer(this, pval, null);
     return new PartialEvalTracer(this, pval, { type: "LambdaBinding" });
   }
 
@@ -216,10 +247,9 @@ class PartialEvalTrace extends Trace {
     } else {
       // Translate known value into unknown "Const" recipe for abstract eval.
       const pval = PartialVal.unknown(ShapedArray.fromAval(tracer.aval));
-      return new PartialEvalTracer(this, pval, {
-        type: "Const",
-        val: tracer.pval.val!,
-      });
+      const val = tracer.pval.val!.ref;
+      tracer.dispose();
+      return new PartialEvalTracer(this, pval, { type: "Const", val });
     }
   }
 
@@ -252,9 +282,14 @@ class PartialEvalTrace extends Trace {
       avalsOut,
       tracerRefsOut: [], // Populated later on
     };
-    const tracersOut = avalsOut.map(
-      (aval) => new PartialEvalTracer(this, PartialVal.unknown(aval), recipe),
-    );
+    const tracersOut = avalsOut.map((aval, i) => {
+      if (i > 0) {
+        // Make sure we increment reference count for each tracer in the recipe,
+        // since they belong to multiple PartialEvalTracers.
+        tracersIn.forEach((t) => t.ref);
+      }
+      return new PartialEvalTracer(this, PartialVal.unknown(aval), recipe);
+    });
     recipe.tracerRefsOut = tracersOut.map((t) => new WeakRef(t));
     return tracersOut;
   }
@@ -270,60 +305,37 @@ class PartialEvalTrace extends Trace {
     numConsts: number,
     tracers: PartialEvalTracer[],
   ): Tracer[] {
+    void numConsts; // Unused
     jaxpr = jaxpr.flatten(); // Otherwise, we don't partially evaluate nested Jaxprs well.
 
-    const knownEqns: JaxprEqn[] = [];
-
-    const inKnown = tracers.map((t) => t.pval.isKnown);
-    const knownIns = jaxpr.inBinders.filter((_, i) => inKnown[i]);
-    const knownVars = new Set(knownIns); // Var that we can evaluate immediately.
-    for (const eqn of jaxpr.eqns) {
-      if (eqn.inputs.every((x) => x instanceof Lit || knownVars.has(x))) {
-        knownEqns.push(eqn);
-        for (const v of eqn.outBinders) {
-          knownVars.add(v);
-        }
-      }
-    }
-    const outKnown = jaxpr.outs.map(
-      (x) => x instanceof Lit || knownVars.has(x),
+    const inUnknowns = tracers.map((t) => !t.pval.isKnown);
+    const { jaxpr1, jaxpr2, outUnknowns, numRes } = partialEvalJaxpr(
+      jaxpr,
+      inUnknowns,
     );
-    const knownOuts = jaxpr.outs.filter((_, i) => outKnown[i]);
-    const unknownOuts = jaxpr.outs.filter((_, i) => !outKnown[i]);
 
-    // This should not call an infinite recursion because all of these tracers are
-    // known, so fullLower() unwraps the PartialEvalTrace layer.
-    const knownJaxpr = new Jaxpr(knownIns, knownEqns, knownOuts).simplify();
-    const outs1 = bind(
+    const [knownTracers, unknownTracers] = partitionList(inUnknowns, tracers);
+
+    const outs1Res = bind(
       Primitive.JitCall,
-      tracers.filter((_, i) => inKnown[i]).map((t) => t.fullLower()),
-      {
-        jaxpr: knownJaxpr,
-        numConsts: inKnown
-          .slice(0, numConsts)
-          .reduce((a, b) => a + Number(b), 0),
-      },
+      knownTracers.map((t) => t.ref.fullLower()),
+      { jaxpr: jaxpr1, numConsts: 0 },
     );
+    const outs1 = outs1Res.slice(0, jaxpr1.outs.length - numRes);
+    const res = outs1Res.slice(jaxpr1.outs.length - numRes);
 
-    // Next, create a Jaxpr that _only_ produces the unknown outputs.
-    const unknownJaxpr = new Jaxpr(
-      jaxpr.inBinders,
-      jaxpr.eqns,
-      unknownOuts,
-    ).simplify();
-
-    // Evaluate those as usual.
-    const tracersIn = tracers.map((t) => this.instantiateConst(t));
+    const resTracers = res.map((x) =>
+      this.instantiateConst(fullRaise(this, x) as PartialEvalTracer),
+    );
     const recipe: JaxprRecipe = {
       type: "JaxprEqn",
       prim: Primitive.JitCall,
-      tracersIn,
-      params: { jaxpr: unknownJaxpr, numConsts },
-      avalsOut: unknownOuts.map((x) => x.aval),
-      tracerRefsOut: [], // Populated later on
+      tracersIn: resTracers.concat(unknownTracers),
+      params: { jaxpr: jaxpr2, numConsts: 0 },
+      avalsOut: jaxpr2.outs.map((x) => x.aval),
+      tracerRefsOut: [], // populated later
     };
-    console.log(`${unknownJaxpr} ` + tracersIn.join(","));
-    const outs2 = unknownOuts.map(
+    const outs2 = jaxpr2.outs.map(
       (x) => new PartialEvalTracer(this, PartialVal.unknown(x.aval), recipe),
     );
     recipe.tracerRefsOut = outs2.map((t) => new WeakRef(t));
@@ -331,8 +343,65 @@ class PartialEvalTrace extends Trace {
     // Stitch the known and unknown output tracers together, both with JitCall.
     let i = 0;
     let j = 0;
-    return outKnown.map((known) => (known ? outs1[i++] : outs2[j++]));
+    return outUnknowns.map((unk) => (unk ? outs2[j++] : outs1[i++]));
   }
+}
+
+/** Partially evaluate a Jaxpr, returning an immediate and residual Jaxpr. */
+function partialEvalJaxpr(
+  jaxpr: Jaxpr,
+  inUnknowns: boolean[],
+  instantiate?: boolean[],
+): { jaxpr1: Jaxpr; jaxpr2: Jaxpr; outUnknowns: boolean[]; numRes: number } {
+  jaxpr = jaxpr.flatten(); // Otherwise, we don't partially evaluate nested Jaxprs well.
+
+  const knownIns = jaxpr.inBinders.filter((_, i) => !inUnknowns[i]);
+  const knownVars = new Set(knownIns); // Var that we can evaluate immediately.
+  const residuals = new Set<Var>(); // Vars to evaluate in eqns1, and pass to eqns2 (subset of knownVars).
+
+  const eqns1: JaxprEqn[] = [];
+  const eqns2: JaxprEqn[] = [];
+  for (const eqn of jaxpr.eqns) {
+    if (eqn.primitive === Primitive.JitCall) {
+      throw new TypeError("partialEvalJaxpr requires flattened Jaxpr");
+    }
+    const hasUnknowns = eqn.inputs.some(
+      (x) => x instanceof Var && !knownVars.has(x),
+    );
+    if (hasUnknowns) {
+      for (const x of eqn.inputs) {
+        if (x instanceof Var && knownVars.has(x)) {
+          residuals.add(x);
+        }
+      }
+      eqns2.push(eqn);
+    } else {
+      eqns1.push(eqn);
+      for (const v of eqn.outBinders) {
+        knownVars.add(v);
+      }
+    }
+  }
+  const outUnknowns = jaxpr.outs.map(
+    (x) => x instanceof Var && !knownVars.has(x),
+  );
+  // If instantiate is provided, move selected outputs into residuals.
+  if (instantiate !== undefined) {
+    for (let i = 0; i < jaxpr.outs.length; i++) {
+      const x = jaxpr.outs[i];
+      if (instantiate[i] && !outUnknowns[i] && x instanceof Var) {
+        residuals.add(x);
+        outUnknowns[i] = true; // Mark as unknown.
+      }
+    }
+  }
+
+  const residualsL = Array.from(residuals);
+  const [ins1, ins2] = partitionList(inUnknowns, jaxpr.inBinders);
+  const [outs1, outs2] = partitionList(outUnknowns, jaxpr.outs);
+  const jaxpr1 = new Jaxpr(ins1, eqns1, outs1.concat(residualsL));
+  const jaxpr2 = new Jaxpr(residualsL.concat(ins2), eqns2, outs2);
+  return { jaxpr1, jaxpr2, outUnknowns, numRes: residualsL.length };
 }
 
 /**
@@ -344,8 +413,7 @@ function partialEvalGraphToJaxpr(
   tracersOut: PartialEvalTracer[],
 ): { jaxpr: Jaxpr; consts: Tracer[] } {
   const tracerToVar = new Map<PartialEvalTracer, Var>();
-  const constidToVar = new Map<Tracer, Var>();
-  const constvarToVal = new Map<Var, Tracer>();
+  const constToVar = new Map<Tracer, Var>();
   const processedEqns = new Set<JaxprRecipe>(); // Avoid translating the same equation multiple times.
   const eqns: JaxprEqn[] = [];
 
@@ -366,11 +434,10 @@ function partialEvalGraphToJaxpr(
       }
     } else if (t.recipe.type === "Const") {
       const val = t.recipe.val;
-      let binder = constidToVar.get(val);
+      let binder = constToVar.get(val);
       if (!binder) {
         binder = new Var(ShapedArray.fromAval(val.aval));
-        constidToVar.set(val, binder);
-        constvarToVal.set(binder, val);
+        constToVar.set(val, binder);
       }
       tracerToVar.set(t, binder);
     } else if (t.recipe.type === "JaxprEqn") {
@@ -391,7 +458,7 @@ function partialEvalGraphToJaxpr(
     }
   }
 
-  const [constvars, consts] = unzip2(constvarToVal.entries());
+  const [consts, constvars] = unzip2(constToVar.entries());
   const inBinders = [
     ...constvars,
     ...tracersIn.map((t) => tracerToVar.get(t)!),
@@ -399,6 +466,12 @@ function partialEvalGraphToJaxpr(
   const outVars = tracersOut.map((t) => tracerToVar.get(t)!);
   const jaxpr = new Jaxpr(inBinders, eqns, outVars);
   typecheckJaxpr(jaxpr); // sanity check
+
+  // Fix up reference counts.
+  for (const t of consts) t.ref;
+  for (const t of tracersIn) t.dispose();
+  for (const t of tracersOut) t.dispose();
+
   return { jaxpr: jaxpr.simplify(), consts };
 }
 
@@ -461,12 +534,14 @@ function evalJaxprTransposed(
   for (let i = jaxpr.eqns.length - 1; i >= 0; i--) {
     const eqn = jaxpr.eqns[i];
     // Inputs are primalsIn and cotangentsOut, outputs are cotangentsIn. We're
-    // using the known primal values to _pull back_  cotangents for unknown
+    // using the known primal values to _pull back_ cotangents for unknown
     // values. Tricky!
     const primalsIn = eqn.inputs.map((v) =>
       v instanceof Lit
         ? scalar(v.value, { dtype: v.dtype }) // TODO: Use correct backend
-        : (knownPrimals.get(v) ?? new UndefPrimal(v.aval)),
+        : knownPrimals.has(v)
+          ? knownPrimals.get(v)!.ref
+          : new UndefPrimal(v.aval),
     );
     const cotangentsOut = eqn.outBinders.map(readCotangent);
     const rule = transposeRules[eqn.primitive];
@@ -481,6 +556,7 @@ function evalJaxprTransposed(
       }
     }
   }
+  for (const t of knownPrimals.values()) t.dispose();
 
   const results: Tracer[] = [];
   for (let i = 0; i < jaxpr.inBinders.length; i++) {
@@ -512,7 +588,7 @@ type TransposeRule = (
 const transposeRules: Partial<Record<Primitive, TransposeRule>> = {
   [Primitive.Mul]([ct], [x, y]) {
     // BUG: Doesn't handle broadcasting.
-    if (x instanceof UndefPrimal && y instanceof UndefPrimal)
+    if (x instanceof UndefPrimal !== y instanceof UndefPrimal)
       throw new NonlinearError(Primitive.Mul);
     return [
       x instanceof UndefPrimal ? mul(ct, y as Tracer) : null,
@@ -520,18 +596,22 @@ const transposeRules: Partial<Record<Primitive, TransposeRule>> = {
     ];
   },
   [Primitive.Neg]([ct], [x]) {
-    if (!(x instanceof UndefPrimal)) return [null];
+    if (!(x instanceof UndefPrimal)) throw new NonlinearError(Primitive.Neg);
     return [neg(ct)];
   },
   [Primitive.Add]([ct], [x, y]) {
     // BUG: Doesn't handle broadcasting.
-    return [
-      x instanceof UndefPrimal ? ct : null,
-      y instanceof UndefPrimal ? ct : null,
-    ];
+    if (!(x instanceof UndefPrimal || y instanceof UndefPrimal))
+      throw new NonlinearError(Primitive.Add);
+    if (x instanceof UndefPrimal && y instanceof UndefPrimal)
+      return [ct.ref, ct];
+    return x instanceof UndefPrimal
+      ? ((y as Tracer).dispose(), [ct, null])
+      : ((x as Tracer).dispose(), [null, ct]);
   },
   [Primitive.ReduceSum]([ct], [x], { axis }: { axis: number[] }) {
-    if (!(x instanceof UndefPrimal)) return [null];
+    if (!(x instanceof UndefPrimal))
+      throw new NonlinearError(Primitive.ReduceSum);
     return [broadcast(ct, x.aval.shape, axis)];
   },
   // BUG: Doesn't handle broadcasting.
@@ -540,27 +620,39 @@ const transposeRules: Partial<Record<Primitive, TransposeRule>> = {
     const cts: (Tracer | null)[] = [null, null, null];
     if (cond instanceof UndefPrimal) throw new NonlinearError(Primitive.Where);
     if (x instanceof UndefPrimal) {
-      cts[1] = where(cond, ct, zeros(x.aval.shape, { dtype: x.aval.dtype }));
+      // TODO: Use correct backend.
+      const zerosX = zeros(x.aval.shape, { dtype: x.aval.dtype });
+      cts[1] = where(cond.ref, ct, zerosX);
+    } else {
+      x.dispose();
     }
     if (y instanceof UndefPrimal) {
-      cts[2] = where(cond, zeros(y.aval.shape, { dtype: y.aval.dtype }), ct);
+      // TODO: Use correct backend.
+      const zerosY = zeros(x.aval.shape, { dtype: x.aval.dtype });
+      cts[2] = where(cond.ref, zerosY, ct);
+    } else {
+      y.dispose();
     }
+    cond.dispose();
     return cts;
   },
   [Primitive.Transpose]([ct], [x], { perm }: { perm: number[] }) {
-    if (!(x instanceof UndefPrimal)) return [null];
+    if (!(x instanceof UndefPrimal))
+      throw new NonlinearError(Primitive.Transpose);
     return [transpose(ct, invertPermutation(perm))];
   },
   [Primitive.Broadcast]([ct], [x], { axis }: { axis: number[] }) {
-    if (!(x instanceof UndefPrimal)) return [null];
+    if (!(x instanceof UndefPrimal))
+      throw new NonlinearError(Primitive.Broadcast);
     return [reduceSum(ct, axis)];
   },
   [Primitive.Reshape]([ct], [x], _: { shape: number[] }) {
-    if (!(x instanceof UndefPrimal)) return [null];
+    if (!(x instanceof UndefPrimal))
+      throw new NonlinearError(Primitive.Reshape);
     return [reshape(ct, x.aval.shape)];
   },
   [Primitive.Flip]([ct], [x], { axis }: { axis: number[] }) {
-    if (!(x instanceof UndefPrimal)) return [null];
+    if (!(x instanceof UndefPrimal)) throw new NonlinearError(Primitive.Flip);
     return [flip(ct, axis)];
   },
   [Primitive.JitCall](cts, args, { jaxpr }: { jaxpr: Jaxpr }) {

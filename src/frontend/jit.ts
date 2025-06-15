@@ -64,7 +64,9 @@ export class JitProgram {
           ) {
             throw new Error(`internal: JitProgram scope undefined`);
           }
-          pending.push(new PendingExecute(step.kernel, inputs, outputs));
+          pending.push(
+            new PendingExecute(this.backend, step.kernel, inputs, outputs),
+          );
           break;
         }
         case "const":

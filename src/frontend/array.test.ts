@@ -17,10 +17,10 @@ suite.each(backendTypes)("backend:%s", (backend) => {
     const ar = zeros([3, 3]);
     expect(ar.shape).toEqual([3, 3]);
     expect(ar.dtype).toEqual("float32");
-    expect(await ar.data()).toEqual(
+    expect(await ar.ref.data()).toEqual(
       new Float32Array([0, 0, 0, 0, 0, 0, 0, 0, 0]),
     );
-    expect(await ar.transpose().data()).toEqual(
+    expect(await ar.ref.transpose().data()).toEqual(
       new Float32Array([0, 0, 0, 0, 0, 0, 0, 0, 0]),
     );
     expect(ar.transpose().dataSync()).toEqual(
@@ -50,7 +50,7 @@ suite.each(backendTypes)("backend:%s", (backend) => {
     const c = a.mul(b);
     expect(c.shape).toEqual([4]);
     expect(c.dtype).toEqual("float32");
-    expect(c.dataSync()).toEqual(new Float32Array([10, 10, 6, -34]));
+    expect(c.ref.dataSync()).toEqual(new Float32Array([10, 10, 6, -34]));
     expect(c.reshape([2, 2]).transpose().dataSync()).toEqual(
       new Float32Array([10, 6, 10, -34]),
     );
@@ -64,7 +64,7 @@ suite.each(backendTypes)("backend:%s", (backend) => {
       ],
     ]); // 3D
     expect(a.shape).toEqual([1, 2, 2]);
-    expect(a.flatten().js()).toEqual([1, 2, 3, 4]);
+    expect(a.ref.flatten().js()).toEqual([1, 2, 3, 4]);
     expect(a.ravel().js()).toEqual([1, 2, 3, 4]);
     expect(array(3).flatten().js()).toEqual([3]);
   });
@@ -72,17 +72,17 @@ suite.each(backendTypes)("backend:%s", (backend) => {
   test("can add array to itself", () => {
     const a = array([1, 2, 3]);
     // Make sure duplicate references don't trip up the backend.
-    const b = a.add(a).add(a);
+    const b = a.ref.add(a.ref).add(a);
     expect(b.dataSync()).toEqual(new Float32Array([3, 6, 9]));
   });
 
   test("can coerce array to primitive", () => {
     const a = array(42);
-    expect(a).toBeCloseTo(42);
+    expect(a.ref).toBeCloseTo(42);
 
     // https://github.com/microsoft/TypeScript/issues/42218
-    expect(+(a as any)).toEqual(42);
-    expect((a as any) + 1).toEqual(43);
+    expect(+(a.ref as any)).toEqual(42);
+    expect((a.ref as any) + 1).toEqual(43);
     expect((a as any) ** 2).toEqual(42 ** 2);
   });
 
@@ -91,14 +91,14 @@ suite.each(backendTypes)("backend:%s", (backend) => {
     expect(a.shape).toEqual([3]);
     expect(a.dtype).toEqual("bool");
 
-    expect(a.dataSync()).toEqual(new Int32Array([1, 0, 1]));
-    expect(a.js()).toEqual([true, false, true]);
+    expect(a.ref.dataSync()).toEqual(new Int32Array([1, 0, 1]));
+    expect(a.ref.js()).toEqual([true, false, true]);
 
     const b = array([1, 3, 4]);
-    expect(b.greater(2).js()).toEqual([false, true, true]);
-    expect(b.greater(2).dataSync()).toEqual(new Int32Array([0, 1, 1]));
+    expect(b.ref.greater(2).js()).toEqual([false, true, true]);
+    expect(b.ref.greater(2).dataSync()).toEqual(new Int32Array([0, 1, 1]));
 
-    expect(b.equal(3).js()).toEqual([false, true, false]);
+    expect(b.ref.equal(3).js()).toEqual([false, true, false]);
     expect(b.notEqual(array([2, 3, 4])).js()).toEqual([true, false, false]);
   });
 });

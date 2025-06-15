@@ -62,6 +62,7 @@ npm test
 
 ## Next on Eric's mind
 
+- Stuff to do for mandelbrot: arange, linspace, maybe comparisons?
 - How many threads to create per workgroup, depends on hardware
   - Need to break up kernel dispatches if workgroup count exceeds 65536
 - Think about two-stage `cumsum()`
@@ -91,7 +92,7 @@ npm test
   - [ ] Blocks respect local dimensions
 - [x] Other dtypes like int32 and bool
 - [x] `jit()` support via Jaxprs and kernel fusion
-- [ ] We figure out the `dispose()` / refcount / linear types stuff
+- [x] We figure out the `dispose()` / refcount / linear types stuff
   - [ ] `dispose()` for saved "const" tracers in Jaxprs
   - [ ] Garbage collection for JIT programs, maybe needs to be moved off-device
   - [ ] Memory scheduling, buffer allocation (can be tricky)

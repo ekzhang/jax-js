@@ -35,7 +35,7 @@ suite("jax.jvp()", () => {
   test("works for vector to scalar functions", () => {
     const f = (x: np.Array) => np.sum(x);
     const x = np.array([1, 2, 3]);
-    expect(f(x)).toBeAllclose(6);
+    expect(f(x.ref)).toBeAllclose(6);
     expect(jvp(f, [x], [np.array([1, 1, 1])])[1]).toBeAllclose(3);
   });
 });
@@ -93,8 +93,8 @@ suite("jax.vmap()", () => {
   test("vectorizes a function returning a pytree", () => {
     // f returns an object whose leaves are computed from x.
     const f = (x: np.Array) => ({
-      double: x.mul(2),
-      square: x.mul(x),
+      double: x.ref.mul(2),
+      square: x.ref.mul(x.ref),
       sum: x.sum(),
     });
     const batchedF = vmap(f, [0]);
@@ -143,14 +143,14 @@ suite("jax.vmap()", () => {
       [5, 6],
       [7, 8],
     ]);
-    expect(vmap(np.dot, 0)(a, b).js()).toEqual([17, 53]);
+    expect(vmap(np.dot, 0)(a.ref, b.ref).js()).toEqual([17, 53]);
     expect(vmap(np.dot, 1)(a, b).js()).toEqual([26, 44]);
   });
 });
 
 suite("jax.jacfwd()", () => {
   test("computes jacobian of 3d square", () => {
-    const f = (x: np.Array) => x.mul(x);
+    const f = (x: np.Array) => x.ref.mul(x);
     const x = np.array([1, 2, 3]);
     const j = jacfwd(f, x);
     expect(j).toBeAllclose(
