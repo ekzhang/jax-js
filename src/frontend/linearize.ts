@@ -549,10 +549,12 @@ function evalJaxprTransposed(
       throw new TypeError(`Backward pass not implemented for ${eqn.primitive}`);
     }
     const cotangentsIn = rule(cotangentsOut, primalsIn, eqn.params);
-    for (let j = 0; j < jaxpr.inBinders.length; j++) {
+    for (let j = 0; j < eqn.inputs.length; j++) {
       const v = eqn.inputs[j];
       if (v instanceof Var && !knownPrimals.has(v)) {
         writeCotangent(v, cotangentsIn[j]);
+      } else if (cotangentsIn[j] !== null) {
+        throw new Error("invariant violation: cotangent should be null");
       }
     }
   }
@@ -588,7 +590,7 @@ type TransposeRule = (
 const transposeRules: Partial<Record<Primitive, TransposeRule>> = {
   [Primitive.Mul]([ct], [x, y]) {
     // BUG: Doesn't handle broadcasting.
-    if (x instanceof UndefPrimal !== y instanceof UndefPrimal)
+    if (x instanceof UndefPrimal === y instanceof UndefPrimal)
       throw new NonlinearError(Primitive.Mul);
     return [
       x instanceof UndefPrimal ? mul(ct, y as Tracer) : null,
