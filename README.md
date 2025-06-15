@@ -9,8 +9,8 @@ CPU and GPU kernels to JavaScript, so you can run numerical applications on the 
 npm i @jax-js/jax
 ```
 
-Under the hood, it translates array calls into an IR, then synthesizes kernels using WebAssembly
-and WebGPU.
+Under the hood, it translates array operations into a compiler representation, then synthesizes
+kernels in WebAssembly and WebGPU.
 
 ## Quickstart
 
@@ -24,7 +24,7 @@ const x = np.array([1, 2, 3]);
 const y = x.mul(4); // [4, 8, 12]
 ```
 
-It also lets you take derivatives like in JAX. (JIT support is coming soon.)
+It also lets you take derivatives like in JAX.
 
 ```js
 import { grad, numpy as np } from "@jax-js/jax";
