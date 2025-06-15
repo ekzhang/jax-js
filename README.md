@@ -30,10 +30,10 @@ It also lets you take derivatives like in JAX. (JIT support is coming soon.)
 import { grad, numpy as np } from "@jax-js/jax";
 
 // Calculate derivatives with reverse-mode AD.
-const norm = (a) => a.mul(a).sum();
+const norm = (a) => a.ref.mul(a).sum();
 
 const x = np.array([1, 2, 3]);
-const xnorm = norm(x); // 1^2 + 2^2 + 3^2 = 14
+const xnorm = norm(x.ref); // 1^2 + 2^2 + 3^2 = 14
 const xgrad = grad(norm)(x); // [2, 4, 6]
 ```
 
@@ -47,7 +47,7 @@ import { numpy as np, setBackend } from "@jax-js/jax";
 setBackend("webgpu");
 
 const x = np.ones([4096, 4096]);
-const y = np.dot(x, x); // JIT-compiled into a matrix multiplication kernel
+const y = np.dot(x.ref, x); // JIT-compiled into a matrix multiplication kernel
 ```
 
 ## Development

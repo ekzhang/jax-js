@@ -146,7 +146,7 @@ suite.each(backendTypes)("backend:%s", (backend) => {
       ]);
       const [y, dy] = jvp(
         (x: np.Array) => x.ref.transpose().mul(x.transpose()),
-        [x],
+        [x.ref],
         [np.ones([2, 3])],
       );
       expect(y).toBeAllclose(x.ref.mul(x.ref).transpose());
