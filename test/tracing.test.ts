@@ -54,8 +54,8 @@ suite("jax.makeJaxpr()", () => {
 
   test("composes with grad", () => {
     const f = (x: np.Array) => {
-      const y = x.add(2);
-      return x.mul(x).add(y);
+      const y = x.ref.add(2);
+      return x.ref.mul(x).add(y);
     };
     const { jaxpr, consts } = makeJaxpr(grad(f))(3);
     expect(consts).toEqual([]);
@@ -120,7 +120,7 @@ suite("jax.linearize()", () => {
   test("can take and return jstrees", () => {
     const [y, lin] = linearize(
       (x: { a: np.Array; b: np.Array }) => ({
-        r1: x.a.mul(x.a).add(x.b),
+        r1: x.a.ref.mul(x.a).add(x.b.ref),
         r2: x.b,
       }),
       { a: 1, b: 2 },
@@ -163,7 +163,7 @@ suite("jax.grad()", () => {
 
 suite("jax.jit()", () => {
   test("works for a simple scalar function", () => {
-    const f = (x: np.Array) => x.mul(x).mul(x); // d/dx (x^3) = 3x^2
+    const f = (x: np.Array) => x.ref.mul(x.ref).mul(x); // d/dx (x^3) = 3x^2
     const f2 = jit(f);
     expect(f(np.array(2))).toBeAllclose(8);
     expect(f2(np.array(2))).toBeAllclose(8);

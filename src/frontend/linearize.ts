@@ -25,6 +25,7 @@ import {
   TracerValue,
   transpose,
   TreeMismatchError,
+  UseAfterFreeError,
   where,
 } from "./core";
 import {
@@ -206,6 +207,9 @@ class PartialEvalTracer extends Tracer {
     return this;
   }
   dispose() {
+    if (this.#rc === 0) {
+      throw new UseAfterFreeError(this);
+    }
     if (--this.#rc === 0) {
       // Clear reference to the recipe and pval, if needed.
       if (this.pval.isKnown) {
