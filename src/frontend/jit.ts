@@ -78,12 +78,8 @@ export class JitProgram {
           break;
         }
         case "free": {
-          // TODO: Freeing doesn't actually make sense here, since the "execute" steps only mark
-          // kernels as pending. So we can't free the intermediates until the kernels are acutally
-          // dispatched. This requires some refactoring to get working.
-          //
-          // const slot = scope.get(step.input)!;
-          // this.backend.decRef(slot);
+          const slot = scope.get(step.input)!;
+          this.backend.decRef(slot);
           scope.delete(step.input);
           break;
         }
