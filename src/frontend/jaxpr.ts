@@ -466,7 +466,10 @@ class JaxprTrace extends Trace {
     let tracer = this.builder.constTracers.get(val);
     if (tracer === undefined) {
       tracer = this.builder.newTracer(this, ShapedArray.fromAval(getAval(val)));
-      this.builder.addConst(tracer, pureArray(val));
+      this.builder.addConst(
+        tracer,
+        val instanceof Tracer ? val.ref : scalar(val),
+      );
     }
     return tracer;
   }
@@ -722,10 +725,11 @@ export function jit<F extends (...args: any[]) => any>(
       treedef: outTree,
     } = makeJaxpr(f)(...(avalsIn as any[]));
 
-    const outs = bind(Primitive.JitCall, [...consts, ...argsFlat], {
-      jaxpr,
-      numConsts: consts.length,
-    });
+    const outs = bind(
+      Primitive.JitCall,
+      [...consts.map((c) => c.ref), ...argsFlat],
+      { jaxpr, numConsts: consts.length },
+    );
     return treeUnflatten(outTree, outs);
   }) as F;
 }

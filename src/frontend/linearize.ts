@@ -127,7 +127,7 @@ function linearizeFlat(
 ): [Tracer[], (...args: any[]) => any] {
   const { primalsOut, jaxpr, consts } = linearizeFlatUtil(f, primalsIn);
   const fLin = (...tangents: Tracer[]) =>
-    evalJaxpr(jaxpr, [...consts, ...tangents]);
+    evalJaxpr(jaxpr, [...consts.map((c) => c.ref), ...tangents]);
   return [primalsOut, fLin];
 }
 
@@ -628,17 +628,18 @@ const transposeRules: Partial<Record<Primitive, TransposeRule>> = {
     if (x instanceof UndefPrimal) {
       // TODO: Use correct backend.
       const zerosX = zeros(x.aval.shape, { dtype: x.aval.dtype });
-      cts[1] = where(cond.ref, ct, zerosX);
+      cts[1] = where(cond.ref, ct.ref, zerosX);
     } else {
       x.dispose();
     }
     if (y instanceof UndefPrimal) {
       // TODO: Use correct backend.
       const zerosY = zeros(x.aval.shape, { dtype: x.aval.dtype });
-      cts[2] = where(cond.ref, zerosY, ct);
+      cts[2] = where(cond.ref, zerosY, ct.ref);
     } else {
       y.dispose();
     }
+    ct.dispose();
     cond.dispose();
     return cts;
   },
@@ -725,7 +726,7 @@ function vjpFlat(
 ): [Tracer[], (...cotangents: Tracer[]) => Tracer[]] {
   const { primalsOut, jaxpr, consts } = linearizeFlatUtil(f, primalsIn);
   const transposeInputs = [
-    ...consts,
+    ...consts.map((c) => c.ref),
     // Explcitly list which arguments should be transposed.
     ...primalsIn.map((t) => new UndefPrimal(t.aval)),
   ];
