@@ -102,6 +102,33 @@ suite.each(backendTypes)("backend:%s", (backend) => {
     });
   });
 
+  suite("jax.numpy.linspace()", () => {
+    test("creates a linear space with 5 elements", () => {
+      const x = np.linspace(0, 1, 5);
+      expect(x.js()).toEqual([0, 0.25, 0.5, 0.75, 1]);
+    });
+
+    test("creates a linear space with 1-3 elements", () => {
+      let x = np.linspace(0, 1, 3);
+      expect(x.js()).toEqual([0, 0.5, 1]);
+
+      x = np.linspace(0, 1, 2);
+      expect(x.js()).toEqual([0, 1]);
+
+      x = np.linspace(0, 1, 1);
+      expect(x.js()).toEqual([0]);
+    });
+
+    test("defaults to 50 elements", () => {
+      const x = np.linspace(0, 1);
+      expect(x.shape).toEqual([50]);
+      const ar = x.js() as number[];
+      expect(ar[0]).toEqual(0);
+      expect(ar[49]).toEqual(1);
+      expect(ar[25]).toBeCloseTo(25 / 49);
+    });
+  });
+
   suite("jax.numpy.where()", () => {
     test("computes where", () => {
       const x = np.array([1, 2, 3]);

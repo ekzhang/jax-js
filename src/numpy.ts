@@ -1,11 +1,12 @@
 import { DType } from "./alu";
 import {
   arange,
-  Array,
   array,
+  Array,
   eye,
   full,
   identity,
+  linspace,
   ones,
   pureArray,
   scalar,
@@ -23,6 +24,7 @@ export {
   DType,
   eye,
   identity,
+  linspace,
   scalar,
   zeros,
   ones,

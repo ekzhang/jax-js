@@ -52,10 +52,19 @@ export class AluExp {
     return new AluExp(AluOp.Max, a.dtype, [a, b]);
   }
   static sin(a: AluExp): AluExp {
+    if (!isFloatDtype(a.dtype))
+      throw new TypeError(`Unsupported dtype for Sin: ${a.dtype}`);
     return new AluExp(AluOp.Sin, a.dtype, [a]);
   }
   static cos(a: AluExp): AluExp {
+    if (!isFloatDtype(a.dtype))
+      throw new TypeError(`Unsupported dtype for Cos: ${a.dtype}`);
     return new AluExp(AluOp.Cos, a.dtype, [a]);
+  }
+  static reciprocal(a: AluExp): AluExp {
+    if (!isFloatDtype(a.dtype))
+      throw new TypeError(`Unsupported dtype for Reciprocal: ${a.dtype}`);
+    return new AluExp(AluOp.Reciprocal, a.dtype, [a]);
   }
   static cast(dtype: DType, a: AluExp): AluExp {
     if (a.dtype === dtype) return a;
@@ -236,6 +245,9 @@ export class AluExp {
       case AluOp.Cos:
         ret = [Math.cos(src[0].min), Math.cos(src[0].max)];
         break;
+      case AluOp.Reciprocal:
+        if (src[0].min <= 0 && src[0].max >= 0) return [-Infinity, Infinity];
+        return [1 / src[0].max, 1 / src[0].min];
       case AluOp.Cast:
         // Casts change the dtype.
         if (this.dtype === DType.Bool) {
@@ -329,6 +341,11 @@ export class AluExp {
     if (src.every((x) => x.op === AluOp.Const) && !AluGroup.Variable.has(op)) {
       const newExp = new AluExp(op, this.dtype, src, this.arg);
       return AluExp.const(this.dtype, newExp.evaluate({}));
+    }
+
+    // Replacing empty ranges with constants, if non-constant.
+    if (op !== AluOp.Const && this.min === this.max) {
+      return AluExp.const(this.dtype, this.min);
     }
 
     // Folding with one item being a no-op constant.
@@ -523,6 +540,8 @@ export class AluExp {
           return Math.sin(x);
         case AluOp.Cos:
           return Math.cos(x);
+        case AluOp.Reciprocal:
+          return 1 / x;
         case AluOp.Cast:
           if (this.dtype === DType.Int32) return Math.floor(x);
           else if (this.dtype === DType.Float32) return x;
@@ -584,6 +603,7 @@ export class AluExp {
     const UNARY_SYM: Partial<Record<AluOp, string>> = {
       [AluOp.Sin]: "sin",
       [AluOp.Cos]: "cos",
+      [AluOp.Reciprocal]: "1/",
     };
 
     return this.fold<string>((node, parts) => {
@@ -683,6 +703,7 @@ export enum AluOp {
 
   Sin = "Sin",
   Cos = "Cos",
+  Reciprocal = "Reciprocal",
   Cast = "Cast",
 
   Cmplt = "Cmplt",
@@ -709,7 +730,7 @@ export const AluGroup = {
     AluOp.Min,
     AluOp.Max,
   ]),
-  Unary: new Set([AluOp.Sin, AluOp.Cos, AluOp.Cast]),
+  Unary: new Set([AluOp.Sin, AluOp.Cos, AluOp.Reciprocal, AluOp.Cast]),
   Compare: new Set([AluOp.Cmplt, AluOp.Cmpne]),
   Variable: new Set([
     AluOp.Special,

@@ -615,6 +615,7 @@ export function scalar(
   value: number | boolean,
   { dtype, backend }: DTypeAndBackend = {},
 ) {
+  // TODO: This should probably be merged with numpy.full().
   if (typeof value === "number") {
     dtype ??= DType.Float32; // default dtype for JS numbers
     if (![DType.Float32, DType.Int32].includes(dtype))
@@ -878,6 +879,8 @@ export function arange(
   step: number = 1,
   { dtype, backend }: DTypeAndBackend = {},
 ) {
+  dtype = dtype ?? DType.Int32; // default to int32 for arange
+
   if (stop === undefined) {
     stop = start;
     start = 0;
@@ -892,12 +895,58 @@ export function arange(
     return zeros([0], { dtype, backend });
   }
 
-  dtype = dtype ?? DType.Int32; // default to int32 for arange
   const exp = AluExp.add(
     AluExp.const(dtype, start),
     AluExp.mul(AluExp.cast(dtype, AluVar.idx), AluExp.const(dtype, step)),
   );
   const st = ShapeTracker.fromShape([size]);
+  return new Array(exp, st, dtype, getBackend(backend));
+}
+
+/**
+ * Return evenly spaced numbers over a specified interval.
+ *
+ * Returns _num_ evenly spaced samples, calculated over the interval
+ * [`start`, `stop`]. The endpoint `stop` is included in the result by default,
+ * but this is controlled by the `endpoint` parameter.
+ *
+ * The default data type is Float32. Use arange() for integer steps.
+ */
+export function linspace(
+  start: number,
+  stop: number,
+  num: number = 50,
+  endpoint: boolean = true,
+  { dtype, backend }: DTypeAndBackend = {},
+) {
+  dtype = dtype ?? DType.Float32; // default to float32 for linspace
+
+  if (num < 0 || !Number.isInteger(num)) {
+    throw new RangeError(
+      `Invalid num for linspace: ${num}. Must be non-negative integer.`,
+    );
+  } else if (num === 0) {
+    return zeros([0], { dtype, backend });
+  } else if (num === 1) {
+    return scalar(start, { dtype, backend }).reshape([1]);
+  } else if (start === stop) {
+    return full([num], start, { dtype, backend });
+  }
+
+  // Now num >= 2, there are at least 2 points.
+  const delta = stop - start;
+  const denom = endpoint ? num - 1 : num;
+  const exp = AluExp.cast(
+    dtype,
+    AluExp.add(
+      AluExp.f32(start),
+      AluExp.mul(
+        AluExp.f32(delta / denom),
+        AluExp.cast(DType.Float32, AluVar.idx),
+      ),
+    ),
+  );
+  const st = ShapeTracker.fromShape([num]);
   return new Array(exp, st, dtype, getBackend(backend));
 }
 

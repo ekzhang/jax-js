@@ -62,7 +62,7 @@ npm test
 
 ## Next on Eric's mind
 
-- Stuff to do for mandelbrot: arange, linspace, maybe comparisons?
+- Test for if you take sin(), cos() of an int/bool
 - Rename "backend" to "device" in public API
 - How many threads to create per workgroup, depends on hardware
   - Need to break up kernel dispatches if workgroup count exceeds 65536
