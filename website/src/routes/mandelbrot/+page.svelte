@@ -1,6 +1,9 @@
 <script lang="ts">
-  import { init, numpy as np, setBackend } from "@jax-js/jax";
+  import { init, jit, numpy as np, setBackend } from "@jax-js/jax";
   import { onMount } from "svelte";
+
+  const width = 1000;
+  const height = 800;
 
   onMount(async () => {
     await init("webgpu");
@@ -18,16 +21,49 @@
     return [A2, B2];
   }
 
+  const mandelbrotMultiple = (iters: number) =>
+    jit((A: np.Array, B: np.Array, X: np.Array, Y: np.Array) => {
+      for (let i = 0; i < iters; i++) {
+        [A, B] = mandelbrotIteration(A, B, X.ref, Y.ref);
+      }
+      X.dispose();
+      Y.dispose();
+      return [A, B];
+    });
+
   function calculateMandelbrot(iters: number) {
-    const x = np.linspace(-2, 0.5, 500);
-    const y = np.linspace(-1, 1, 400);
+    const x = np.linspace(-2, 0.5, width);
+    const y = np.linspace(-1, 1, height);
 
     const [X, Y] = np.meshgrid([x, y]);
+
+    // const f = mandelbrotMultiple(10);
 
     let A = np.zeros(X.shape);
     let B = np.zeros(Y.shape);
     for (let i = 0; i < iters; i++) {
+      console.log(`Iteration ${i + 1}/${iters}`);
       [A, B] = mandelbrotIteration(A, B, X.ref, Y.ref);
+    }
+    X.dispose();
+    Y.dispose();
+
+    return A.ref.mul(A).add(B.ref.mul(B)).less(100);
+  }
+
+  function calculateMandelbrotJit10(iters: number) {
+    const x = np.linspace(-2, 0.5, width);
+    const y = np.linspace(-1, 1, height);
+
+    const [X, Y] = np.meshgrid([x, y]);
+
+    const f = mandelbrotMultiple(10);
+
+    let A = np.zeros(X.shape);
+    let B = np.zeros(Y.shape);
+    for (let i = 0; i < iters / 10; i++) {
+      console.log(`Iteration ${i + 1}/${iters / 10}`);
+      [A, B] = f(A, B, X.ref, Y.ref);
     }
     X.dispose();
     Y.dispose();
@@ -61,16 +97,27 @@
 
   <button
     onclick={async () => {
-      // TODO: async does not work yet?
-      const result = calculateMandelbrot(50).dataSync() as Int32Array;
-      console.log(result);
+      const start = performance.now();
+      const result = (await calculateMandelbrot(100).data()) as Int32Array;
+      console.log(`Mandelbrot calculated in ${performance.now() - start} ms`);
       renderMandelbrot(result);
     }}
   >
     Calculate Mandelbrot
   </button>
 
-  <canvas bind:this={canvas} width="500" height="400" class="my-8"></canvas>
+  <button
+    onclick={async () => {
+      const start = performance.now();
+      const result = (await calculateMandelbrotJit10(100).data()) as Int32Array;
+      console.log(`Mandelbrot calculated in ${performance.now() - start} ms`);
+      renderMandelbrot(result);
+    }}
+  >
+    Calculate Mandelbrot Jit10
+  </button>
+
+  <canvas bind:this={canvas} {width} {height} class="my-8"></canvas>
 </main>
 
 <style lang="postcss">
