@@ -310,6 +310,8 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
       const a = gen(src[0]);
       if (op === AluOp.Sin) source = `sin(${a})`;
       else if (op === AluOp.Cos) source = `cos(${a})`;
+      else if (op === AluOp.Exp2) source = `exp2(${a})`;
+      else if (op === AluOp.Log2) source = `log2(${a})`;
       else if (op === AluOp.Reciprocal) source = `(1.0 / ${a})`;
       else if (op === AluOp.Cast)
         source = `${dtypeToWgsl(dtype)}(${strip1(a)})`;

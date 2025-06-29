@@ -29,10 +29,7 @@ export class AluExp implements FpHashable {
     readonly src: AluExp[],
     readonly arg: any = undefined,
   ) {
-    if (
-      [AluOp.Sin, AluOp.Cos, AluOp.Reciprocal].includes(op) &&
-      !isFloatDtype(dtype)
-    ) {
+    if (AluGroup.RequiredFloat.has(op) && !isFloatDtype(dtype)) {
       throw new TypeError(`Unsupported dtype for ${op}: ${dtype}`);
     }
   }
@@ -63,6 +60,12 @@ export class AluExp implements FpHashable {
   }
   static cos(a: AluExp): AluExp {
     return new AluExp(AluOp.Cos, a.dtype, [a]);
+  }
+  static exp2(a: AluExp): AluExp {
+    return new AluExp(AluOp.Exp2, a.dtype, [a]);
+  }
+  static log2(a: AluExp): AluExp {
+    return new AluExp(AluOp.Log2, a.dtype, [a]);
   }
   static reciprocal(a: AluExp): AluExp {
     return new AluExp(AluOp.Reciprocal, a.dtype, [a]);
@@ -247,9 +250,16 @@ export class AluExp implements FpHashable {
       case AluOp.Cos:
         ret = [Math.cos(src[0].min), Math.cos(src[0].max)];
         break;
+      case AluOp.Exp2:
+        ret = [Math.pow(2, src[0].min), Math.pow(2, src[0].max)];
+        break;
+      case AluOp.Log2:
+        ret = [Math.log2(src[0].min), Math.log2(src[0].max)];
+        break;
       case AluOp.Reciprocal:
         if (src[0].min <= 0 && src[0].max >= 0) return [-Infinity, Infinity];
-        return [1 / src[0].max, 1 / src[0].min];
+        ret = [1 / src[0].max, 1 / src[0].min];
+        break;
       case AluOp.Cast:
         // Casts change the dtype.
         if (this.dtype === DType.Bool) {
@@ -542,6 +552,10 @@ export class AluExp implements FpHashable {
           return Math.sin(x);
         case AluOp.Cos:
           return Math.cos(x);
+        case AluOp.Exp2:
+          return Math.pow(2, x);
+        case AluOp.Log2:
+          return Math.log2(x);
         case AluOp.Reciprocal:
           return 1 / x;
         case AluOp.Cast:
@@ -605,6 +619,8 @@ export class AluExp implements FpHashable {
     const UNARY_SYM: Partial<Record<AluOp, string>> = {
       [AluOp.Sin]: "sin",
       [AluOp.Cos]: "cos",
+      [AluOp.Exp2]: "exp2",
+      [AluOp.Log2]: "log2",
       [AluOp.Reciprocal]: "1/",
     };
 
@@ -705,6 +721,8 @@ export enum AluOp {
 
   Sin = "Sin",
   Cos = "Cos",
+  Exp2 = "Exp2",
+  Log2 = "Log2",
   Reciprocal = "Reciprocal",
   Cast = "Cast",
 
@@ -732,7 +750,14 @@ export const AluGroup = {
     AluOp.Min,
     AluOp.Max,
   ]),
-  Unary: new Set([AluOp.Sin, AluOp.Cos, AluOp.Reciprocal, AluOp.Cast]),
+  Unary: new Set([
+    AluOp.Sin,
+    AluOp.Cos,
+    AluOp.Exp2,
+    AluOp.Log2,
+    AluOp.Reciprocal,
+    AluOp.Cast,
+  ]),
   Compare: new Set([AluOp.Cmplt, AluOp.Cmpne]),
   Variable: new Set([
     AluOp.Special,
@@ -741,6 +766,13 @@ export const AluGroup = {
     AluOp.GlobalView,
   ]),
   Reduce: new Set([AluOp.Add, AluOp.Mul, AluOp.Min, AluOp.Max]),
+  RequiredFloat: new Set([
+    AluOp.Sin,
+    AluOp.Cos,
+    AluOp.Exp2,
+    AluOp.Log2,
+    AluOp.Reciprocal,
+  ]),
 };
 
 /** Common variables that can be substituted in expressions. */

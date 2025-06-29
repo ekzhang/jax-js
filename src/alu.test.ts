@@ -80,3 +80,24 @@ test("AluOp.min and AluOp.max", () => {
   const minOp2 = AluExp.min(a, c);
   expect(minOp2.evaluate({ c: 2 })).toBe(2);
 });
+
+test("AluOp.exp2", () => {
+  const e = AluExp.exp2(AluExp.f32(3));
+  expect(e.evaluate({})).toBe(8);
+  expect(e.dtype).toBe(DType.Float32);
+
+  const e2 = AluExp.exp2(AluExp.f32(0.25));
+  expect(e2.evaluate({})).toBeCloseTo(2 ** 0.25);
+});
+
+test("AluOp.log2", () => {
+  const e = AluExp.log2(AluExp.f32(8));
+  expect(e.evaluate({})).toBe(3);
+  expect(e.dtype).toBe(DType.Float32);
+
+  const e2 = AluExp.log2(AluExp.f32(0.25));
+  expect(e2.evaluate({})).toBeCloseTo(-2);
+
+  const e3 = AluExp.log2(AluExp.f32(-1));
+  expect(e3.evaluate({})).toBeNaN();
+});
