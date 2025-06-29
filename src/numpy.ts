@@ -379,3 +379,15 @@ export function absolute(x: ArrayLike): Array {
 
 /** Alias of `jax.numpy.absolute()`. */
 export const abs = absolute;
+
+/** Calculate element-wise square of the input array. */
+export function square(x: ArrayLike): Array {
+  x = fudgeArray(x);
+  return x.ref.mul(x);
+}
+
+/** Compute a trigonometric tangent of each element of input. */
+export function tan(x: ArrayLike): Array {
+  x = fudgeArray(x);
+  return sin(x.ref).div(cos(x));
+}
