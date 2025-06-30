@@ -627,7 +627,7 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
       return [broadcast(ct, x.aval.shape, axis)];
     } else {
       // Forward-mode jvp of product does not involve any products.
-      // Ditto for min() or max().
+      // The same applies to min/max as non-additive reductions.
       throw new NonlinearError(Primitive.Reduce);
     }
   },

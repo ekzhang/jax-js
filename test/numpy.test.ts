@@ -627,6 +627,12 @@ suite.each(devices)("device:%s", (device) => {
       const y = np.min(x);
       expect(y.js()).toEqual(0);
     });
+
+    test("can have grad of min", () => {
+      const x = np.array([3, 1, 4, 1]);
+      const dx = grad((x: np.Array) => np.min(x))(x);
+      expect(dx.js()).toEqual([0, 0.5, 0, 0.5]); // Gradient is 1 at the minimum
+    });
   });
 
   suite("jax.numpy.max()", () => {
@@ -652,6 +658,12 @@ suite.each(devices)("device:%s", (device) => {
       ]);
       const y = np.max(x);
       expect(y.js()).toEqual(5);
+    });
+
+    test("can have grad of max", () => {
+      const x = np.array([10, 3, 4, 10]);
+      const dx = grad((x: np.Array) => np.max(x))(x);
+      expect(dx.js()).toEqual([0.5, 0, 0, 0.5]); // Gradient is 1 at the maximum
     });
   });
 });

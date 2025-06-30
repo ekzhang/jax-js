@@ -23,6 +23,7 @@ import {
   min,
   neg,
   newMain,
+  notEqual,
   Primitive,
   PrimitiveParams,
   reciprocal,
@@ -151,6 +152,19 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
         .mul(reciprocal(x))
         .mul(dx)
         .sum(axis);
+      return [[primal], [tangent]];
+    } else if (op === AluOp.Min || op === AluOp.Max) {
+      const primal = reduce(x.ref, op, axis);
+      // (min(x))' = average(where(x != min(x), inf, x'))
+      //
+      // We take average here to match the behavior of JAX. If there are
+      // multiple minima, it's not well-defined which one to take as the tangent
+      // vector (sharp discontinuity), so we average over all of them.
+      const notMin = notEqual(x, primal.ref);
+      const minCount = where(notMin.ref, 0.0, 1.0).sum(axis);
+      const tangent = where(notMin, op === AluOp.Min ? 0 : 0, dx)
+        .sum(axis)
+        .mul(reciprocal(minCount));
       return [[primal], [tangent]];
     } else {
       throw new Error(`JVP rule not implemented for reduce op: ${op}`);

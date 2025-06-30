@@ -51,6 +51,17 @@ suite("jax.jvp()", () => {
     // 1 * 2*3*4 + 10 * 1*3*4 + 100 * 1*2*4 + 1000 * 1*2*3
     expect(jvpProd[1]).toBeAllclose(6944);
   });
+
+  test("can have jvp of min", () => {
+    const x = np.array([1, 2, 1, 4]);
+    const [pmin, jmin] = jvp(
+      (x: np.Array) => np.min(x),
+      [x],
+      [np.array([0, 10, 5, 1000])],
+    );
+    expect(pmin).toBeAllclose(1);
+    expect(jmin).toBeAllclose(2.5); // (0+5)/2
+  });
 });
 
 suite("jax.vmap()", () => {
