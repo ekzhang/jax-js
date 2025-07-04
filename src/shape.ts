@@ -617,7 +617,7 @@ export function unravelAlu(shape: number[], offset: AluExp): AluExp[] {
 export class ShapeTracker {
   constructor(readonly views: View[]) {} // Views apply left-to-right
 
-  /** Compose this shape tracker with another, applying after. */
+  /** Compose this shape tracker with another, applying it after this one. */
   compose(other: ShapeTracker): ShapeTracker {
     if (this.contiguous) return other;
     let ret: ShapeTracker = this;

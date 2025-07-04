@@ -218,7 +218,8 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
 
   const globalIndexes = exp.collect((exp) => exp.op === AluOp.GlobalIndex);
   if (globalIndexes.length > 0) {
-    if (DEBUG >= 4) console.log("Tuning: Found GlobalIndex ops, skipping opt.");
+    if (DEBUG >= 4)
+      console.info("Tuning: Found GlobalIndex ops, skipping opt.");
     return tuneNullopt(kernel);
   }
 

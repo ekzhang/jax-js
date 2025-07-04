@@ -1,7 +1,7 @@
 import { beforeEach, expect, suite, test } from "vitest";
 
 import { devices, init, setDevice } from "../backend";
-import { arange, array, ones, zeros } from "./array";
+import { arange, array, eye, ones, zeros } from "./array";
 import { DType } from "../alu";
 
 const devicesAvailable = await init();
@@ -158,5 +158,24 @@ suite.each(devices)("device:%s", (device) => {
     ]);
     expect(x.ref.sum(-1).js()).toEqual([6, 15]);
     expect(x.sum(-2).js()).toEqual([5, 7, 9]);
+  });
+
+  test("advanced indexing with gather", () => {
+    const x = array([1, 3, 2], { dtype: DType.Int32 });
+    expect(eye(5).slice(x.ref).js()).toEqual([
+      [0, 1, 0, 0, 0],
+      [0, 0, 0, 1, 0],
+      [0, 0, 1, 0, 0],
+    ]);
+    expect(eye(5).slice(x.ref, null).js()).toEqual([
+      [[0, 1, 0, 0, 0]],
+      [[0, 0, 0, 1, 0]],
+      [[0, 0, 1, 0, 0]],
+    ]);
+    expect(eye(5).slice([1, 4], x).js()).toEqual([
+      [1, 0, 0],
+      [0, 0, 1],
+      [0, 1, 0],
+    ]);
   });
 });

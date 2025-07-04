@@ -42,7 +42,7 @@ export enum Primitive {
   Flip = "flip",
   Shrink = "shrink",
   Pad = "pad",
-  // Gather = "gather",  // TODO: Implement gather for advanced indexing.
+  Gather = "gather",
   JitCall = "jit_call",
 }
 
@@ -56,7 +56,7 @@ interface PrimitiveParamsImpl
   [Primitive.Flip]: { axis: number[] };
   [Primitive.Shrink]: { slice: [number, number][] };
   [Primitive.Pad]: { width: [number, number][] };
-  // [Primitive.Gather]: { axis: number[] };
+  [Primitive.Gather]: { axis: number[]; outDim: number };
   [Primitive.JitCall]: { jaxpr: Jaxpr; numConsts: number };
 }
 
@@ -121,6 +121,24 @@ export function min(x: TracerValue, y: TracerValue) {
 
 export function max(x: TracerValue, y: TracerValue) {
   return bind1(Primitive.Max, [x, y]);
+}
+
+export function reduce(x: TracerValue, op: AluOp, axis?: number | number[]) {
+  if (!AluGroup.Reduce.has(op)) {
+    throw new TypeError(`Invalid reduce operation: ${op}`);
+  }
+  if (axis === undefined) {
+    if (x instanceof Tracer) {
+      axis = range(x.shape.length);
+    } else {
+      axis = [];
+    }
+  } else if (typeof axis === "number") {
+    axis = [checkAxis(axis, ndim(x))];
+  } else {
+    axis = axis.map((a) => checkAxis(a, ndim(x)));
+  }
+  return bind1(Primitive.Reduce, [x], { op, axis });
 }
 
 export function compare(x: TracerValue, y: TracerValue, op: CompareOp) {
@@ -229,22 +247,30 @@ export function pad(
   return bind1(Primitive.Pad, [x], { width });
 }
 
-export function reduce(x: TracerValue, op: AluOp, axis?: number | number[]) {
-  if (!AluGroup.Reduce.has(op)) {
-    throw new TypeError(`Invalid reduce operation: ${op}`);
+export function gather(
+  x: TracerValue,
+  indices: TracerValue[],
+  axis: number[], // one for each index
+  outDim: number,
+) {
+  // Evaluate advanced indexing x[:, ...indices, :], with the index dimensions
+  // starting at axis `outDim` in the output.
+  if (indices.length === 0) {
+    throw new Error("gather() requires at least one index");
   }
-  if (axis === undefined) {
-    if (x instanceof Tracer) {
-      axis = range(x.shape.length);
-    } else {
-      axis = [];
-    }
-  } else if (typeof axis === "number") {
-    axis = [checkAxis(axis, ndim(x))];
-  } else {
-    axis = axis.map((a) => checkAxis(a, ndim(x)));
+  if (!Array.isArray(axis) || axis.length !== indices.length) {
+    throw new Error(
+      `Invalid gather() axis: expected ${indices.length} axes, got ${JSON.stringify(axis)}`,
+    );
   }
-  return bind1(Primitive.Reduce, [x], { op, axis });
+  axis = axis.map((a) => checkAxis(a, ndim(x)));
+  if (new Set(axis).size !== axis.length) {
+    throw new Error(
+      `Invalid gather() axis: duplicate axes ${JSON.stringify(axis)}`,
+    );
+  }
+  outDim = checkAxis(outDim, ndim(x) - axis.length + 1);
+  return bind1(Primitive.Gather, [x, ...indices], { axis, outDim });
 }
 
 function bind1<P extends Primitive>(
@@ -501,23 +527,82 @@ export abstract class Tracer {
    * Strided slices are not yet implemented, so you cannot write `x[::2]` or
    * similar.
    *
-   * "Advanced indexing" by integer or boolean arrays is not supported.
+   * Advanced indexing by integer arrays is also supported. This translates to
+   * the "gather" primitive, and it allows you to access specific elements of
+   * the array by integer indices stored in another array.
    */
-  slice(...index: (number | [] | [number] | [number, number] | null)[]): this {
+  slice(
+    ...index: (number | [] | [number] | [number, number] | null | Tracer)[]
+  ): this {
     const checkBounds = (n: number, i: number): number => {
       if (i > n || i < -n)
         throw new RangeError(`Index ${i} out of bounds for axis of size ${n}`);
       return i < 0 ? n + i : i;
     };
 
+    const hasAdvancedIdx = index.some((value) => value instanceof Tracer);
+    const axesForGather: number[] = [];
+    let outDim = -1; // Will be set if we have advanced indexing.
+    if (hasAdvancedIdx) {
+      // Find out which axes have scalar indices or advanced indices used. If
+      // those axes are contiguous, we'll output advanced indexes there,
+      // otherwise they get transposed to the beginning of the shape.
+      //
+      // Example:
+      //
+      // In [3]: np.zeros((10,)*4).shape
+      // Out[3]: (10, 10, 10, 10)
+      //
+      // In [4]: np.zeros((10,)*4)[:, [1,2], [1,2], :].shape
+      // Out[4]: (10, 2, 10)
+      //
+      // In [5]: np.zeros((10,)*4)[:, [1,2], :, [1,2]].shape
+      // Out[5]: (2, 10, 10)
+      //
+      // In [6]: np.zeros((10,)*4)[:, [1,2], 5, [1,2]].shape
+      // Out[6]: (10, 2)
+      //
+      // In [7]: np.zeros((10,)*4)[:, [1,2], :, 5].shape
+      // Out[7]: (2, 10, 10)
+      //
+      // For more, see https://stackoverflow.com/questions/55829631
+      const advancedAxes: number[] = [];
+      let currentAxisForGather = 0;
+      for (let i = 0; i < index.length; i++) {
+        const value = index[i];
+        if (value instanceof Tracer) {
+          advancedAxes.push(i);
+          axesForGather.push(currentAxisForGather++);
+        } else if (typeof value === "number") {
+          advancedAxes.push(i);
+          // Do not increment currentAxisForGather, this is squeezed out.
+        } else {
+          currentAxisForGather++;
+        }
+      }
+      if (
+        advancedAxes[advancedAxes.length - 1] - advancedAxes[0] !==
+        advancedAxes.length - 1
+      ) {
+        // If the advanced axes are not contiguous, we need to transpose them
+        // to the beginning of the shape.
+        outDim = 0;
+      } else {
+        outDim = axesForGather[0]; // OK, keep them in the same place.
+      }
+    }
+
+    // 1. Calculate shape / operations for "basic" slicing.
+    // 2. Squeeze out, i.e., reshape (1,) axes from scalar indices.
+    // 3. Do gather if needed (hasAdvancedIdx).
     const slice: [number, number][] = [];
-    const finalShape: number[] = [];
+    const basicShape: number[] = [];
     let needsReshape = false;
     let axis = 0;
     for (const value of index) {
       if (value === null) {
         // Add a new axis at this position.
-        finalShape.push(1);
+        basicShape.push(1);
         needsReshape = true;
       } else if (typeof value === "number") {
         // Access the i-th element along this axis.
@@ -530,20 +615,25 @@ export abstract class Tracer {
         const n = this.shape[axis++];
         if (value.length === 0) {
           // Keep this axis as-is, like `:`.
-          finalShape.push(n);
+          basicShape.push(n);
           slice.push([0, n]);
         } else if (value.length === 1) {
           // Slice from index i to the end, like `x[i:]`.
           const i = checkBounds(n, value[0]);
-          finalShape.push(n - i);
+          basicShape.push(n - i);
           slice.push([i, n]);
         } else if (value.length === 2) {
           // Slice from index i to index j, like `x[i:j]`.
           const [i, j] = value.map((v) => checkBounds(n, v));
           if (i > j) throw new RangeError(`Slice start at ${i} > end at ${j}`);
-          finalShape.push(j - i);
+          basicShape.push(j - i);
           slice.push([i, j]);
         }
+      } else if (value instanceof Tracer) {
+        // Keep the full axis as-is like `:`, until the gather step.
+        const n = this.shape[axis++];
+        basicShape.push(n);
+        slice.push([0, n]);
       } else {
         throw new TypeError(`Invalid slice argument: ${JSON.stringify(value)}`);
       }
@@ -551,10 +641,21 @@ export abstract class Tracer {
     while (axis < this.shape.length) {
       // If we didn't specify an index for this axis, keep it as-is.
       slice.push([0, this.shape[axis]]);
-      finalShape.push(this.shape[axis++]);
+      basicShape.push(this.shape[axis++]);
     }
-    const result = shrink(this, slice);
-    return (needsReshape ? reshape(result, finalShape) : result) as this;
+    let result = shrink(this, slice);
+    result = needsReshape ? reshape(result, basicShape) : result;
+
+    if (hasAdvancedIdx) {
+      result = gather(
+        result,
+        index.filter((a) => a instanceof Tracer),
+        axesForGather,
+        outDim,
+      );
+    }
+
+    return result as this;
   }
 }
 

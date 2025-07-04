@@ -564,7 +564,7 @@ function evalJaxprTransposed(
       if (v instanceof Var && !knownPrimals.has(v)) {
         writeCotangent(v, cotangentsIn[j]);
       } else if (cotangentsIn[j] !== null) {
-        throw new Error("invariant violation: cotangent should be null");
+        throw new Error("internal: cotangent should be null");
       }
     }
   }
@@ -686,6 +686,15 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
       ([s, _e], i) => [s, s + x.aval.shape[i]] as [number, number],
     );
     return [shrink(ct, slice)];
+  },
+  [Primitive.Gather]([ct], [x, ...indices], { axis, outDim }) {
+    if (!(x instanceof UndefPrimal)) throw new NonlinearError(Primitive.Gather);
+    if (indices.some((i) => i instanceof UndefPrimal))
+      throw new NonlinearError(Primitive.Gather);
+    void [ct, axis, outDim];
+    throw new Error(
+      "Gather transpose rule is not yet implemented, requires complex Scatter sum operation",
+    );
   },
   [Primitive.JitCall](cts, args, { jaxpr }) {
     // We need this one because the jvp() rule for JitCall generates a JitCall

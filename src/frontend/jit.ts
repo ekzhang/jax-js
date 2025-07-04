@@ -369,7 +369,7 @@ function reshapeJit<P extends Primitive>(
   };
 }
 
-const jitRules: Partial<{ [P in Primitive]: JitRule<P> }> = {
+const jitRules: { [P in Primitive]: JitRule<P> } = {
   [Primitive.Add]: broadcastedJit(([a, b]) => AluExp.add(a, b)),
   [Primitive.Mul]: broadcastedJit(([a, b]) => AluExp.mul(a, b)),
   [Primitive.Idiv]: broadcastedJit(([a, b]) => AluExp.idiv(a, b)),
@@ -416,20 +416,27 @@ const jitRules: Partial<{ [P in Primitive]: JitRule<P> }> = {
   },
   [Primitive.Compare]: broadcastedJit(([a, b], { op }) => aluCompare(a, b, op)),
   [Primitive.Where]: broadcastedJit(([cond, a, b]) => AluExp.where(cond, a, b)),
-  [Primitive.Transpose]: reshapeJit((st, { perm }) => {
-    return st.permute(perm);
-  }),
-  [Primitive.Broadcast]: reshapeJit((st, { shape, axis }) => {
-    return st.broadcast(shape, axis);
-  }),
-  [Primitive.Reshape]: reshapeJit((st, { shape }) => {
-    return st.reshape(shape);
-  }),
+  [Primitive.Transpose]: reshapeJit((st, { perm }) => st.permute(perm)),
+  [Primitive.Broadcast]: reshapeJit((st, { shape, axis }) =>
+    st.broadcast(shape, axis),
+  ),
+  [Primitive.Reshape]: reshapeJit((st, { shape }) => st.reshape(shape)),
   [Primitive.Flip]: reshapeJit((st, { axis }) => {
     const arg = rep(st.shape.length, false);
     for (const ax of axis) arg[ax] = true;
     return st.flip(arg);
   }),
+  [Primitive.Shrink]: reshapeJit((st, { slice }) => st.shrink(slice)),
+  [Primitive.Pad]: reshapeJit((st, { width }) => st.pad(width)),
+  [Primitive.Gather]() {
+    // TODO: Implement Gather in JIT.
+    throw new Error("Gather is not implemented in JIT yet");
+  },
+  [Primitive.JitCall]() {
+    throw new Error(
+      "internal: JitCall should have been flattened before JIT compilation",
+    );
+  },
 };
 
 /** Determines how to split the Jaxpr into kernels via dataflow analysis. */

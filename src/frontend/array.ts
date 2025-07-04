@@ -228,6 +228,92 @@ export class Array extends Tracer {
     return ar;
   }
 
+  /**
+   * Underlying implementation of the Gather primitive. This indexes an array
+   * and extracts slices based on indices in other integer arrays.
+   */
+  #gather(indices: Array[], axis: number[], outDim: number): Array {
+    this.#check();
+
+    if (indices.some((a) => a.#backend !== this.#backend)) {
+      throw new TypeError(
+        `Gather indices must have the same backend: ${this.#backend.type}`,
+      );
+    }
+    const axisSet = new Set(axis);
+    if (axisSet.size !== axis.length) {
+      throw new TypeError("Gather axis must not have duplicates");
+    }
+
+    // First, broadcast each integer array in `indices`.
+    indices = Array.#broadcastArrays(indices);
+    const indexShape = indices[0].shape;
+    const finalShape = this.shape.filter((_, i) => !axisSet.has(i));
+    finalShape.splice(outDim, 0, ...indexShape);
+
+    // Make variables for expression indices for gathered axes, and non-axis.
+    const idxAll = unravelAlu(finalShape, AluVar.gidx);
+    const idxNonaxis = [...idxAll];
+    const idxAxis = idxNonaxis.splice(outDim, indexShape.length);
+
+    // Then, construct a kernel expression that gathers the data.
+    const inputs: Slot[] = [];
+    const src: AluExp[] = [...idxNonaxis];
+    for (let i = 0; i < this.shape.length; i++) {
+      // insert 'null' as axis placeholder, overwritten below as src[axis[i]].
+      if (axisSet.has(i)) src.splice(i, 0, null as any);
+    }
+    for (const [i, ar] of indices.entries()) {
+      if (ar.#source instanceof AluExp) {
+        src[axis[i]] = AluExp.cast(
+          DType.Int32,
+          accessorAluExp(ar.#dtype, ar.#source, ar.#st, idxAxis),
+        );
+      } else {
+        let gid = inputs.indexOf(ar.#source);
+        if (gid === -1) {
+          gid = inputs.length;
+          inputs.push(ar.#source);
+        }
+        src[axis[i]] = AluExp.cast(
+          DType.Int32,
+          AluExp.globalView(ar.#dtype, gid, ar.#st, idxAxis),
+        );
+      }
+    }
+
+    let exp: AluExp;
+    if (this.#source instanceof AluExp) {
+      // This is an AluExp, not an actual array, so turn it into an expression.
+      exp = accessorAluExp(this.#dtype, this.#source, this.#st, src);
+    } else {
+      let gid = inputs.indexOf(this.#source);
+      if (gid === -1) {
+        gid = inputs.length;
+        inputs.push(this.#source);
+      }
+      exp = accessorGlobal(this.#dtype, gid, this.#st, src);
+    }
+
+    const kernel = new Kernel(inputs.length, prod(finalShape), exp);
+    const output = this.#backend.malloc(kernel.size * 4);
+    const pending = [...this.#pending, ...indices.flatMap((ar) => ar.#pending)];
+    for (const exe of pending) exe.updateRc(+1);
+    pending.push(new PendingExecute(this.#backend, kernel, inputs, [output]));
+
+    // Dispose of inputs after creating PendingExecute.
+    this.dispose();
+    for (const ar of indices) ar.dispose();
+
+    return new Array(
+      output,
+      ShapeTracker.fromShape(finalShape),
+      this.#dtype,
+      this.#backend,
+      pending,
+    );
+  }
+
   /** Move axes to the rightmost dimension of the shape. */
   #moveAxesDown(axis: number[]): Array {
     this.#check();
@@ -328,13 +414,8 @@ export class Array extends Tracer {
     dtypeOutput ??= dtype;
     if (!dtypeOutput) throw new TypeError("nary operation with no dtype");
 
-    const newShape = arrays.map((a) => a.shape).reduce(generalBroadcast);
-    arrays = arrays.map((ar) => {
-      if (deepEqual(ar.shape, newShape)) return ar;
-      return ar.#reshape(
-        ar.#st.broadcast(newShape, range(newShape.length - ar.ndim)),
-      );
-    });
+    arrays = Array.#broadcastArrays(arrays);
+    const newShape = arrays[0].shape;
 
     // Short circuit if all are already AluExp.
     if (arrays.every((ar) => ar.#source instanceof AluExp)) {
@@ -348,7 +429,12 @@ export class Array extends Tracer {
         arrays.map((ar) => {
           const src = ar.#source as AluExp;
           if (ar.#st.contiguous) return src;
-          return accessorAluExp(src, ar.#st, unravelAlu(newShape, AluVar.idx));
+          return accessorAluExp(
+            ar.#dtype,
+            src,
+            ar.#st,
+            unravelAlu(newShape, AluVar.idx),
+          );
         }),
       );
       const st = ShapeTracker.fromShape(newShape);
@@ -360,7 +446,7 @@ export class Array extends Tracer {
     for (const ar of arrays) {
       const indices = unravelAlu(newShape, AluVar.gidx);
       if (ar.#source instanceof AluExp) {
-        src.push(accessorAluExp(ar.#source, ar.#st, indices));
+        src.push(accessorAluExp(ar.#dtype, ar.#source, ar.#st, indices));
       } else {
         let gid = inputs.indexOf(ar.#source);
         if (gid === -1) {
@@ -447,7 +533,7 @@ export class Array extends Tracer {
     this.#check();
     const indices = unravelAlu(this.#st.shape, AluVar.gidx);
     if (this.#source instanceof AluExp) {
-      const exp = accessorAluExp(this.#source, this.#st, indices);
+      const exp = accessorAluExp(this.#dtype, this.#source, this.#st, indices);
       const kernel = new Kernel(0, this.#st.size, exp);
       const output = this.#backend.malloc(kernel.size * 4);
       const pendingItem = new PendingExecute(
@@ -484,6 +570,20 @@ export class Array extends Tracer {
     const ar = new Array(exp, this.#st, this.dtype, getBackend("cpu"));
     this.dispose();
     return ar.dataSync();
+  }
+
+  static #broadcastArrays(arrays: Array[]): Array[] {
+    // Broadcast all arrays to the same shape.
+    if (arrays.length === 0)
+      throw new Error("Need at least one array to broadcast");
+    if (arrays.length === 1) return arrays;
+    const newShape = arrays.map((a) => a.shape).reduce(generalBroadcast);
+    return arrays.map((ar) => {
+      if (deepEqual(ar.shape, newShape)) return ar;
+      return ar.#reshape(
+        ar.#st.broadcast(newShape, range(newShape.length - ar.ndim)),
+      );
+    });
   }
 
   /** Realize the array and return it as data. */
@@ -628,6 +728,9 @@ export class Array extends Tracer {
       [Primitive.Pad]([x], { width }) {
         return [x.#reshape(x.#st.pad(width))];
       },
+      [Primitive.Gather]([x, ...indices], { axis, outDim }) {
+        return [x.#gather(indices, axis, outDim)];
+      },
       [Primitive.JitCall](args, { jaxpr, numConsts }) {
         if (jaxpr.inBinders.length !== args.length) {
           throw new Error(
@@ -739,7 +842,10 @@ export function array(
       return arrayFromData(data, shape, { dtype, device });
     } else {
       dtype = dtype ?? DType.Float32;
-      const data = new Float32Array(flat as number[]);
+      const data =
+        dtype === DType.Int32
+          ? new Int32Array(flat as number[])
+          : new Float32Array(flat as number[]);
       return arrayFromData(data, shape, { dtype, device });
     }
   }

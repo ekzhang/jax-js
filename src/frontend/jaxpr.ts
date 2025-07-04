@@ -732,6 +732,30 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     const newShape = x.shape.map((dim, i) => dim + width[i][0] + width[i][1]);
     return [new ShapedArray(newShape, x.dtype)];
   },
+  [Primitive.Gather]([x, ...indices], { axis, outDim }) {
+    for (const a of indices)
+      if (a.dtype !== DType.Int32)
+        throw new TypeError(`Gather indices must be Int32, got ${a.dtype}`);
+    if (axis.length !== indices.length)
+      throw new TypeError(`Gather: ${axis} axes but ${indices.length} indices`);
+    if (indices.length === 0)
+      throw new TypeError("Gather must have 1+ indices with same shape");
+    if (axis.some((a) => a < 0 || a >= x.shape.length))
+      throw new TypeError("Gather axis out of bounds");
+    if (outDim < 0 || outDim > x.shape.length - axis.length)
+      throw new TypeError("Gather outDim out of bounds");
+    const axisSet = new Set(axis);
+    if (axisSet.size !== axis.length)
+      throw new TypeError("Gather axes are not unique");
+    const gatherShape = indices.reduce<number[]>(
+      (shape, a) => generalBroadcast(shape, a.shape),
+      [],
+    );
+    const newShape = x.shape
+      .filter((_, i) => !axisSet.has(i))
+      .splice(outDim, 0, ...gatherShape);
+    return [new ShapedArray(newShape, x.dtype)];
+  },
   [Primitive.JitCall](args, { jaxpr }) {
     const { inTypes, outTypes } = typecheckJaxpr(jaxpr);
     if (args.length !== inTypes.length) {

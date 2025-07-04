@@ -575,10 +575,16 @@ export class AluExp implements FpHashable {
           : this.src[2].evaluate(context, globals);
       case AluOp.Const:
         return this.arg;
-      case AluOp.Special:
-        return context[this.arg[0]];
-      case AluOp.Variable:
-        return context[this.arg];
+      case AluOp.Special: {
+        const x = context[this.arg[0]];
+        if (x === undefined) throw new Error(`Missing special: ${this.arg[0]}`);
+        return x;
+      }
+      case AluOp.Variable: {
+        const x = context[this.arg];
+        if (x === undefined) throw new Error(`Missing variable: ${this.arg}`);
+        return x;
+      }
       case AluOp.GlobalIndex: {
         if (!globals) throw new Error("Missing globals function");
         const gid: number = this.arg;
@@ -924,10 +930,15 @@ export function accessorGlobal(
 
 /** Expression for accessing `indices` in an array recipe with variable "idx". */
 export function accessorAluExp(
+  dtype: DType,
   exp: AluExp,
   st: ShapeTracker,
   indices: AluExp[],
 ): AluExp {
   const [index, valid] = st.toAluExp(indices);
-  return AluExp.where(valid, exp.substitute({ idx: index }), AluExp.f32(0));
+  return AluExp.where(
+    valid,
+    exp.substitute({ idx: index }),
+    AluExp.const(dtype, 0),
+  );
 }

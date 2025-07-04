@@ -16,6 +16,7 @@ import {
   flattenFun,
   flip,
   fullRaise,
+  gather,
   idiv,
   less,
   log,
@@ -203,6 +204,15 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
   },
   [Primitive.Pad]([x], [dx], { width }) {
     return [[pad(x, width)], [pad(dx, width)]];
+  },
+  [Primitive.Gather]([x, ...indices], [dx, ..._], { axis, outDim }) {
+    // d(gather(x, indices)) = gather(dx, indices).
+    // Note: We ignore the tangents for indices, since they are not differentiable.
+    const indicesRef = indices.map((t) => t.ref);
+    return [
+      [gather(x, indices, axis, outDim)],
+      [gather(dx, indicesRef, axis, outDim)],
+    ];
   },
   [Primitive.JitCall](primals, tangents, { jaxpr }) {
     const { newJaxpr, newConsts } = jvpJaxpr(jaxpr);
