@@ -162,16 +162,19 @@ suite.each(devices)("device:%s", (device) => {
 
   test("advanced indexing with gather", () => {
     const x = array([1, 3, 2], { dtype: DType.Int32 });
+    // np.eye(5)[[1, 3, 2]]
     expect(eye(5).slice(x.ref).js()).toEqual([
       [0, 1, 0, 0, 0],
       [0, 0, 0, 1, 0],
       [0, 0, 1, 0, 0],
     ]);
+    // np.eye(5)[[1, 3, 2], np.newaxis]
     expect(eye(5).slice(x.ref, null).js()).toEqual([
       [[0, 1, 0, 0, 0]],
       [[0, 0, 0, 1, 0]],
       [[0, 0, 1, 0, 0]],
     ]);
+    // np.eye(5)[1:4, [1, 3, 2]]
     expect(eye(5).slice([1, 4], x).js()).toEqual([
       [1, 0, 0],
       [0, 0, 1],

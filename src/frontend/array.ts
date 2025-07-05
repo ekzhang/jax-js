@@ -647,7 +647,15 @@ export class Array extends Tracer {
       : new Int32Array(buf);
   }
 
-  /** Convert this array into a JavaScript object (blocking). */
+  /**
+   * Convert this array into a JavaScript object.
+   *
+   * This is a blocking operation that will compile all of the shaders and wait
+   * for execution to complete, synchronously. No other JavaScript code on the
+   * site will be run during shader execution.
+   *
+   * To avoid blocking, prefer `jsAsync()` when possible.
+   */
   js() {
     return dataToJs(this.dtype, this.dataSync(), this.shape);
   }
