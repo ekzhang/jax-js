@@ -57,6 +57,35 @@ suite.each(devices)("device:%s", (device) => {
     );
   });
 
+  test("common broadcasting", () => {
+    // Start with arrays of shape [2, 2] and [2, 3].
+    // Reshape first one to [2, 1, 2] and second one to [2, 3, 1].
+    const a = array([
+      [1, 22],
+      [3, 9],
+    ]).reshape([2, 1, 2]);
+    const b = array([
+      [10, 5, -2],
+      [-8, 0, 3],
+    ]).reshape([2, 3, 1]);
+
+    // Multiply them together -- outer products of a[i] and b[i].
+    const c = a.mul(b);
+    expect(c.shape).toEqual([2, 3, 2]);
+    expect(c.ref.js()).toEqual([
+      [
+        [10, 220],
+        [5, 110],
+        [-2, -44],
+      ],
+      [
+        [-24, -72],
+        [0, 0],
+        [9, 27],
+      ],
+    ]);
+  });
+
   test("flatten and ravel", () => {
     const a = array([
       [
@@ -192,5 +221,14 @@ suite.each(devices)("device:%s", (device) => {
       [0, 0, 1],
       [0, 1, 0],
     ]);
+  });
+
+  // This checks to make sure that index calculations don't suddenly break for
+  // large arrays, covering workgroups > 65535 in WebGPU for instance.
+  test("large array dispatch", async ({ skip }) => {
+    if (device === "cpu") skip("too slow on CPU backend");
+    const x = ones([100, 1000, 1000], { dtype: DType.Int32 }); // 100M elements
+    await x.ref.wait();
+    expect(await x.sum().jsAsync()).toEqual(100_000_000);
   });
 });

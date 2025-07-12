@@ -148,7 +148,7 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     return [[min(x.ref, y.ref)], [where(less(y, x), dy, dx)]];
   },
   [Primitive.Max]([x, y], [dx, dy]) {
-    return [[max(x.ref, y.ref)], [where(less(y, x), dx, dy)]];
+    return [[max(x.ref, y.ref)], [where(less(x, y), dy, dx)]];
   },
   [Primitive.Reduce]([x], [dx], { op, axis }) {
     if (op === AluOp.Add) {

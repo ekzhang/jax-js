@@ -530,6 +530,8 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
   //
   // Also, mark a node black if there are at least two black nodes that can be
   // reached from it, while only going through non-black nodes.
+  //
+  // TODO: Don't do the above for 'simple' nodes: reshape, cast, etc.
   const blackNodes = new Set<Var>();
   const p1NextBlack = new Map<Var, Var>();
   for (const v of jaxpr.outs) {

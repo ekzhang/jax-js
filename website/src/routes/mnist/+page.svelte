@@ -20,22 +20,28 @@
   }
 
   type Params = {
-    w1: np.Array; // [784, 1024]
-    b1: np.Array; // [1024]
-    w2: np.Array; // [1024, 1024]
-    b2: np.Array; // [1024]
-    w3: np.Array; // [1024, 10]
+    w1: np.Array; // [784, 128]
+    b1: np.Array; // [128]
+    w2: np.Array; // [128, 128]
+    b2: np.Array; // [128]
+    w3: np.Array; // [128, 10]
     b3: np.Array; // [10]
   };
 
   async function initializeParams(): Promise<Params> {
     // We don't have random() yet, hopefully this is good enough? :/
-    const w1 = np.linspace(-1, 1, 784 * 1024).reshape([784, 1024]);
-    const b1 = np.linspace(-1, 1, 1024);
-    const w2 = np.linspace(-1, 1, 1024 * 1024).reshape([1024, 1024]);
-    const b2 = np.linspace(-1, 1, 1024);
-    const w3 = np.linspace(-1, 1, 1024 * 10).reshape([1024, 10]);
-    const b3 = np.linspace(-1, 1, 10);
+    const w1 = np
+      .sin(np.linspace(-1e6, 1e6, 784 * 128).reshape([784, 128]))
+      .mul(0.1);
+    const b1 = np.linspace(-1, 1, 128);
+    const w2 = np
+      .sin(np.linspace(-1e6, 1e6, 128 * 128).reshape([128, 128]))
+      .mul(0.1);
+    const b2 = np.linspace(-1, 1, 128);
+    const w3 = np
+      .sin(np.linspace(-1e6, 1e6, 128 * 10).reshape([128, 10]))
+      .mul(0.1);
+    const b3 = np.zeros([10]);
     const params = { w1, b1, w2, b2, w3, b3 };
     // Wait for all the arrays to be created on the device.
     await Promise.all(tree.leaves(params).map((ar) => ar.ref.wait()));
@@ -95,7 +101,7 @@
     const duration = performance.now() - startTime;
     log(`=> Data loaded in ${duration.toFixed(1)} ms`);
 
-    const lr = 5e-4;
+    const lr = 5e-2;
 
     try {
       const batchSize = 2000;

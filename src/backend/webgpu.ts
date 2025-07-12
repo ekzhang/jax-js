@@ -284,9 +284,10 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
       "let gidx: i32 = i32(id.x);",
     );
   } else {
+    const sizeX = gridX * workgroupSize;
     emit(
-      `if (${gridX} * id.y + id.x >= ${tune.threadCount}) { return; }`,
-      `let gidx: i32 = i32(${gridX} * id.y + id.x);`,
+      `if (${sizeX} * id.y + id.x >= ${tune.threadCount}) { return; }`,
+      `let gidx: i32 = i32(${sizeX} * id.y + id.x);`,
     );
   }
 

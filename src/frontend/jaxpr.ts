@@ -751,9 +751,8 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
       (shape, a) => generalBroadcast(shape, a.shape),
       [],
     );
-    const newShape = x.shape
-      .filter((_, i) => !axisSet.has(i))
-      .splice(outDim, 0, ...gatherShape);
+    const newShape = x.shape.filter((_, i) => !axisSet.has(i));
+    newShape.splice(outDim, 0, ...gatherShape);
     return [new ShapedArray(newShape, x.dtype)];
   },
   [Primitive.JitCall](args, { jaxpr }) {
