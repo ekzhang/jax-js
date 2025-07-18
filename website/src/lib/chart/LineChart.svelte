@@ -62,7 +62,7 @@
       x: {
         domain: [minX, maxX],
         inset: 10,
-        ticks: 10,
+        ticks: 8,
         tickFormat: "d",
       },
       y: {

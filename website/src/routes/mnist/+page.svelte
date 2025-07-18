@@ -9,6 +9,7 @@
     tree,
     valueAndGrad,
   } from "@jax-js/jax";
+  import pThrottle from "p-throttle";
   import { onMount } from "svelte";
 
   import LineChart from "$lib/chart/LineChart.svelte";
@@ -108,12 +109,19 @@
     };
   }
 
+  let latestParams: Params | null = null;
+  let probs: number[] = $state([]);
+
   async function run() {
     logs = [];
     trainMetrics = [];
     testMetrics = [];
 
     let params = await initializeParams();
+
+    if (latestParams !== null)
+      tree.map((x: np.Array) => x.dispose(), latestParams);
+    latestParams = tree.ref(params);
 
     const startTime = performance.now();
     const { X_train, y_train, X_test, y_test } = await loadData();
@@ -172,6 +180,10 @@
           });
         }
 
+        if (latestParams !== null)
+          tree.map((x: np.Array) => x.dispose(), latestParams);
+        latestParams = tree.ref(params);
+
         log(`=> Evaluating on test set...`);
         const testStartTime = performance.now();
         const testSize = X_test.shape[0];
@@ -214,7 +226,91 @@
   onMount(async () => {
     await init("webgpu");
     setDevice("webgpu");
+
+    ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
   });
+
+  const inferenceDemo = pThrottle({ limit: 0, interval: 30 })(async () => {
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    // First, construct a 784-dimensional vector from the image data.
+    const ar = new Float32Array(784);
+    for (let i = 0; i < 28; i++) {
+      for (let j = 0; j < 28; j++) {
+        for (let l = i * 10; l < (i + 1) * 10; l++) {
+          for (let k = j * 10; k < (j + 1) * 10; k++) {
+            const idx = (l * 280 + k) * 4;
+            const r = imgData.data[idx];
+            const g = imgData.data[idx + 1];
+            const b = imgData.data[idx + 2];
+            // Average the RGB values to get a grayscale value.
+            ar[i * 28 + j] += (1 - (r + g + b) / 3 / 255) / 100;
+          }
+        }
+      }
+    }
+
+    if (latestParams === null) {
+      log("No model available for inference. Train the model first.");
+      return;
+    }
+    const params = tree.ref(latestParams);
+    const logits = predictJit(params, np.array(ar).reshape([1, 784]));
+    probs = (await np.exp(logits).slice(0).jsAsync()) as number[];
+  });
+
+  let canvas: HTMLCanvasElement;
+  let ctx: CanvasRenderingContext2D;
+  let hasDrawn = $state(false);
+  let drawing = false;
+  let lastPos = [0, 0];
+
+  function coords(event: PointerEvent): [number, number] {
+    const rect = canvas.getBoundingClientRect();
+    return [
+      (event.offsetX / rect.width) * canvas.width,
+      (event.offsetY / rect.height) * canvas.height,
+    ];
+  }
+
+  function drawStart(event: PointerEvent) {
+    event.preventDefault();
+    const [x, y] = coords(event);
+    drawing = true;
+    ctx.fillStyle = "black";
+    ctx.beginPath();
+    ctx.ellipse(x, y, 10, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+    lastPos = [x, y];
+    hasDrawn = true;
+    inferenceDemo();
+  }
+
+  function drawMove(event: PointerEvent) {
+    if (!drawing) return;
+    event.preventDefault();
+    const [x, y] = coords(event);
+    ctx.beginPath();
+    ctx.moveTo(lastPos[0], lastPos[1]);
+    ctx.lineTo(x, y);
+    ctx.lineWidth = 20;
+    ctx.lineCap = "round";
+    ctx.stroke();
+    lastPos = [x, y];
+    inferenceDemo();
+  }
+
+  function drawEnd() {
+    drawing = false;
+  }
+
+  function clearCanvas() {
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    hasDrawn = false;
+    probs = [];
+  }
 </script>
 
 <main class="p-4">
@@ -231,12 +327,11 @@
     <li>Implement Adam</li>
     <li>Convolutional layers</li>
     <li>Make JIT less inefficient</li>
-    <li>Live views of data + inference demo</li>
   </ul>
 
   <button onclick={run}>Run</button>
 
-  <div class="grid md:grid-cols-2 gap-4 my-6">
+  <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-4 my-6">
     <div class="h-[220px] border border-gray-400 rounded">
       <LineChart
         title="Train Loss"
@@ -252,6 +347,56 @@
         x="epoch"
         y={["loss", "acc"]}
       />
+    </div>
+    <div class="h-[220px] border border-gray-400 rounded">
+      <div class="flex flex-col h-full">
+        <p class="shrink-0 text-sm text-center my-1">Inference Demo</p>
+        <div class="grow flex px-2 pb-2 min-h-0">
+          <div
+            class="relative aspect-square h-full border-4 border-gray-200 rounded-md"
+          >
+            <canvas
+              width="280"
+              height="280"
+              class="w-full h-full"
+              onpointerdown={drawStart}
+              onpointermove={drawMove}
+              onpointerleave={drawEnd}
+              onpointerup={drawEnd}
+              bind:this={canvas}
+            ></canvas>
+
+            {#if hasDrawn}
+              <button class="absolute bottom-1 right-1" onclick={clearCanvas}
+                >Clear</button
+              >
+            {:else}
+              <p
+                class="absolute top-18 left-6 -rotate-15 animate-bounce italic text-gray-400 select-none"
+              >
+                draw a digit here!
+              </p>
+            {/if}
+          </div>
+          <div class="grow ml-2">
+            {#if probs.length > 0}
+              <p class="text-xs font-bold">Probabilities:</p>
+              {#each probs as prob, i}
+                <div class="flex items-center text-xs tabular-nums">
+                  <span class="w-4 text-right">{i}:</span>
+                  <span
+                    class="ml-1 bg-gray-400 h-3 rounded-sm"
+                    style:width="{80 * prob}%"
+                  ></span>
+                  <span class="ml-2">
+                    {(prob * 100).toFixed(1)}%
+                  </span>
+                </div>
+              {/each}
+            {/if}
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
