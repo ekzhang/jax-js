@@ -235,6 +235,7 @@ export class Jaxpr implements FpHashable {
    * Produce a simplified Jaxpr with basic optimizations applied.
    *  - Trim away unused variables.
    *  - Fold away *1, *0, or +0 operations against literals.
+   *  - Remove no-op movement operations.
    */
   simplify(): Jaxpr {
     const context = new Map<Var, Atom>();
@@ -283,7 +284,16 @@ export class Jaxpr implements FpHashable {
         const c = eqn.outBinders[0];
         if (atomIsLit(b, 1)) {
           context.set(c, a);
+        } else {
+          newEqns.push(eqn);
         }
+      } else if (
+        (eqn.primitive === Primitive.Broadcast ||
+          eqn.primitive === Primitive.Reshape) &&
+        deepEqual(eqn.params.shape, eqn.inputs[0].aval.shape)
+      ) {
+        // No-op broadcast or reshape, just pass through the input.
+        context.set(eqn.outBinders[0], eqn.inputs[0]);
       } else {
         newEqns.push(eqn);
       }

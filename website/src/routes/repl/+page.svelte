@@ -61,6 +61,17 @@ const y = np.dot(X, np.array([1, 2])).add(3);
 // TODO
 `,
     },
+    {
+      title: "Testing",
+      code: String.raw`import { grad, makeJaxpr, numpy as np } from "@jax-js/jax";
+
+const f = (x: np.Array) => np.dot(x.ref, x).sum();
+const df = grad(f);
+
+const { jaxpr } = makeJaxpr(df)(np.zeros([4]));
+console.log(jaxpr.toString());
+`,
+    },
   ];
 
   let selected = $state(0);
