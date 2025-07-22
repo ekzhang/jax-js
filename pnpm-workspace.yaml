@@ -1,0 +1,9 @@
+packages:
+  - website
+
+onlyBuiltDependencies:
+  - "@jax-js/jax"
+  - "@tailwindcss/oxide"
+  - core-js
+  - esbuild
+  - msw

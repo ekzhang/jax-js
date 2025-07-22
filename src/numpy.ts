@@ -535,7 +535,7 @@ export function matmul(x: ArrayLike, y: ArrayLike) {
   if (ndim(x) === 0 || ndim(y) === 0) {
     throw new TypeError("matmul: x and y must be at least 1D");
   }
-  (x = x as Array), (y = y as Array);
+  ((x = x as Array), (y = y as Array));
   if (y.ndim === 1) {
     // Matrix-vector product
     return core.dot(x, y) as Array;
@@ -560,7 +560,7 @@ export function dot(x: ArrayLike, y: ArrayLike): Array {
     // Standard, scalar multiplication
     return multiply(x, y);
   }
-  (x = x as Array), (y = y as Array);
+  ((x = x as Array), (y = y as Array));
   if (y.ndim === 1) {
     // Matrix-vector product
     return core.dot(x, y) as Array;

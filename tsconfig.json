@@ -2,7 +2,7 @@
   "compilerOptions": {
     "strict": true,
     "target": "ES2023",
-    "lib": ["ES2023", "DOM"],
+    "lib": ["ES2023", "DOM", "ESNext.Disposable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowJs": true,

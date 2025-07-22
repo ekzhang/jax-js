@@ -56,7 +56,7 @@ class JVPTracer extends Tracer {
   }
 
   get ref() {
-    this.primal.ref, this.tangent.ref;
+    (this.primal.ref, this.tangent.ref);
     return this;
   }
   dispose() {

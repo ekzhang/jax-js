@@ -55,9 +55,12 @@ const y = np.dot(x.ref, x); // JIT-compiled into a matrix multiplication kernel
 Under construction.
 
 ```bash
-npm install
-npm run build:watch
-npm test
+pnpm install
+pnpm run build:watch
+
+# Run tests
+pnpm exec playwright install
+pnpm test
 ```
 
 ## Next on Eric's mind

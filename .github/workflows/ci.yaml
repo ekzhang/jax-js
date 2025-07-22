@@ -12,20 +12,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
-      - run: npm run build
+      - run: pnpm build
 
-      - run: npm run lint
+      - run: pnpm lint
 
-      - run: npx playwright install
+      - run: pnpx playwright install --with-deps --only-shell
 
-      - run: npm test
+      - run: pnpm test
 
   format:
     name: Format
@@ -34,11 +36,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
-      - run: npm run format:check
+      - run: pnpm format:check

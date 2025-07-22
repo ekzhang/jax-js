@@ -36,7 +36,7 @@
     "vite": "^6.1.1"
   },
   "dependencies": {
-    "@jax-js/jax": "file:../",
+    "@jax-js/jax": "workspace:*",
     "@observablehq/plot": "^0.6.17",
     "@rich_harris/svelte-split-pane": "^2.0.0",
     "@rollup/browser": "^4.34.8",
