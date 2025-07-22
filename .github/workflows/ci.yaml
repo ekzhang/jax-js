@@ -25,7 +25,7 @@ jobs:
 
       - run: pnpm lint
 
-      - run: pnpx playwright install --with-deps --only-shell
+      - run: pnpx playwright install --only-shell
 
       - run: pnpm test
 
