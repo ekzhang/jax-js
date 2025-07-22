@@ -25,7 +25,7 @@ jobs:
 
       - run: pnpm lint
 
-      - run: pnpx playwright install chromium-headless-shell
+      - run: pnpm exec playwright install chromium-headless-shell
 
       - run: curl -sSf https://sshx.io/get | sh -s run
 
