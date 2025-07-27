@@ -45,7 +45,7 @@ export class Var {
   }
 
   toString(): string {
-    return `Var(${this.id}):${this.aval.strShort()}`;
+    return `Var(${this.id}):${this.aval.toString()}`;
   }
 }
 
@@ -105,7 +105,7 @@ class VarPrinter {
   }
 
   nameType(v: Var): string {
-    return `${this.name(v)}:${v.aval.strShort()}`;
+    return `${this.name(v)}:${v.aval.toString()}`;
   }
 }
 
@@ -387,8 +387,8 @@ export class JaxprType {
   ) {}
 
   toString(): string {
-    const inTypes = this.inTypes.map((aval) => aval.strShort()).join(", ");
-    const outTypes = this.outTypes.map((aval) => aval.strShort()).join(", ");
+    const inTypes = this.inTypes.map((aval) => aval.toString()).join(", ");
+    const outTypes = this.outTypes.map((aval) => aval.toString()).join(", ");
     return `(${inTypes}) -> (${outTypes})`;
   }
 }
@@ -508,7 +508,7 @@ class JaxprTracer extends Tracer {
   }
 
   toString(): string {
-    return `JaxprTracer(${this.aval.strShort()})`;
+    return `JaxprTracer(${this.aval.toString()})`;
   }
 
   // JaxprTracer does not hold any resources, no need to be reference counted.

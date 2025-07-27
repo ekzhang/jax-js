@@ -7,6 +7,7 @@ import {
   Array,
   ArrayLike,
   clip,
+  DType,
   exp,
   log,
   max,
@@ -191,7 +192,7 @@ export function logsumexp(x: ArrayLike, axis?: number | number[]): Array {
  * ```
  */
 export function oneHot(x: Array, numClasses: number): Array {
-  if (x.dtype !== "int32") {
+  if (x.dtype !== DType.Int32) {
     throw new TypeError(`oneHot expects integers, got ${x.dtype}`);
   }
   return eye(numClasses, undefined, { device: x.device }).slice(x);

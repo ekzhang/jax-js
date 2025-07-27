@@ -142,7 +142,7 @@ export function invertPermutation(axis: number[]): number[] {
 }
 
 /** Topologically sort a DAG, given terminal nodes and an ancestor function. */
-export function toposort<T>(terminals: T[], parents: (node: T) => T[]) {
+export function toposort<T>(terminals: T[], parents: (node: T) => T[]): T[] {
   const childCounts: Map<T, number> = new Map();
 
   // First iteartion counts the number of children for each node.

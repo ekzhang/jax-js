@@ -439,10 +439,13 @@ export abstract class Tracer {
    */
   abstract dispose(): void;
 
-  get shape() {
+  get shape(): number[] {
     return this.aval.shape;
   }
-  get dtype() {
+  get size(): number {
+    return prod(this.shape);
+  }
+  get dtype(): DType {
     return this.aval.dtype;
   }
 
@@ -507,7 +510,7 @@ export abstract class Tracer {
       axis = axis.map((a) => checkAxis(a, this.ndim));
     }
     let result = reduce(this, AluOp.Add, axis);
-    result = result.mul(prod(result.shape) / prod(this.shape));
+    result = result.mul(result.size / this.size);
     if (opts?.keepDims) {
       result = broadcast(result, this.shape, axis);
     }
@@ -781,7 +784,7 @@ export class ShapedArray implements AbstractValue {
     return this.shape.length;
   }
 
-  strShort() {
+  toString() {
     return `${this.dtype}[${this.shape.join(",")}]`;
   }
 
@@ -852,7 +855,9 @@ export function fullRaise(trace: Trace, val: TracerValue): Tracer {
       `Can't lift Tracer level ${val._trace.main.level} to level ${level}`,
     );
   } else {
-    throw new Error(`Different traces at same level: ${val._trace}, ${trace}.`);
+    throw new Error(
+      `Different traces at same level: ${val._trace.constructor}, ${trace.constructor}.`,
+    );
   }
 }
 

@@ -15,7 +15,15 @@ export default defineConfig([
     files: ["**/*.{js,mjs,cjs,ts}"],
     languageOptions: { globals: globals.browser },
   },
-  tseslint.configs.recommended,
+  tseslint.configs.recommendedTypeChecked as any,
+  {
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
   {
     plugins: { import: eslintImport },
     rules: {
@@ -23,7 +31,15 @@ export default defineConfig([
       "@typescript-eslint/no-array-constructor": "off",
       "@typescript-eslint/no-empty-object-type": "off",
       "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-floating-promises": "off",
+      "@typescript-eslint/no-redundant-type-constituents": "off",
       "@typescript-eslint/no-this-alias": "off",
+      "@typescript-eslint/no-unnecessary-type-assertion": "off",
+      "@typescript-eslint/no-unsafe-argument": "off",
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/no-unsafe-call": "off",
+      "@typescript-eslint/no-unsafe-member-access": "off",
+      "@typescript-eslint/no-unsafe-return": "off",
       "@typescript-eslint/no-unused-expressions": "off",
       "@typescript-eslint/no-unused-vars": [
         "warn",
@@ -34,6 +50,9 @@ export default defineConfig([
           ignoreRestSiblings: true,
         },
       ],
+      "@typescript-eslint/require-await": "off",
+      "@typescript-eslint/restrict-template-expressions": "off",
+      "@typescript-eslint/unbound-method": "off",
       "import/newline-after-import": "warn",
       "import/order": [
         "warn",

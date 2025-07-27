@@ -611,7 +611,7 @@ export class Array extends Tracer {
   async data(): Promise<Float32Array | Int32Array | Uint32Array> {
     if (
       this.#source instanceof AluExp &&
-      prod(this.shape) < inlineArrayLimit &&
+      this.size < inlineArrayLimit &&
       this.device !== "cpu"
     ) {
       return this.#dataInline();
@@ -624,7 +624,7 @@ export class Array extends Tracer {
       for (const p of pending) p.submit();
     }
     // While the array is contiguous, it might not be the whole buffer.
-    const byteCount = byteWidth(this.#dtype) * prod(this.shape);
+    const byteCount = byteWidth(this.#dtype) * this.size;
     const buf = await this.#backend.read(this.#source as Slot, 0, byteCount);
     this.dispose();
     return dtypedArray(this.dtype, buf);
@@ -651,7 +651,7 @@ export class Array extends Tracer {
   dataSync(): Float32Array | Int32Array | Uint32Array {
     if (
       this.#source instanceof AluExp &&
-      prod(this.shape) < inlineArrayLimit &&
+      this.size < inlineArrayLimit &&
       this.device !== "cpu"
     ) {
       return this.#dataInline();
@@ -662,7 +662,7 @@ export class Array extends Tracer {
       p.submit();
     }
     // While the array is contiguous, it might not be the whole buffer.
-    const byteCount = byteWidth(this.#dtype) * prod(this.shape);
+    const byteCount = byteWidth(this.#dtype) * this.size;
     const buf = this.#backend.readSync(this.#source as Slot, 0, byteCount);
     this.dispose();
     return dtypedArray(this.dtype, buf);
@@ -684,6 +684,19 @@ export class Array extends Tracer {
   /** Convert this array into a JavaScript object, asynchronously. */
   async jsAsync() {
     return dataToJs(this.dtype, await this.data(), this.shape);
+  }
+
+  /**
+   * Copy an element of an array to a numeric scalar and return it.
+   *
+   * Throws an error if the array does not have a single element. The array must
+   * either be rank-0, or all dimensions of the shape are 1.
+   */
+  item(): number {
+    if (this.size !== -1) {
+      throw new Error(`item() can only be called on arrays of size 1`);
+    }
+    return this.dataSync()[0];
   }
 
   /** @private Internal plumbing method for Array / Tracer ops. */

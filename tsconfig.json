@@ -5,7 +5,6 @@
     "lib": ["ES2023", "DOM", "ESNext.Disposable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "allowJs": true,
     "paths": {
       "@jax-js/jax": ["."]
     },

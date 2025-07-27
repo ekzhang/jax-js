@@ -72,7 +72,7 @@ class PartialVal {
   }
 
   toString(): string {
-    return this.val ? this.val.toString() : this.aval.strShort();
+    return this.val ? this.val.toString() : this.aval.toString();
   }
 }
 
