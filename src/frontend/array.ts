@@ -797,14 +797,8 @@ export class Array extends Tracer {
         ];
       },
       [Primitive.Conv]([x, y], params) {
-        const outShape = checkConvShape(x.shape, y.shape, params);
+        checkConvShape(x.shape, y.shape, params);
         const [stX, stY] = prepareConv(x.#st, y.#st, params);
-        // Sanity check that the output shape is correct.
-        if (!deepEqual(stX.shape.slice(2, -1), outShape.slice(2))) {
-          throw new Error(
-            `Conv stX ${stX.shape} does not match expected output shape ${outShape}`,
-          );
-        }
         return [
           Array.#naryCustom(
             "conv",

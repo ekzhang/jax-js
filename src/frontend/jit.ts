@@ -6,6 +6,7 @@ import { PPrint } from "../pprint";
 import { ShapeTracker, unravelAlu } from "../shape";
 import { DEBUG, deepEqual, FpHash, prod, range, rep } from "../utils";
 import { aluCompare, Array, generalBroadcast, PendingExecute } from "./array";
+import { prepareConv } from "./convolution";
 import { Primitive, PrimitiveParams, ShapedArray } from "./core";
 import { Jaxpr, Lit, Var } from "./jaxpr";
 
@@ -521,9 +522,18 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
       axis: [cs.ndim - 1],
     });
   },
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  [Primitive.Conv](nargs, [lhs, rhs], [lhsShape, rhsShape], params) {
-    throw new Error("XXX Conv JIT");
+
+  [Primitive.Conv](nargs, [a, b], [as, bs], params) {
+    const [stX, stY] = prepareConv(
+      ShapeTracker.fromShape(as.shape),
+      ShapeTracker.fromShape(bs.shape),
+      params,
+    );
+    a = reshapeViews(a, (st) => st.compose(stX));
+    b = reshapeViews(b, (st) => st.compose(stY));
+    as = new ShapedArray(stX.shape, as.dtype);
+    bs = new ShapedArray(stY.shape, bs.dtype);
+    return jitRules[Primitive.Dot](nargs, [a, b], [as, bs], {});
   },
   [Primitive.Compare]: broadcastedJit(([a, b], { op }) => aluCompare(a, b, op)),
   [Primitive.Where]: broadcastedJit(([cond, a, b]) => AluExp.where(cond, a, b)),

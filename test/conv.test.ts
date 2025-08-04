@@ -1,6 +1,6 @@
 // Tests for convolution-related operations.
 
-import { devices, init, lax, numpy as np, setDevice } from "@jax-js/jax";
+import { devices, init, jit, lax, numpy as np, setDevice } from "@jax-js/jax";
 import { beforeEach, expect, suite, test } from "vitest";
 
 const devicesAvailable = await init();
@@ -46,5 +46,15 @@ suite.each(devices)("device:%s", (device) => {
       .reshape([1, 1, 2, 2]);
     const result = lax.convGeneralDilated(x, y, [1, 1], "VALID");
     expect(result.slice(0, 0).js()).toEqual([[19, 53]]);
+  });
+
+  test("conv works with jit", () => {
+    const convFn = jit((a: np.Array, b: np.Array) =>
+      lax.convGeneralDilated(a, b, [1], "SAME"),
+    );
+    const x = np.array([[[1, 2, 3, 4, 5]]]);
+    const y = np.array([[[2, 0.5, -1]]]);
+    const result = convFn(x, y);
+    expect(result.js()).toEqual([[[-1.5, 0, 1.5, 3, 10.5]]]);
   });
 });

@@ -97,7 +97,7 @@ pnpm test
   - [ ] Memory scheduling, buffer allocation (can be tricky)
 - [ ] Demos: Navier-Stokes, neural networks, statistics
 - [x] Features for neural networks
-  - [ ] Convolution
+  - [x] Convolution
   - [x] Random and initializers
   - [x] Optimizers (optax package?)
 - [ ] Wasm backend (needs malloc)
