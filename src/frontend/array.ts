@@ -355,7 +355,7 @@ export class Array extends Tracer {
     // Short circuit if the array is already AluExp.
     if (this.#source instanceof AluExp) {
       const exp = new AluExp(op, dtypeOutput, [this.#source]);
-      return new Array(exp, this.#st, dtypeOutput, this.#backend);
+      return new Array(exp.simplify(), this.#st, dtypeOutput, this.#backend);
     }
 
     const indices = unravelAlu(this.#st.shape, AluVar.gidx);
@@ -439,7 +439,7 @@ export class Array extends Tracer {
       if (arrays.every((ar) => deepEqual(ar.#st, arrays[0].#st))) {
         // All are AluExp and have the same shape tracker.
         const exp = custom(arrays.map((ar) => ar.#source as AluExp));
-        return new Array(exp, arrays[0].#st, exp.dtype, backend);
+        return new Array(exp.simplify(), arrays[0].#st, exp.dtype, backend);
       }
       // If their shape trackers are different, we need to normalize them.
       const exp = custom(
@@ -455,7 +455,7 @@ export class Array extends Tracer {
         }),
       );
       const st = ShapeTracker.fromShape(newShape);
-      return new Array(exp, st, exp.dtype, backend);
+      return new Array(exp.simplify(), st, exp.dtype, backend);
     }
 
     let indices: AluExp[];
