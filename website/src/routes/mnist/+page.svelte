@@ -69,6 +69,7 @@
 
   function predict(params: Params, x: np.Array): np.Array {
     // Forward pass through the network
+    x = x.reshape([-1, 784]);
     const z1 = np.dot(x, params.w1).add(params.b1);
     const a1 = nn.relu(z1);
     const z2 = np.dot(a1, params.w2).add(params.b2);
@@ -111,7 +112,7 @@
   }
 
   let latestParams: Params | null = null;
-  let probs: number[] = $state([]);
+  let probs: number[] = $state.raw([]);
 
   async function run() {
     logs = [];
@@ -157,7 +158,7 @@
           );
 
           const startTime = performance.now();
-          const X = X_train.ref.slice(indices.ref).reshape([-1, 784]);
+          const X = X_train.ref.slice(indices.ref);
           const y = y_train.ref.slice(indices);
           const [lossVal, lossGrad] = valueAndGrad(loss)(
             tree.ref(params),
@@ -234,6 +235,45 @@
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   });
 
+  function normalizeImage(X: np.Array): np.Array {
+    // X.shape === [28, 28]
+    const [xgrid, ygrid] = np.meshgrid(
+      [np.arange(28).astype(np.float32), np.arange(28).astype(np.float32)],
+      { indexing: "ij" },
+    );
+    const dx = Math.round(13.5 - X.ref.mul(xgrid).sum().div(X.ref.sum()).js());
+    const dy = Math.round(13.5 - X.ref.mul(ygrid).sum().div(X.ref.sum()).js());
+    if (dx > 0)
+      X = np
+        .pad(X, [
+          [dx, 0],
+          [0, 0],
+        ])
+        .slice([0, 28], []);
+    if (dx < 0)
+      X = np
+        .pad(X, [
+          [0, -dx],
+          [0, 0],
+        ])
+        .slice([-dx], []);
+    if (dy > 0)
+      X = np
+        .pad(X, [
+          [0, 0],
+          [dy, 0],
+        ])
+        .slice([], [0, 28]);
+    if (dy < 0)
+      X = np
+        .pad(X, [
+          [0, 0],
+          [0, -dy],
+        ])
+        .slice([], [-dy]);
+    return X;
+  }
+
   const inferenceDemo = pThrottle({ limit: 0, interval: 30 })(async () => {
     const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     // First, construct a 784-dimensional vector from the image data.
@@ -258,7 +298,9 @@
       return;
     }
     const params = tree.ref(latestParams);
-    const logits = predictJit(params, np.array(ar).reshape([1, 784]));
+    let image = np.array(ar).reshape([28, 28]);
+    image = normalizeImage(image); // Mimic the MNIST train set preprocessing.
+    const logits = predictJit(params, image.reshape([1, 28, 28]));
     probs = (await np.exp(logits).slice(0).jsAsync()) as number[];
   });
 
