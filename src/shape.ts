@@ -764,6 +764,22 @@ export class ShapeTracker {
     perm.splice(j, 0, i); // insert i at j
     return this.permute(perm);
   }
+
+  /** Like pad(), but allows for negative values. */
+  padOrShrink(arg: Pair[]): ShapeTracker {
+    const padArg: Pair[] = [];
+    const shrinkArg: Pair[] = [];
+    for (let i = 0; i < arg.length; i++) {
+      const [b, e] = arg[i];
+      if (b < -this.shape[i] || e < -this.shape[i] || b + e < -this.shape[i])
+        throw new Error(
+          `Invalid padOrShrink ${jstr(arg)} for ${jstr(this.shape)}`,
+        );
+      padArg.push([Math.max(0, b), Math.max(0, e)]);
+      shrinkArg.push([Math.max(0, -b), this.shape[i] - Math.max(0, -e)]);
+    }
+    return this.shrink(shrinkArg).pad(padArg);
+  }
 }
 
 function applyLast<T>(ar: T[], f: (x: T) => T): T[] {

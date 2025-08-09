@@ -72,7 +72,6 @@ pnpm test
   - Reduce kernel overhead of constants / inline expressions
 - Investigate why jax-js Matmul is 2x slower on Safari TP than unroll kernel
 - How many threads to create per workgroup, depends on hardware
-- Think about two-stage `cumsum()`
 - Frontend transformations need to match backend type for pureArray() and zeros() calls
 
 ## Milestones

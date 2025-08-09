@@ -114,4 +114,24 @@ suite.each(devices)("device:%s", (device) => {
     const dy = grad((y: np.Array, x: np.Array) => f(x, y))(y, x);
     expect(dy.slice(0, 0).js()).toEqual([3, 4, 5]);
   });
+
+  test.only("grad shape test with stride 2", () => {
+    const f = (x: np.Array, y: np.Array) =>
+      lax.convGeneralDilated(x, y, [2, 2], "VALID").sum();
+    const g = (y: np.Array, x: np.Array) =>
+      lax.convGeneralDilated(x, y, [2, 2], "VALID").sum();
+
+    for (const xDim of [1, 3, 8, 12, 15]) {
+      for (const kDim of [1, 3, 4]) {
+        if (xDim < kDim) continue;
+        const x = np.zeros([3, 1, xDim, xDim]);
+        const y = np.zeros([1, 1, kDim, kDim]);
+        const dx = grad(f)(x, y);
+        expect(dx.shape).toEqual(x.shape);
+
+        const dy = grad(g)(y, x);
+        expect(dy.shape).toEqual(y.shape);
+      }
+    }
+  });
 });

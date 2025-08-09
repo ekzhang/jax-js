@@ -71,7 +71,7 @@ export function checkConvShape(
   for (let i = 0; i < n; i++) {
     if (strides[i] <= 0 || !Number.isInteger(strides[i]))
       throw new Error(`conv() strides[${i}] must be a positive integer`);
-    if (padding[i].length !== 2 || !padding[i].every((x) => x >= 0))
+    if (padding[i].length !== 2 || !padding[i].every(Number.isInteger))
       throw new Error(`conv() padding[${i}] must be a 2-tuple of integers`);
     if (lhsDilation[i] <= 0 || !Number.isInteger(lhsDilation[i]))
       throw new Error(`conv() lhsDilation[${i}] must be a positive integer`);
@@ -81,9 +81,14 @@ export function checkConvShape(
     const [x, k] = [lhsShape[i + 2], rhsShape[i + 2]];
     if (k <= 0) throw new Error("conv() kernel size must be positive");
 
+    const [pl, pr] = padding[i];
+    if (pl < -x || pr < -x || pl + pr < -x)
+      throw new Error(
+        `conv() padding[${i}]=(${pl},${pr}) is too negative for input size ${x}`,
+      );
+
     const kernelSize = (k - 1) * rhsDilation[i] + 1;
-    const inSize =
-      Math.max((x - 1) * lhsDilation[i] + 1, 0) + padding[i][0] + padding[i][1];
+    const inSize = Math.max((x - 1) * lhsDilation[i] + 1, 0) + pl + pr;
     if (kernelSize > inSize)
       throw new Error(
         `conv() kernel size ${kernelSize} > input size ${inSize} in dimension ${i}`,
@@ -224,7 +229,7 @@ export function prepareConv(
   stX = applyDilation(stX, params.lhsDilation);
 
   const ks = stY.shape.slice(2); // kernel shape, ks.length == n
-  stX = stX.pad([[0, 0], [0, 0], ...params.padding]);
+  stX = stX.padOrShrink([[0, 0], [0, 0], ...params.padding]);
   stX = pool(stX, ks, params.strides, params.rhsDilation);
 
   // Permute in channels to the end along with ks, to be reduced.
