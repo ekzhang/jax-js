@@ -10,16 +10,16 @@
  */
 
 import { Kernel } from "./alu";
-import { CPUBackend } from "./backend/cpu";
+import { CpuBackend } from "./backend/cpu";
 
-export type Device = "cpu" | "webgpu";
-export const devices: Device[] = ["cpu", "webgpu"];
+export type Device = "cpu" | "wasm" | "webgpu";
+export const devices: Device[] = ["cpu", "wasm", "webgpu"];
 
 // TODO: Switch to Wasm or WebGL after implemented. WebGPU is not available on
 // test platform or all browsers, so it shouldn't be the default.
 let defaultBackend: Device = "cpu";
 const initializedBackends = new Map<Device, Backend>();
-initializedBackends.set("cpu", new CPUBackend());
+initializedBackends.set("cpu", new CpuBackend());
 
 /** Set the default device backend (must be initialized). */
 export function setDevice(device: Device): void {
@@ -61,7 +61,10 @@ export async function init(...devicesToInit: Device[]): Promise<Device[]> {
 /** Create a backend, if available. Internal function called by `init()`. */
 async function createBackend(device: Device): Promise<Backend | null> {
   if (device === "cpu") {
-    return new CPUBackend();
+    return new CpuBackend();
+  } else if (device === "wasm") {
+    const { WasmBackend } = await import("./backend/wasm");
+    return new WasmBackend();
   } else if (device === "webgpu") {
     if (!navigator.gpu) return null; // WebGPU is not available.
     const adapter = await navigator.gpu.requestAdapter({
@@ -98,6 +101,7 @@ async function createBackend(device: Device): Promise<Backend | null> {
       return null;
     }
   } else {
+    device satisfies never;
     throw new Error(`Backend not found: ${device}`);
   }
 }

@@ -2,12 +2,12 @@ import { AluOp, dtypedArray, Kernel } from "../alu";
 import { Backend, Device, Executable, Slot, SlotError } from "../backend";
 import { tuneNullopt } from "../tuner";
 
-/** Most basic implementation of `Backend` for testing. */
-export class CpuBackend implements Backend {
-  readonly type: Device = "cpu";
+/** Backend that compiles into WebAssembly bytecode for immediate execution. */
+export class WasmBackend implements Backend {
+  readonly type: Device = "wasm";
   readonly maxArgs = Infinity;
 
-  #buffers: Map<Slot, { ref: number; buffer: Uint8Array }>;
+  #buffers: Map<Slot, { ref: number; buffer: ArrayBuffer }>;
   #nextSlot: number;
 
   constructor() {
@@ -15,13 +15,13 @@ export class CpuBackend implements Backend {
     this.#nextSlot = 1;
   }
 
-  malloc(size: number, initialData?: Uint8Array): Slot {
-    const buffer = new Uint8Array(size);
+  malloc(size: number, initialData?: ArrayBuffer): Slot {
+    const buffer = new ArrayBuffer(size);
     if (initialData) {
       if (initialData.byteLength !== size) {
         throw new Error("initialData size does not match buffer size");
       }
-      buffer.set(initialData);
+      new Uint8Array(buffer).set(new Uint8Array(initialData));
     }
 
     const slot = this.#nextSlot++;
@@ -44,11 +44,11 @@ export class CpuBackend implements Backend {
     }
   }
 
-  async read(slot: Slot, start?: number, count?: number): Promise<Uint8Array> {
+  async read(slot: Slot, start?: number, count?: number): Promise<ArrayBuffer> {
     return this.readSync(slot, start, count);
   }
 
-  readSync(slot: Slot, start?: number, count?: number): Uint8Array {
+  readSync(slot: Slot, start?: number, count?: number): ArrayBuffer {
     const buffer = this.#getBuffer(slot);
     if (start === undefined) start = 0;
     if (count === undefined) count = buffer.byteLength - start;
@@ -108,7 +108,7 @@ export class CpuBackend implements Backend {
     }
   }
 
-  #getBuffer(slot: Slot): Uint8Array {
+  #getBuffer(slot: Slot): ArrayBuffer {
     const buffer = this.#buffers.get(slot);
     if (!buffer) throw new SlotError(slot);
     return buffer.buffer;
