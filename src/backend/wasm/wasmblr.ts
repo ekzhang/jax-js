@@ -224,6 +224,20 @@ export class CodeGenerator {
     this.pop();
     this.emit(0x1a);
   }
+  /** Select one of the first two operands based on the third operand (i32)'s value. */
+  select() {
+    assert(
+      this.pop().typeId === this.i32.typeId,
+      "select: expected i32 condition",
+    );
+    // condition ? a : b
+    const [b, a] = [this.pop(), this.pop()];
+    assert(
+      a.typeId === b.typeId,
+      "select: expected same type for both operands",
+    );
+    this.emit(0x1b);
+  }
 
   /** Export a function. */
   export(fn: number, name: string) {

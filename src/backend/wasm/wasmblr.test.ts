@@ -118,4 +118,24 @@ suite("CodeGenerator", () => {
     const result = vectorSum(8);
     expect(result).toBe(36);
   });
+
+  test("select() wasm operation", async () => {
+    const cg = new CodeGenerator();
+
+    const selectFunc = cg.function([cg.i32, cg.i32, cg.i32], [cg.i32], () => {
+      cg.local.get(1); // true value
+      cg.local.get(2); // false value
+      cg.local.get(0); // condition
+      cg.select();
+    });
+    cg.export(selectFunc, "select");
+
+    const wasmBytes = cg.finish();
+    const { instance } = await WebAssembly.instantiate(wasmBytes);
+    const { select } = instance.exports as {
+      select(condition: number, trueValue: number, falseValue: number): number;
+    };
+    expect(select(1, 10, 20)).toBe(10);
+    expect(select(0, 10, 20)).toBe(20);
+  });
 });
