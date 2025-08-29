@@ -119,7 +119,7 @@ suite("CodeGenerator", () => {
     expect(result).toBe(36);
   });
 
-  test("select() wasm operation", async () => {
+  test("select() wasm operation", () => {
     const cg = new CodeGenerator();
 
     const selectFunc = cg.function([cg.i32, cg.i32, cg.i32], [cg.i32], () => {
@@ -131,7 +131,9 @@ suite("CodeGenerator", () => {
     cg.export(selectFunc, "select");
 
     const wasmBytes = cg.finish();
-    const { instance } = await WebAssembly.instantiate(wasmBytes);
+    const instance = new WebAssembly.Instance(
+      new WebAssembly.Module(wasmBytes),
+    );
     const { select } = instance.exports as {
       select(condition: number, trueValue: number, falseValue: number): number;
     };

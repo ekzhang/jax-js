@@ -2,30 +2,45 @@ import { AluOp, dtypedArray, Kernel } from "../alu";
 import { Backend, Device, Executable, Slot, SlotError } from "../backend";
 import { tuneNullopt } from "../tuner";
 
+interface WasmBuffer {
+  ptr: number;
+  size: number;
+  ref: number;
+}
+
 /** Backend that compiles into WebAssembly bytecode for immediate execution. */
 export class WasmBackend implements Backend {
   readonly type: Device = "wasm";
   readonly maxArgs = Infinity;
 
-  #buffers: Map<Slot, { ref: number; buffer: ArrayBuffer }>;
+  #memory: WebAssembly.Memory;
   #nextSlot: number;
+  #headPtr: number; // first free byte in memory
+  #buffers: Map<Slot, WasmBuffer>;
 
   constructor() {
-    this.#buffers = new Map();
+    // 4 GiB = max memory32 size
+    // https://spidermonkey.dev/blog/2025/01/15/is-memory64-actually-worth-using.html
+    this.#memory = new WebAssembly.Memory({ initial: 65536 });
     this.#nextSlot = 1;
+    this.#headPtr = 0;
+    this.#buffers = new Map();
   }
 
   malloc(size: number, initialData?: ArrayBuffer): Slot {
-    const buffer = new ArrayBuffer(size);
+    const ptr = this.#headPtr;
     if (initialData) {
       if (initialData.byteLength !== size) {
         throw new Error("initialData size does not match buffer size");
       }
-      new Uint8Array(buffer).set(new Uint8Array(initialData));
+      new Uint8Array(this.#memory.buffer, ptr, size).set(
+        new Uint8Array(initialData),
+      );
     }
 
     const slot = this.#nextSlot++;
-    this.#buffers.set(slot, { buffer, ref: 1 });
+    this.#buffers.set(slot, { ptr, size, ref: 1 });
+    this.#headPtr += size;
     return slot;
   }
 
