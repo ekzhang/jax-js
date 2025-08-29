@@ -348,8 +348,7 @@ export class CodeGenerator {
       this.#importedFunctions.length + this.#functions.length;
     concat(typeSectionBytes, encodeUnsigned(totalFunctionTypes));
 
-    // Add imported function types first
-    for (const f of this.#importedFunctions) {
+    for (const f of [...this.#importedFunctions, ...this.#functions]) {
       typeSectionBytes.push(0x60);
       concat(typeSectionBytes, encodeUnsigned(f.inputTypes.length));
       for (const t of f.inputTypes) {
@@ -361,18 +360,6 @@ export class CodeGenerator {
       }
     }
 
-    // Then add local function types
-    for (const f of this.#functions) {
-      typeSectionBytes.push(0x60);
-      concat(typeSectionBytes, encodeUnsigned(f.inputTypes.length));
-      for (const t of f.inputTypes) {
-        typeSectionBytes.push(t.typeId);
-      }
-      concat(typeSectionBytes, encodeUnsigned(f.outputTypes.length));
-      for (const t of f.outputTypes) {
-        typeSectionBytes.push(t.typeId);
-      }
-    }
     emittedBytes.push(0x01);
     concat(emittedBytes, encodeUnsigned(typeSectionBytes.length));
     concat(emittedBytes, typeSectionBytes);

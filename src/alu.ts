@@ -1216,7 +1216,7 @@ export class Kernel implements FpHashable {
     /** Expression to be evaluated. */
     readonly exp: AluExp,
     /** Optional reduction to be performed. */
-    readonly reduction?: Reduction, // TODO: Currently not used except in tests.
+    readonly reduction?: Reduction,
   ) {
     this.exp = exp.simplify();
   }
@@ -1277,7 +1277,7 @@ export class Reduction implements FpHashable {
     /** Size of the reduction axis. */
     readonly size: number,
     /** Follow-up expression defined with the "acc" variable, defaults to identity. */
-    readonly fusion: AluExp = AluVar.acc(dtype),
+    readonly fusion: AluExp = AluVar.acc(dtype), // TODO: Currently not used except in tests.
   ) {
     if (!AluGroup.Reduce.has(op)) {
       throw new TypeError(`Unsupported reduction: ${op}`);
