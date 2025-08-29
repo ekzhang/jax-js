@@ -140,4 +140,34 @@ suite("CodeGenerator", () => {
     expect(select(1, 10, 20)).toBe(10);
     expect(select(0, 10, 20)).toBe(20);
   });
+
+  test("can import and call JavaScript functions", () => {
+    const cg = new CodeGenerator();
+
+    const importedAdd = cg.importFunction(
+      "env",
+      "jsAdd",
+      [cg.f32, cg.f32],
+      [cg.f32],
+    );
+
+    const wrapperFunc = cg.function([cg.f32, cg.f32], [cg.f32], () => {
+      cg.local.get(0);
+      cg.local.get(1);
+      cg.call(importedAdd);
+    });
+    cg.export(wrapperFunc, "callImported");
+
+    const wasmBytes = cg.finish();
+    const instance = new WebAssembly.Instance(
+      new WebAssembly.Module(wasmBytes),
+      { env: { jsAdd: (a: number, b: number) => a + b + 1 } },
+    );
+    const { callImported } = instance.exports as {
+      callImported(a: number, b: number): number;
+    };
+
+    expect(callImported(2, 3)).toBe(6); // 2 + 3 + 1
+    expect(callImported(5.5, 4.5)).toBe(11); // 5.5 + 4.5 + 1
+  });
 });

@@ -85,6 +85,13 @@ class Function_ {
   }
 }
 
+interface ImportedFunction {
+  module: string;
+  name: string;
+  inputTypes: Type[];
+  outputTypes: Type[];
+}
+
 class Memory {
   min = 0;
   max = 0;
@@ -159,6 +166,7 @@ export class CodeGenerator {
   void = { typeId: 0x40 };
 
   #functions: Function_[] = [];
+  #importedFunctions: ImportedFunction[] = [];
   #exportedFunctions = new Map<number, string>();
   #curFunction: Function_ | null = null;
   #curBytes: number[] = [];
@@ -215,7 +223,36 @@ export class CodeGenerator {
   }
   /** Call a function with the given ID. */
   call(fn: number) {
-    assert(fn < this.#functions.length, "function index does not exist");
+    const totalFunctions =
+      this.#importedFunctions.length + this.#functions.length;
+    assert(fn < totalFunctions, "function index does not exist");
+
+    if (fn < this.#importedFunctions.length) {
+      const imported = this.#importedFunctions[fn];
+      for (let i = imported.inputTypes.length - 1; i >= 0; i--) {
+        const argType = this.pop();
+        assert(
+          argType.typeId === imported.inputTypes[i].typeId,
+          `call: argument ${i} type mismatch`,
+        );
+      }
+      for (const outputType of imported.outputTypes) {
+        this.push(outputType);
+      }
+    } else {
+      const localIdx = fn - this.#importedFunctions.length;
+      const func = this.#functions[localIdx];
+      for (let i = func.inputTypes.length - 1; i >= 0; i--) {
+        const argType = this.pop();
+        assert(
+          argType.typeId === func.inputTypes[i].typeId,
+          `call: argument ${i} type mismatch`,
+        );
+      }
+      for (const outputType of func.outputTypes) {
+        this.push(outputType);
+      }
+    }
     this.emit(0x10);
     this.emit(encodeUnsigned(fn));
   }
@@ -239,6 +276,20 @@ export class CodeGenerator {
     this.emit(0x1b);
   }
 
+  /** Import a JavaScript function; returns its index. */
+  importFunction(
+    module: string,
+    name: string,
+    inputTypes: Type[],
+    outputTypes: Type[],
+  ): number {
+    if (this.#functions.length > 0)
+      throw new Error("function imports must precede defining functions");
+    const idx = this.#importedFunctions.length;
+    this.#importedFunctions.push({ module, name, inputTypes, outputTypes });
+    return idx;
+  }
+
   /** Export a function. */
   export(fn: number, name: string) {
     this.#exportedFunctions.set(fn, name);
@@ -246,7 +297,7 @@ export class CodeGenerator {
 
   /** Declare a new function; returns its index. */
   function(inputTypes: Type[], outputTypes: Type[], body: () => void): number {
-    const idx = this.#functions.length;
+    const idx = this.#importedFunctions.length + this.#functions.length;
     this.#functions.push(new Function_(inputTypes, outputTypes, body));
     return idx;
   }
@@ -293,7 +344,24 @@ export class CodeGenerator {
 
     // Type section
     const typeSectionBytes: number[] = [];
-    concat(typeSectionBytes, encodeUnsigned(this.#functions.length));
+    const totalFunctionTypes =
+      this.#importedFunctions.length + this.#functions.length;
+    concat(typeSectionBytes, encodeUnsigned(totalFunctionTypes));
+
+    // Add imported function types first
+    for (const f of this.#importedFunctions) {
+      typeSectionBytes.push(0x60);
+      concat(typeSectionBytes, encodeUnsigned(f.inputTypes.length));
+      for (const t of f.inputTypes) {
+        typeSectionBytes.push(t.typeId);
+      }
+      concat(typeSectionBytes, encodeUnsigned(f.outputTypes.length));
+      for (const t of f.outputTypes) {
+        typeSectionBytes.push(t.typeId);
+      }
+    }
+
+    // Then add local function types
     for (const f of this.#functions) {
       typeSectionBytes.push(0x60);
       concat(typeSectionBytes, encodeUnsigned(f.inputTypes.length));
@@ -309,26 +377,43 @@ export class CodeGenerator {
     concat(emittedBytes, encodeUnsigned(typeSectionBytes.length));
     concat(emittedBytes, typeSectionBytes);
 
-    // Import section (for memory import)
+    // Import section (for function and memory imports)
     const importSectionBytes: number[] = [];
-    if (this.memory.isImport) {
-      // one import
-      concat(importSectionBytes, encodeUnsigned(1));
-      concat(importSectionBytes, encodeString(this.memory.aString));
-      concat(importSectionBytes, encodeString(this.memory.bString));
-      importSectionBytes.push(0x02); // memory flag
-      if (this.memory.min && this.memory.max) {
-        if (this.memory.isShared) {
-          importSectionBytes.push(0x03);
-        } else {
-          importSectionBytes.push(0x01);
-        }
-        concat(importSectionBytes, encodeUnsigned(this.memory.min));
-        concat(importSectionBytes, encodeUnsigned(this.memory.max));
-      } else {
-        assert(!this.memory.isShared, "shared memory must have a max size");
-        concat(importSectionBytes, encodeUnsigned(this.memory.min));
+    const numImports =
+      this.#importedFunctions.length + (this.memory.isImport ? 1 : 0);
+
+    if (numImports > 0) {
+      concat(importSectionBytes, encodeUnsigned(numImports));
+
+      // Add function imports first
+      for (let i = 0; i < this.#importedFunctions.length; i++) {
+        const f = this.#importedFunctions[i];
+        concat(importSectionBytes, encodeString(f.module));
+        concat(importSectionBytes, encodeString(f.name));
+        importSectionBytes.push(0x00); // function import flag
+        concat(importSectionBytes, encodeUnsigned(i)); // type index
       }
+
+      // Add memory import if present
+      if (this.memory.isImport) {
+        concat(importSectionBytes, encodeString(this.memory.aString));
+        concat(importSectionBytes, encodeString(this.memory.bString));
+        importSectionBytes.push(0x02); // memory flag
+        if (this.memory.min && this.memory.max) {
+          if (this.memory.isShared) {
+            importSectionBytes.push(0x03);
+          } else {
+            importSectionBytes.push(0x01);
+          }
+          concat(importSectionBytes, encodeUnsigned(this.memory.min));
+          concat(importSectionBytes, encodeUnsigned(this.memory.max));
+        } else {
+          assert(!this.memory.isShared, "shared memory must have a max size");
+          importSectionBytes.push(0x00);
+          concat(importSectionBytes, encodeUnsigned(this.memory.min));
+        }
+      }
+
       emittedBytes.push(0x02);
       concat(emittedBytes, encodeUnsigned(importSectionBytes.length));
       concat(emittedBytes, importSectionBytes);
@@ -338,7 +423,8 @@ export class CodeGenerator {
     const functionSectionBytes: number[] = [];
     concat(functionSectionBytes, encodeUnsigned(this.#functions.length));
     for (let i = 0; i < this.#functions.length; i++) {
-      concat(functionSectionBytes, encodeUnsigned(i));
+      const typeIndex = this.#importedFunctions.length + i;
+      concat(functionSectionBytes, encodeUnsigned(typeIndex));
     }
     emittedBytes.push(0x03);
     concat(emittedBytes, encodeUnsigned(functionSectionBytes.length));
