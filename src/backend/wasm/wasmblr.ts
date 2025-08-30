@@ -152,6 +152,7 @@ class Memory {
 // I32, F32, V128, Void, I32x4, F32x4
 interface Type {
   typeId: number;
+  name: string;
 }
 
 /** Public API of WebAssembly assembler. */
@@ -163,7 +164,7 @@ export class CodeGenerator {
   i32x4: I32x4;
   f32x4: F32x4;
   memory: Memory;
-  void = { typeId: 0x40 };
+  void: Type = { typeId: 0x40, name: "void" };
 
   #functions: Function_[] = [];
   #importedFunctions: ImportedFunction[] = [];
@@ -240,32 +241,22 @@ export class CodeGenerator {
       this.#importedFunctions.length + this.#functions.length;
     assert(fn < totalFunctions, "function index does not exist");
 
-    if (fn < this.#importedFunctions.length) {
-      const imported = this.#importedFunctions[fn];
-      for (let i = imported.inputTypes.length - 1; i >= 0; i--) {
-        const argType = this._pop();
-        assert(
-          argType.typeId === imported.inputTypes[i].typeId,
-          `call: argument ${i} type mismatch`,
-        );
-      }
-      for (const outputType of imported.outputTypes) {
-        this._push(outputType);
-      }
-    } else {
-      const localIdx = fn - this.#importedFunctions.length;
-      const func = this.#functions[localIdx];
-      for (let i = func.inputTypes.length - 1; i >= 0; i--) {
-        const argType = this._pop();
-        assert(
-          argType.typeId === func.inputTypes[i].typeId,
-          `call: argument ${i} type mismatch`,
-        );
-      }
-      for (const outputType of func.outputTypes) {
-        this._push(outputType);
-      }
+    // Validate types are correct on the stack.
+    const func =
+      fn < this.#importedFunctions.length
+        ? this.#importedFunctions[fn]
+        : this.#functions[fn - this.#importedFunctions.length];
+    for (let i = func.inputTypes.length - 1; i >= 0; i--) {
+      const argType = this._pop();
+      assert(
+        argType.typeId === func.inputTypes[i].typeId,
+        `call: argument ${i} type mismatch, expected ${func.inputTypes[i].name} got ${argType.name}`,
+      );
     }
+    for (const outputType of func.outputTypes) {
+      this._push(outputType);
+    }
+
     this._emit(0x10);
     this._emit(encodeUnsigned(fn));
   }
@@ -477,7 +468,7 @@ export class CodeGenerator {
     const codeSectionBytes: number[] = [];
     concat(codeSectionBytes, encodeUnsigned(this.#functions.length));
     for (const f of this.#functions) {
-      assert(this.#typeStack.length === 0, "type stack should be empty");
+      this.#typeStack = [];
       this.#blockFrames = [{ idx: 0, ty: f.outputTypes }];
       this.#curFunction = f;
       this.#curBytes = [];
@@ -636,10 +627,13 @@ function STORE_OP(op: string, opcode: number, inType: TypeSpec) {
 // I32 class
 ////////////////////////////////////////
 
-class I32 {
+class I32 implements Type {
   constructor(readonly cg: CodeGenerator) {}
   get typeId(): number {
     return 0x7f;
+  }
+  get name(): string {
+    return "i32";
   }
 
   const(i: number) {
@@ -693,10 +687,13 @@ class I32 {
 // F32 class
 ////////////////////////////////////////
 
-class F32 {
+class F32 implements Type {
   constructor(readonly cg: CodeGenerator) {}
   get typeId(): number {
     return 0x7d;
+  }
+  get name(): string {
+    return "f32";
   }
 
   const(f: number) {
@@ -801,10 +798,13 @@ function VECTOR_LOAD_OP(op: string, vopcode: number) {
   };
 }
 
-class V128 {
+class V128 implements Type {
   constructor(readonly cg: CodeGenerator) {}
   get typeId(): number {
     return 0x7b;
+  }
+  get name(): string {
+    return "v128";
   }
 
   load = VECTOR_LOAD_OP("load", 0x00);

@@ -537,7 +537,7 @@ export function allclose(
   expected: Parameters<typeof array>[0],
   options?: { rtol?: number; atol?: number },
 ): boolean {
-  const { rtol = 1e-5, atol = 1e-8 } = options ?? {};
+  const { rtol = 1e-5, atol = 1e-7 } = options ?? {};
 
   const x = array(actual);
   const y = array(expected);

@@ -1009,11 +1009,6 @@ export class AluExp implements FpHashable {
       [AluOp.Cmpne]: "!=",
     };
     const UNARY_SYM: Partial<Record<AluOp, string>> = {
-      [AluOp.Sin]: "sin",
-      [AluOp.Cos]: "cos",
-      [AluOp.Exp]: "exp",
-      [AluOp.Log]: "log",
-      [AluOp.Sqrt]: "sqrt",
       [AluOp.Reciprocal]: "1/",
     };
 
@@ -1103,6 +1098,15 @@ export class AluExp implements FpHashable {
       if (predicate(exp)) result.push(exp);
     });
     return result;
+  }
+
+  /** Produce a list of all distinct AluOp in this expression. */
+  distinctOps(): Set<AluOp> {
+    const ops = new Set<AluOp>();
+    this.fold((exp) => {
+      ops.add(exp.op);
+    });
+    return ops;
   }
 
   /** Rewrite GlobalView operations to GlobalIndex operations. */

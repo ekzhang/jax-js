@@ -77,6 +77,16 @@ export function deepEqual(a: any, b: any): boolean {
   return true;
 }
 
+export function union<T>(...sets: (Iterable<T> | null | undefined)[]): Set<T> {
+  const result = new Set<T>();
+  for (const s of sets) {
+    if (s) {
+      for (const x of s) result.add(x);
+    }
+  }
+  return result;
+}
+
 /** Splits the list based on a condition, `false` first then `true`. */
 export function partitionList<T>(which: boolean[], array: T[]): [T[], T[]] {
   const falseList: T[] = [];

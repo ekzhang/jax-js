@@ -8,7 +8,8 @@ import {
   UnsupportedOpError,
 } from "../backend";
 import { tuneNullopt } from "../tuner";
-import { rep } from "../utils";
+import { rep, union } from "../utils";
+import { wasm_cos, wasm_exp, wasm_log, wasm_sin } from "./wasm/builtins";
 import { CodeGenerator } from "./wasm/wasmblr";
 
 interface WasmBuffer {
@@ -120,10 +121,17 @@ export class WasmBackend implements Backend {
 
 function codegenWasm(kernel: Kernel): Uint8Array {
   const tune = tuneNullopt(kernel);
+  const re = kernel.reduction;
 
   const cg = new CodeGenerator();
-
   cg.memory.import("env", "memory");
+
+  const distinctOps = union(tune.exp.distinctOps(), re?.fusion.distinctOps());
+  const funcs: Record<string, number> = {};
+  if (distinctOps.has(AluOp.Exp)) funcs.exp = wasm_exp(cg);
+  if (distinctOps.has(AluOp.Log)) funcs.log = wasm_log(cg);
+  if (distinctOps.has(AluOp.Sin)) funcs.sin = wasm_sin(cg);
+  if (distinctOps.has(AluOp.Cos)) funcs.cos = wasm_cos(cg);
 
   const kernelFunc = cg.function(rep(kernel.nargs + 1, cg.i32), [], () => {
     const gidx = cg.local.declare(cg.i32);
@@ -143,9 +151,7 @@ function codegenWasm(kernel: Kernel): Uint8Array {
       cg.i32.mul();
       cg.i32.add();
 
-      if (kernel.reduction) {
-        const re = kernel.reduction;
-
+      if (re) {
         // If reduction, define accumulator and inner ridx loop.
         const acc = cg.local.declare(dty(cg, null, kernel.exp.dtype));
         dty(cg, null, kernel.exp.dtype).const(re.identity);
@@ -164,7 +170,7 @@ function codegenWasm(kernel: Kernel): Uint8Array {
           cg.br_if(0);
 
           // Translate tune.exp to expression and push onto stack.
-          translateExp(cg, tune.exp, { gidx, ridx });
+          translateExp(cg, funcs, tune.exp, { gidx, ridx });
 
           // acc = reduction.evaluate(acc, exp)
           if (re.op === AluOp.Add) {
@@ -213,10 +219,10 @@ function codegenWasm(kernel: Kernel): Uint8Array {
         }
         cg.end();
 
-        translateExp(cg, kernel.reduction.fusion, { acc });
+        translateExp(cg, funcs, kernel.reduction.fusion, { acc });
       } else {
         // Translate tune.exp to expression and push onto stack.
-        translateExp(cg, tune.exp, { gidx });
+        translateExp(cg, funcs, tune.exp, { gidx });
       }
 
       // Store value into output buffer.
@@ -240,6 +246,7 @@ function codegenWasm(kernel: Kernel): Uint8Array {
 
 function translateExp(
   cg: CodeGenerator,
+  funcs: Record<string, number>,
   exp: AluExp,
   ctx: Record<string, number>,
 ) {
@@ -323,14 +330,10 @@ function translateExp(
       } else if (op === AluOp.Cmpne) dty(cg, op, src[0].dtype).ne();
       else throw new UnsupportedOpError(op, dtype, "wasm");
     } else if (AluGroup.Unary.has(op)) {
-      // TODO: Transcendental functions
-      if (op === AluOp.Sin) throw new UnsupportedOpError(op, dtype, "wasm");
-      else if (op === AluOp.Cos)
-        throw new UnsupportedOpError(op, dtype, "wasm");
-      else if (op === AluOp.Exp)
-        throw new UnsupportedOpError(op, dtype, "wasm");
-      else if (op === AluOp.Log)
-        throw new UnsupportedOpError(op, dtype, "wasm");
+      if (op === AluOp.Sin) (gen(src[0]), cg.call(funcs.sin));
+      else if (op === AluOp.Cos) (gen(src[0]), cg.call(funcs.cos));
+      else if (op === AluOp.Exp) (gen(src[0]), cg.call(funcs.exp));
+      else if (op === AluOp.Log) (gen(src[0]), cg.call(funcs.log));
       else if (op === AluOp.Sqrt) (gen(src[0]), cg.f32.sqrt());
       else if (op === AluOp.Reciprocal)
         (cg.f32.const(1), gen(src[0]), cg.f32.div());

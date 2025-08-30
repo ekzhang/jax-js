@@ -8,7 +8,7 @@ import {
   UnsupportedOpError,
 } from "../backend";
 import { tuneWebgpu } from "../tuner";
-import { DEBUG, findPow2, FpHash, strip1 } from "../utils";
+import { DEBUG, findPow2, FpHash, strip1, union } from "../utils";
 
 interface ShaderInfo {
   shader: string;
@@ -222,7 +222,7 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
     console.info(`kernel.exp: ${kernel.exp}\ntune.exp: ${tune.exp}`);
   }
 
-  const { nargs } = kernel;
+  const { nargs, reduction: re } = kernel;
   const args = Array.from({ length: nargs }, (_, i) => `in${i}`);
 
   // binding(0..n-1): input buffers
@@ -247,7 +247,8 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
     "fn inf() -> f32 { let bits = 0x7f800000u; return bitcast<f32>(bits); }",
   );
 
-  if (tune.exp.collect((exp) => exp.op === AluOp.Threefry2x32).length > 0) {
+  const distinctOps = union(tune.exp.distinctOps(), re?.fusion.distinctOps());
+  if (distinctOps.has(AluOp.Threefry2x32)) {
     emit(threefrySrc);
   }
 
@@ -395,13 +396,12 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
     }
   };
 
-  if (!kernel.reduction) {
+  if (!re) {
     countReferences(tune.exp);
     let rhs = strip1(gen(tune.exp));
     if (resultTy !== dtypeToWgsl(tune.exp.dtype)) rhs = `${resultTy}(${rhs})`;
     emit(`result[gidx] = ${rhs};`);
   } else {
-    const re = kernel.reduction;
     if ((tune.size.groups ?? 1) > 1) {
       throw new Error("WebGPU backend does not support group optimization yet");
     }
