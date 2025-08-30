@@ -102,6 +102,7 @@ pnpm test
   - [x] Optimizers (optax package?)
 - [ ] Wasm backend (needs malloc)
   - [ ] SIMD support for Wasm backend
+  - [ ] Async / multithreading Wasm support
 - [ ] Device switching with `.to()` between webgpu/cpu/wasm
 - [ ] numpy/jax API compatibility table
 - [ ] Import tfjs models
