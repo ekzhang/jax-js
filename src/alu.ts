@@ -1282,6 +1282,7 @@ export class Reduction implements FpHashable {
     if (!AluGroup.Reduce.has(op)) {
       throw new TypeError(`Unsupported reduction: ${op}`);
     }
+    this.fusion = fusion.simplify();
   }
 
   hash(state: FpHash): void {
@@ -1295,7 +1296,7 @@ export class Reduction implements FpHashable {
   /** Get the identity for this reduction operation. */
   get identity(): any {
     if (this.dtype === DType.Bool) {
-      return this.op === AluOp.Add || this.op === AluOp.Max ? false : true;
+      return this.op === AluOp.Add || this.op === AluOp.Max ? 0 : 1;
     } else if (this.dtype === DType.Int32) {
       if (this.op === AluOp.Add) return 0;
       else if (this.op === AluOp.Mul) return 1;

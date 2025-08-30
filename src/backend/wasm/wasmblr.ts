@@ -79,7 +79,7 @@ class Function_ {
     this.outputTypes = outputTypes;
     this.body = body || (() => {});
   }
-  emit() {
+  emit(): void {
     this.locals = [];
     this.body();
   }
@@ -128,13 +128,13 @@ class Memory {
   }
 
   size() {
-    this.cg.emit(0x3f);
-    this.cg.emit(0x00);
+    this.cg._emit(0x3f);
+    this.cg._emit(0x00);
   }
 
   grow() {
-    this.cg.emit(0x40);
-    this.cg.emit(0x00);
+    this.cg._emit(0x40);
+    this.cg._emit(0x00);
   }
 
   get isImport(): boolean {
@@ -171,6 +171,7 @@ export class CodeGenerator {
   #curFunction: Function_ | null = null;
   #curBytes: number[] = [];
   #typeStack: Type[] = [];
+  #blockFrames: { idx: number; ty: Type[] }[] = [];
 
   constructor() {
     this.local = new Local(this);
@@ -184,42 +185,54 @@ export class CodeGenerator {
 
   // Control and branching instructions
   nop() {
-    this.emit(0x01);
+    this._emit(0x01);
   }
   block(...type: Type[]) {
-    this.emit(0x02);
-    this.emit(encodeBlocktype(type));
+    this.#blockFrames.push({ idx: this.#typeStack.length, ty: type });
+    this._emit(0x02);
+    this._emit(encodeBlocktype(type));
   }
   loop(...type: Type[]) {
-    this.emit(0x03);
-    this.emit(encodeBlocktype(type));
+    this.#blockFrames.push({ idx: this.#typeStack.length, ty: type });
+    this._emit(0x03);
+    this._emit(encodeBlocktype(type));
   }
   if(...type: Type[]) {
-    assert(this.pop().typeId === this.i32.typeId, "if_: expected i32");
-    this.emit(0x04);
-    this.emit(encodeBlocktype(type));
+    assert(this._pop().typeId === this.i32.typeId, "if_: expected i32");
+    this.#blockFrames.push({ idx: this.#typeStack.length, ty: type });
+    this._emit(0x04);
+    this._emit(encodeBlocktype(type));
   }
   else() {
-    this.emit(0x05);
+    assert(this.#blockFrames.length > 0, "else: no block to else");
+    const frame = this.#blockFrames[this.#blockFrames.length - 1];
+    this.#typeStack = this.#typeStack.slice(0, frame.idx);
+    this._emit(0x05);
   }
   /** End a block (`block`, `if`/`else`, `loop`, or function). */
   end() {
-    this.emit(0x0b);
+    const frame = this.#blockFrames.pop();
+    assert(frame !== undefined, "end: no block to end");
+    this.#typeStack = this.#typeStack.slice(0, frame.idx);
+    for (const ty of frame.ty) {
+      if (ty.typeId !== this.void.typeId) this._push(ty);
+    }
+    this._emit(0x0b);
   }
   /** Branch to a block a certain depth outward on the stack. */
   br(depth: number) {
-    this.emit(0x0c);
-    this.emit(encodeUnsigned(depth));
+    this._emit(0x0c);
+    this._emit(encodeUnsigned(depth));
   }
   /** Conditional branch to a block a certain depth outward on the stack. */
   br_if(depth: number) {
-    assert(this.pop().typeId === this.i32.typeId, "br_if: expected i32");
-    this.emit(0x0d);
-    this.emit(encodeUnsigned(depth));
+    assert(this._pop().typeId === this.i32.typeId, "br_if: expected i32");
+    this._emit(0x0d);
+    this._emit(encodeUnsigned(depth));
   }
   /** Return from a function, branching out of the outermost block. */
   return() {
-    this.emit(0x0f);
+    this._emit(0x0f);
   }
   /** Call a function with the given ID. */
   call(fn: number) {
@@ -230,51 +243,51 @@ export class CodeGenerator {
     if (fn < this.#importedFunctions.length) {
       const imported = this.#importedFunctions[fn];
       for (let i = imported.inputTypes.length - 1; i >= 0; i--) {
-        const argType = this.pop();
+        const argType = this._pop();
         assert(
           argType.typeId === imported.inputTypes[i].typeId,
           `call: argument ${i} type mismatch`,
         );
       }
       for (const outputType of imported.outputTypes) {
-        this.push(outputType);
+        this._push(outputType);
       }
     } else {
       const localIdx = fn - this.#importedFunctions.length;
       const func = this.#functions[localIdx];
       for (let i = func.inputTypes.length - 1; i >= 0; i--) {
-        const argType = this.pop();
+        const argType = this._pop();
         assert(
           argType.typeId === func.inputTypes[i].typeId,
           `call: argument ${i} type mismatch`,
         );
       }
       for (const outputType of func.outputTypes) {
-        this.push(outputType);
+        this._push(outputType);
       }
     }
-    this.emit(0x10);
-    this.emit(encodeUnsigned(fn));
+    this._emit(0x10);
+    this._emit(encodeUnsigned(fn));
   }
   /** Throw away an operand on the stack. */
   drop() {
-    this.pop();
-    this.emit(0x1a);
+    this._pop();
+    this._emit(0x1a);
   }
   /** Select one of the first two operands (T, F) based on the third operand (i32)'s value. */
   select() {
     assert(
-      this.pop().typeId === this.i32.typeId,
+      this._pop().typeId === this.i32.typeId,
       "select: expected i32 condition",
     );
     // condition ? a : b
-    const [b, a] = [this.pop(), this.pop()];
+    const [b, a] = [this._pop(), this._pop()];
     assert(
       a.typeId === b.typeId,
       "select: expected same type for both operands",
     );
-    this.push(a);
-    this.emit(0x1b);
+    this._push(a);
+    this._emit(0x1b);
   }
 
   /** Import a JavaScript function; returns its index. */
@@ -305,7 +318,7 @@ export class CodeGenerator {
 
   // --- Implementation helpers
 
-  declareLocal(type: Type): number {
+  _declareLocal(type: Type): number {
     assert(this.#curFunction !== null, "No current function");
     const idx =
       this.#curFunction.locals.length + this.#curFunction.inputTypes.length;
@@ -313,26 +326,26 @@ export class CodeGenerator {
     return idx;
   }
 
-  inputTypes(): Type[] {
+  _inputTypes(): Type[] {
     assert(this.#curFunction !== null, "No current function");
     return this.#curFunction.inputTypes;
   }
 
-  locals(): Type[] {
+  _locals(): Type[] {
     assert(this.#curFunction !== null, "No current function");
     return this.#curFunction.locals;
   }
 
-  push(type: Type) {
+  _push(type: Type) {
     if (!type) throw new Error(`pushing type ${type}`);
     this.#typeStack.push(type);
   }
-  pop(): Type {
+  _pop(): Type {
     assert(this.#typeStack.length > 0, "popping empty stack");
     return this.#typeStack.pop()!;
   }
 
-  emit(bytes: number | number[]) {
+  _emit(bytes: number | number[]) {
     if (typeof bytes === "number") this.#curBytes.push(bytes);
     else this.#curBytes.push(...bytes);
   }
@@ -464,6 +477,8 @@ export class CodeGenerator {
     const codeSectionBytes: number[] = [];
     concat(codeSectionBytes, encodeUnsigned(this.#functions.length));
     for (const f of this.#functions) {
+      assert(this.#typeStack.length === 0, "type stack should be empty");
+      this.#blockFrames = [{ idx: 0, ty: f.outputTypes }];
       this.#curFunction = f;
       this.#curBytes = [];
       f.emit();
@@ -473,8 +488,8 @@ export class CodeGenerator {
       // Header: local declarations
       concat(this.#curBytes, encodeUnsigned(f.locals.length));
       for (const l of f.locals) {
-        this.emit(0x01);
-        this.emit(l.typeId);
+        this._emit(0x01);
+        this._emit(l.typeId);
       }
       const headerBytes = [...this.#curBytes];
       const fnSize = headerBytes.length + bodyBytes.length;
@@ -501,47 +516,47 @@ class Local {
 
   // Mimic operator()(type)
   declare(type: Type): number {
-    return this.cg.declareLocal(type);
+    return this.cg._declareLocal(type);
   }
   get(idx: number) {
     assert(Number.isInteger(idx), "getting non-integer local");
-    const inputTypes = this.cg.inputTypes();
+    const inputTypes = this.cg._inputTypes();
     if (idx < inputTypes.length) {
-      this.cg.push(inputTypes[idx]);
+      this.cg._push(inputTypes[idx]);
     } else {
-      this.cg.push(this.cg.locals()[idx - inputTypes.length]);
+      this.cg._push(this.cg._locals()[idx - inputTypes.length]);
     }
-    this.cg.emit(0x20);
-    this.cg.emit(encodeUnsigned(idx));
+    this.cg._emit(0x20);
+    this.cg._emit(encodeUnsigned(idx));
   }
   set(idx: number) {
-    const t = this.cg.pop();
-    const inputTypes = this.cg.inputTypes();
+    const t = this.cg._pop();
+    const inputTypes = this.cg._inputTypes();
     const expectedType =
       idx < inputTypes.length
         ? inputTypes[idx]
-        : this.cg.locals()[idx - inputTypes.length];
+        : this.cg._locals()[idx - inputTypes.length];
     assert(
       expectedType.typeId === t.typeId,
       "can't set local to this value (wrong type)",
     );
-    this.cg.emit(0x21);
-    this.cg.emit(encodeUnsigned(idx));
+    this.cg._emit(0x21);
+    this.cg._emit(encodeUnsigned(idx));
   }
   tee(idx: number) {
-    const t = this.cg.pop();
-    const inputTypes = this.cg.inputTypes();
+    const t = this.cg._pop();
+    const inputTypes = this.cg._inputTypes();
     const expectedType =
       idx < inputTypes.length
         ? inputTypes[idx]
-        : this.cg.locals()[idx - inputTypes.length];
+        : this.cg._locals()[idx - inputTypes.length];
     assert(
       expectedType.typeId === t.typeId,
       "can't tee local to this value (wrong type)",
     );
-    this.cg.emit(0x22);
-    this.cg.emit(encodeUnsigned(idx));
-    this.cg.push(expectedType);
+    this.cg._emit(0x22);
+    this.cg._emit(encodeUnsigned(idx));
+    this.cg._push(expectedType);
   }
 }
 
@@ -554,13 +569,13 @@ function UNARY_OP(
   outType: TypeSpec,
 ) {
   return function (this: { cg: CodeGenerator }) {
-    const t = this.cg.pop();
+    const t = this.cg._pop();
     assert(
       t.typeId === this.cg[inType].typeId,
       `invalid type for ${op} (${inType} -> ${outType})`,
     );
-    this.cg.emit(opcode);
-    this.cg.push(this.cg[outType]);
+    this.cg._emit(opcode);
+    this.cg._push(this.cg[outType]);
   };
 }
 
@@ -572,14 +587,14 @@ function BINARY_OP(
   outType: TypeSpec,
 ) {
   return function (this: { cg: CodeGenerator }) {
-    const b = this.cg.pop();
-    const a = this.cg.pop();
+    const b = this.cg._pop();
+    const a = this.cg._pop();
     assert(
       a.typeId === this.cg[typeA].typeId && b.typeId === this.cg[typeB].typeId,
       `invalid type for ${op} (${typeA}, ${typeB} -> ${outType})`,
     );
-    this.cg.emit(opcode);
-    this.cg.push(this.cg[outType]);
+    this.cg._emit(opcode);
+    this.cg._push(this.cg[outType]);
   };
 }
 
@@ -589,12 +604,12 @@ function LOAD_OP(op: string, opcode: number, outType: TypeSpec) {
     align: number = 0,
     offset: number = 0,
   ) {
-    const idxType = this.cg.pop();
+    const idxType = this.cg._pop();
     assert(idxType.typeId === this.cg.i32.typeId, `invalid type for ${op}`);
-    this.cg.emit(opcode);
-    this.cg.emit(encodeUnsigned(align));
-    this.cg.emit(encodeUnsigned(offset));
-    this.cg.push(this.cg[outType]);
+    this.cg._emit(opcode);
+    this.cg._emit(encodeUnsigned(align));
+    this.cg._emit(encodeUnsigned(offset));
+    this.cg._push(this.cg[outType]);
   };
 }
 
@@ -604,16 +619,16 @@ function STORE_OP(op: string, opcode: number, inType: TypeSpec) {
     align: number = 0,
     offset: number = 0,
   ) {
-    const valType = this.cg.pop();
-    const idxType = this.cg.pop();
+    const valType = this.cg._pop();
+    const idxType = this.cg._pop();
     assert(
       valType.typeId === this.cg[inType].typeId,
       `invalid value type for ${op} (${inType})`,
     );
     assert(idxType.typeId === this.cg.i32.typeId, `invalid type for ${op}`);
-    this.cg.emit(opcode);
-    this.cg.emit(encodeUnsigned(align));
-    this.cg.emit(encodeUnsigned(offset));
+    this.cg._emit(opcode);
+    this.cg._emit(encodeUnsigned(align));
+    this.cg._emit(encodeUnsigned(offset));
   };
 }
 
@@ -628,9 +643,9 @@ class I32 {
   }
 
   const(i: number) {
-    this.cg.emit(0x41);
-    this.cg.emit(encodeSigned(i));
-    this.cg.push(this);
+    this.cg._emit(0x41);
+    this.cg._emit(encodeSigned(i));
+    this.cg._push(this);
   }
   clz = UNARY_OP("clz", 0x67, "i32", "i32");
   ctz = UNARY_OP("ctz", 0x68, "i32", "i32");
@@ -685,14 +700,14 @@ class F32 {
   }
 
   const(f: number) {
-    this.cg.emit(0x43);
+    this.cg._emit(0x43);
     const buffer = new ArrayBuffer(4);
     new DataView(buffer).setFloat32(0, f, true);
     const bytes = new Uint8Array(buffer);
     for (let i = 0; i < 4; i++) {
-      this.cg.emit(bytes[i]);
+      this.cg._emit(bytes[i]);
     }
-    this.cg.push(this);
+    this.cg._push(this);
   }
 
   eq = BINARY_OP("eq", 0x5b, "f32", "f32", "i32");
@@ -736,15 +751,15 @@ function VECTOR_OP(
 ) {
   return function (this: { cg: CodeGenerator }) {
     for (const inType of inTypes.toReversed()) {
-      const actualType = this.cg.pop();
+      const actualType = this.cg._pop();
       assert(
         actualType.typeId === this.cg[inType].typeId,
         `invalid type for ${op} (${inTypes.join(", ")} -> ${outType})`,
       );
     }
-    this.cg.emit(0xfd);
-    this.cg.emit(encodeUnsigned(vopcode));
-    this.cg.push(this.cg[outType]);
+    this.cg._emit(0xfd);
+    this.cg._emit(encodeUnsigned(vopcode));
+    this.cg._push(this.cg[outType]);
   };
 }
 
@@ -757,28 +772,32 @@ function VECTOR_OPL(
 ) {
   return function (this: { cg: CodeGenerator }, lane: number) {
     for (const inType of inTypes.toReversed()) {
-      const actualType = this.cg.pop();
+      const actualType = this.cg._pop();
       assert(
         actualType.typeId === this.cg[inType].typeId,
         `invalid type for ${op} (${inTypes} -> ${outType})`,
       );
     }
-    this.cg.emit(0xfd);
-    this.cg.emit(encodeUnsigned(vopcode));
-    this.cg.emit(lane); // 1 byte
-    this.cg.push(this.cg[outType]);
+    this.cg._emit(0xfd);
+    this.cg._emit(encodeUnsigned(vopcode));
+    this.cg._emit(lane); // 1 byte
+    this.cg._push(this.cg[outType]);
   };
 }
 
 function VECTOR_LOAD_OP(op: string, vopcode: number) {
-  return function (this: any, align: number = 0, offset: number = 0) {
-    const idxType = this.cg.pop();
+  return function (
+    this: { cg: CodeGenerator },
+    align: number = 0,
+    offset: number = 0,
+  ) {
+    const idxType = this.cg._pop();
     assert(idxType.typeId === this.cg.i32.typeId, `invalid type for ${op}`);
-    this.cg.emit(0xfd);
-    this.cg.emit(encodeUnsigned(vopcode));
-    this.cg.emit(encodeUnsigned(align));
-    this.cg.emit(encodeUnsigned(offset));
-    this.cg.push(this.cg.v128);
+    this.cg._emit(0xfd);
+    this.cg._emit(encodeUnsigned(vopcode));
+    this.cg._emit(encodeUnsigned(align));
+    this.cg._emit(encodeUnsigned(offset));
+    this.cg._push(this.cg.v128);
   };
 }
 
@@ -795,14 +814,14 @@ class V128 {
   load32_zero = VECTOR_LOAD_OP("load32_zero", 0x5c);
 
   store(align: number = 0, offset: number = 0) {
-    const valType = this.cg.pop();
+    const valType = this.cg._pop();
     assert(valType.typeId === this.cg.v128.typeId, `invalid type for store`);
-    const idxType = this.cg.pop();
+    const idxType = this.cg._pop();
     assert(idxType.typeId === this.cg.i32.typeId, `invalid type for store`);
-    this.cg.emit(0xfd);
-    this.cg.emit(encodeUnsigned(0x0b));
-    this.cg.emit(encodeUnsigned(align));
-    this.cg.emit(encodeUnsigned(offset));
+    this.cg._emit(0xfd);
+    this.cg._emit(encodeUnsigned(0x0b));
+    this.cg._emit(encodeUnsigned(align));
+    this.cg._emit(encodeUnsigned(offset));
   }
 
   not = VECTOR_OP("not", 0x4d, ["v128"], "v128");
