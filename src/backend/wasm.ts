@@ -8,7 +8,7 @@ import {
   UnsupportedOpError,
 } from "../backend";
 import { tuneNullopt } from "../tuner";
-import { rep, union } from "../utils";
+import { DEBUG, rep, union } from "../utils";
 import {
   wasm_cos,
   wasm_exp,
@@ -128,6 +128,10 @@ export class WasmBackend implements Backend {
 function codegenWasm(kernel: Kernel): Uint8Array {
   const tune = tuneNullopt(kernel);
   const re = kernel.reduction;
+
+  if (DEBUG >= 3) {
+    console.info(`kernel.exp: ${kernel.exp}\ntune.exp: ${tune.exp}`);
+  }
 
   const cg = new CodeGenerator();
   cg.memory.import("env", "memory");
@@ -409,10 +413,21 @@ function translateExp(
     } else if (op === AluOp.Variable) {
       return cg.local.get(ctx[arg as string]);
     } else if (op === AluOp.GlobalIndex) {
+      const [gid, len] = arg as [number, number];
       gen(src[0]);
+
+      // If value is out-of-bounds, just set it to be zero.
+      // This extra bounds-check is needed in Wasm because otherwise we will get
+      // out-of-bounds memory access traps. WebGPU just silently returns 0.
+      const local = cg.local.declare(cg.i32);
+      cg.local.tee(local);
+      cg.i32.const(0);
+      (cg.local.get(local), cg.i32.const(len), cg.i32.lt_u());
+      cg.select();
+
       cg.i32.const(byteWidth(dtype));
       cg.i32.mul();
-      cg.local.get(arg as number); // base offset of array
+      cg.local.get(gid); // base offset of array
       cg.i32.add();
       dty(cg, op, dtype).load(Math.log2(byteWidth(dtype)));
     } else throw new UnsupportedOpError(op, dtype, "wasm");

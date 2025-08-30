@@ -183,8 +183,13 @@ export class AluExp implements FpHashable {
   static variable(dtype: DType, name: string): AluExp {
     return new AluExp(AluOp.Variable, dtype, [], name);
   }
-  static globalIndex(dtype: DType, gid: number, bufidx: AluExp): AluExp {
-    return new AluExp(AluOp.GlobalIndex, dtype, [bufidx], gid);
+  static globalIndex(
+    dtype: DType,
+    gid: number,
+    len: number,
+    bufidx: AluExp,
+  ): AluExp {
+    return new AluExp(AluOp.GlobalIndex, dtype, [bufidx], [gid, len]);
   }
   static globalView(
     dtype: DType,
@@ -247,10 +252,10 @@ export class AluExp implements FpHashable {
   reindexGids(gidMap: Map<number, number>): AluExp {
     return this.rewrite((exp) => {
       if (exp.op === AluOp.GlobalIndex) {
-        const gid = exp.arg as number;
+        const [gid, len] = exp.arg as [number, number];
         const newGid = gidMap.get(gid);
         if (newGid !== undefined && newGid !== gid) {
-          return AluExp.globalIndex(exp.dtype, newGid, exp.src[0]);
+          return AluExp.globalIndex(exp.dtype, newGid, len, exp.src[0]);
         }
       } else if (exp.op === AluOp.GlobalView) {
         const gid = exp.arg[0] as number;
@@ -973,7 +978,7 @@ export class AluExp implements FpHashable {
       }
       case AluOp.GlobalIndex: {
         if (!globals) throw new Error("Missing globals function");
-        const gid: number = this.arg;
+        const gid: number = this.arg[0];
         const bufidx = this.src[0].evaluate(context, globals);
         return globals(gid, bufidx);
       }
@@ -1028,7 +1033,7 @@ export class AluExp implements FpHashable {
         }
 
         case AluOp.GlobalIndex:
-          return `G_${node.arg}<${node.dtype}>[${strip1(parts[0])}]`;
+          return `G_${node.arg[0]}<${node.dtype}>[${strip1(parts[0])}]`;
 
         case AluOp.GlobalView: {
           const [gid, st] = node.arg as [number, ShapeTracker];
@@ -1151,7 +1156,7 @@ export enum AluOp {
   Const = "Const", // arg = value
   Special = "Special", // arg = [variable, n]
   Variable = "Variable", // arg = variable
-  GlobalIndex = "GlobalIndex", // arg = gid; src = [bufidx]
+  GlobalIndex = "GlobalIndex", // arg = [gid, len]; src = [bufidx]
   GlobalView = "GlobalView", // arg = [gid, ShapeTracker], src = [indices...]
 }
 
@@ -1383,9 +1388,10 @@ export function accessorGlobal(
   indices: AluExp[],
 ): AluExp {
   const [index, valid] = st.toAluExp(indices);
+  const [, len] = st.views[0].dataRange();
   return AluExp.where(
     valid,
-    AluExp.globalIndex(dtype, gid, index),
+    AluExp.globalIndex(dtype, gid, len, index),
     AluExp.const(dtype, 0),
   );
 }

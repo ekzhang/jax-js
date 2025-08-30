@@ -257,7 +257,7 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
 
   const usedArgs: (DType | null)[] = Array.from({ length: nargs }, () => null);
   tune.exp.fold((exp) => {
-    if (exp.op === AluOp.GlobalIndex) usedArgs[exp.arg] = exp.dtype;
+    if (exp.op === AluOp.GlobalIndex) usedArgs[exp.arg[0]] = exp.dtype;
   });
 
   for (let i = 0; i < nargs; i++) {
@@ -379,7 +379,7 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
     } else if (op === AluOp.Variable) {
       return arg as string;
     } else if (op === AluOp.GlobalIndex) {
-      source = `${args[arg]}[${strip1(gen(src[0]))}]`;
+      source = `${args[arg[0]]}[${strip1(gen(src[0]))}]`;
       if (dtype === DType.Bool) source = `(${source} != 0)`; // bool is represented as i32
     }
 

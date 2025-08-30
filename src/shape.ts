@@ -250,6 +250,27 @@ export class View {
     return this.#contiguous;
   }
 
+  /** Return the range of data being indexed in this view, or [0, 0] if none. */
+  dataRange(): [number, number] {
+    if (this.size === 0 || (this.mask && this.mask[0][0] === this.mask[0][1]))
+      return [0, 0];
+    let min = this.offset;
+    let max = this.offset;
+    for (let i = 0; i < this.ndim; i++) {
+      let [lo, hi] = this.mask ? this.mask[i] : [0, this.shape[i]];
+      --hi; // make inclusive
+      const s = this.strides[i];
+      if (s > 0) {
+        min += s * lo;
+        max += s * hi;
+      } else if (s < 0) {
+        min += s * hi;
+        max += s * lo;
+      }
+    }
+    return [min, max + 1];
+  }
+
   /** Produce an AluExp for evaluating this view at an index. */
   toAluExp(idxs: AluExp[]): [AluExp, AluExp] {
     let iexpr = AluExp.i32(this.offset);
@@ -665,7 +686,7 @@ export class ShapeTracker {
   }
 
   toAluExp(idxs: AluExp[]): [AluExp, AluExp] {
-    // Note: Cannot minify the first view since this takes indices.
+    // Note: Cannot minify the final view since this takes indices.
     let [iexpr, vexpr] = this.views[this.views.length - 1].toAluExp(idxs);
     for (let i = this.views.length - 2; i >= 0; i--) {
       const view = this.views[i].minify();

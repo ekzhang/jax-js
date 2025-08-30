@@ -65,7 +65,6 @@ pnpm test
 
 ## Next on Eric's mind
 
-- Start building Wasm backend
 - Fix jit-of-grad returning very incorrect result
 - Probably add static_argnums to jit() so that clip and some nn functions have jit added
 - Improve perf of MNIST neural network
@@ -100,7 +99,8 @@ pnpm test
   - [x] Convolution
   - [x] Random and initializers
   - [x] Optimizers (optax package?)
-- [ ] Wasm backend (needs malloc)
+- [x] Wasm backend (needs malloc)
+  - [ ] Better memory allocation that frees buffers
   - [ ] SIMD support for Wasm backend
   - [ ] Async / multithreading Wasm support
 - [ ] Device switching with `.to()` between webgpu/cpu/wasm

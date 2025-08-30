@@ -75,7 +75,7 @@ export class CpuBackend implements Backend {
     const usedArgs = new Map(
       exp
         .collect((exp) => exp.op === AluOp.GlobalIndex)
-        .map((exp) => [exp.arg as number, exp.dtype]),
+        .map((exp) => [exp.arg[0] as number, exp.dtype]),
     );
 
     const inputArrays = inputBuffers.map((buf, i) => {
