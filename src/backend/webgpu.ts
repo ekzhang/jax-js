@@ -335,7 +335,7 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
         if (dtype === DType.Bool) source = `(${a} && ${b})`;
         else source = `(${a} * ${b})`;
       } else if (op === AluOp.Idiv)
-        source = isFloatDtype(dtype) ? `floor(${a} / ${b})` : `(${a} / ${b})`;
+        source = isFloatDtype(dtype) ? `trunc(${a} / ${b})` : `(${a} / ${b})`;
       else if (op === AluOp.Mod) source = `(${a} % ${b})`;
       else if (op === AluOp.Min) source = `min(${strip1(a)}, ${strip1(b)})`;
       else if (op === AluOp.Max) source = `max(${strip1(a)}, ${strip1(b)})`;

@@ -168,3 +168,34 @@ test("AluOp.Threefry2x32", () => {
   const exp = AluExp.threefry2x32(k0, k1, c0, c1);
   expect(exp.evaluate({})).toBe((1797259609 ^ 2579123966) >>> 0); // x0 ^ x1
 });
+
+test("AluOp.Idiv", () => {
+  // Make sure that idiv uses truncating division.
+  const e = AluExp.idiv(AluExp.i32(7), AluExp.i32(3));
+  expect(e.evaluate({})).toBe(2);
+
+  const e2 = AluExp.idiv(AluExp.i32(-7), AluExp.i32(3));
+  expect(e2.evaluate({})).toBe(-2);
+  expect(e2.min).toBe(-2);
+  expect(e2.max).toBe(-2);
+});
+
+test("AluOp.Mod", () => {
+  // Make sure that mod uses the sign of the numerator.
+  const e = AluExp.mod(AluExp.i32(7), AluExp.i32(3));
+  expect(e.evaluate({})).toBe(1);
+
+  const e2 = AluExp.mod(AluExp.i32(-7), AluExp.i32(3));
+  expect(e2.evaluate({})).toBe(-1);
+  expect(e2.min).toBeLessThanOrEqual(-1);
+  expect(e2.max).toBeGreaterThanOrEqual(-1);
+
+  const e3 = AluExp.mod(AluExp.i32(7), AluExp.i32(-3));
+  expect(e3.evaluate({})).toBe(1);
+  expect(e3.min).toBeLessThanOrEqual(1);
+  expect(e3.max).toBeGreaterThanOrEqual(1);
+
+  // Floating point mod also works.
+  const e4 = AluExp.mod(AluExp.f32(5.5), AluExp.f32(-1.7));
+  expect(e4.evaluate({})).toBeCloseTo(0.4);
+});

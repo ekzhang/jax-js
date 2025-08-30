@@ -290,21 +290,26 @@ export class AluExp implements FpHashable {
         break;
       }
       case AluOp.Idiv: {
-        ret = minMax4((a, b) => Math.floor(a / b));
+        ret = minMax4((a, b) => Math.trunc(a / b));
         break;
       }
       case AluOp.Mod: {
         // Mod is a bit tricky since it can be negative. Two behaviors:
         //
         // - C-style: In JS and WGSL, mod depends on the sign of the dividend.
+        //   Matches int division that truncates to zero.
         // - Python-style: But in NumPy, JAX, and Python, it's based on the sign
-        //   of the divisor (% or the np.remainder function).
+        //   of the divisor (% or the np.remainder function). Matches floor
+        //   division that rounds towards -inf.
         //
         // We're going to use the C-style behavior since it's more common in the
         // web world and outside of Python. This is a deviation from JAX!
         let divisorRange = src[1].#computeRange();
         if (divisorRange[0] <= 0 && divisorRange[1] >= 0) {
           divisorRange = [0, Math.max(-divisorRange[0], divisorRange[1])];
+        }
+        if (divisorRange[1] < 0) {
+          divisorRange = [-divisorRange[1], -divisorRange[0]];
         }
         const maxDivisor = isFloatDtype(this.dtype)
           ? divisorRange[1]
@@ -399,6 +404,9 @@ export class AluExp implements FpHashable {
     if (this.dtype === DType.Bool) {
       ret[0] = clamp(ret[0], 0, 1);
       ret[1] = clamp(ret[1], 0, 1);
+    }
+    if (this.dtype === DType.Uint32) {
+      ret[0] = Math.max(0, ret[0]);
     }
     this.#range = ret;
     return ret;
