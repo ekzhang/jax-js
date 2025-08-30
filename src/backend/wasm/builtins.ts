@@ -388,3 +388,93 @@ export function wasm_cos(cg: CodeGenerator): number {
     cg.select();
   });
 }
+
+/**
+ * Threefry2x32 pseudorandom number generator.
+ *
+ * Takes two 32-bit keys and two 32-bit counters as input,
+ * returns two 32-bit pseudorandom values.
+ */
+export function wasm_threefry2x32(cg: CodeGenerator): number {
+  return cg.function([cg.i32, cg.i32, cg.i32, cg.i32], [cg.i32, cg.i32], () => {
+    const ks0 = cg.local.declare(cg.i32);
+    const ks1 = cg.local.declare(cg.i32);
+    const ks2 = cg.local.declare(cg.i32);
+    const x0 = cg.local.declare(cg.i32);
+    const x1 = cg.local.declare(cg.i32);
+
+    // x0 += x1; x1 = rotl(x1, rot) ^ x0
+    const mix = (rot: number) => {
+      cg.local.get(x0);
+      cg.local.get(x1);
+      cg.i32.add();
+      cg.local.set(x0);
+      cg.local.get(x1);
+      cg.i32.const(rot);
+      cg.i32.rotl();
+      cg.local.get(x0);
+      cg.i32.xor();
+      cg.local.set(x1);
+    };
+
+    // x0 += k0; x1 += k1 + round
+    const keySchedule = (k0: number, k1: number, round: number) => {
+      cg.local.get(x0);
+      cg.local.get(k0);
+      cg.i32.add();
+      cg.local.set(x0);
+      cg.local.get(x1);
+      cg.local.get(k1);
+      cg.i32.add();
+      cg.i32.const(round);
+      cg.i32.add();
+      cg.local.set(x1);
+    };
+
+    // Key schedule: ks0 = key0; ks1 = key1; ks2 = key0 ^ key1 ^ 0x1BD11BDA
+    cg.local.get(0);
+    cg.local.set(ks0);
+    cg.local.get(1);
+    cg.local.set(ks1);
+    cg.local.get(0);
+    cg.local.get(1);
+    cg.i32.xor();
+    cg.i32.const(0x1bd11bda);
+    cg.i32.xor();
+    cg.local.set(ks2);
+
+    // x0 = ctr0 + ks0; x1 = ctr1 + ks1
+    cg.local.get(2); // ctr0
+    cg.local.get(ks0);
+    cg.i32.add();
+    cg.local.set(x0);
+    cg.local.get(3); // ctr1
+    cg.local.get(ks1);
+    cg.i32.add();
+    cg.local.set(x1);
+
+    // Round 1
+    (mix(13), mix(15), mix(26), mix(6));
+    keySchedule(ks1, ks2, 1);
+
+    // Round 2
+    (mix(17), mix(29), mix(16), mix(24));
+    keySchedule(ks2, ks0, 2);
+
+    // Round 3
+    (mix(13), mix(15), mix(26), mix(6));
+    keySchedule(ks0, ks1, 3);
+
+    // Round 4
+    (mix(17), mix(29), mix(16), mix(24));
+    keySchedule(ks1, ks2, 4);
+
+    // Round 5
+    (mix(13), mix(15), mix(26), mix(6));
+    keySchedule(ks2, ks0, 5);
+
+    // Return x0 and x1
+    cg.local.get(x0);
+    cg.local.get(x1);
+  });
+}

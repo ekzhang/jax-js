@@ -9,7 +9,13 @@ import {
 } from "../backend";
 import { tuneNullopt } from "../tuner";
 import { rep, union } from "../utils";
-import { wasm_cos, wasm_exp, wasm_log, wasm_sin } from "./wasm/builtins";
+import {
+  wasm_cos,
+  wasm_exp,
+  wasm_log,
+  wasm_sin,
+  wasm_threefry2x32,
+} from "./wasm/builtins";
 import { CodeGenerator } from "./wasm/wasmblr";
 
 interface WasmBuffer {
@@ -128,10 +134,12 @@ function codegenWasm(kernel: Kernel): Uint8Array {
 
   const distinctOps = union(tune.exp.distinctOps(), re?.fusion.distinctOps());
   const funcs: Record<string, number> = {};
-  if (distinctOps.has(AluOp.Exp)) funcs.exp = wasm_exp(cg);
-  if (distinctOps.has(AluOp.Log)) funcs.log = wasm_log(cg);
   if (distinctOps.has(AluOp.Sin)) funcs.sin = wasm_sin(cg);
   if (distinctOps.has(AluOp.Cos)) funcs.cos = wasm_cos(cg);
+  if (distinctOps.has(AluOp.Exp)) funcs.exp = wasm_exp(cg);
+  if (distinctOps.has(AluOp.Log)) funcs.log = wasm_log(cg);
+  if (distinctOps.has(AluOp.Threefry2x32))
+    funcs.threefry2x32 = wasm_threefry2x32(cg);
 
   const kernelFunc = cg.function(rep(kernel.nargs + 1, cg.i32), [], () => {
     const gidx = cg.local.declare(cg.i32);
@@ -383,8 +391,16 @@ function translateExp(
       gen(src[0]); // cond
       cg.select();
     } else if (op === AluOp.Threefry2x32) {
-      // TODO
-      throw new UnsupportedOpError(op, dtype, "wasm", arg);
+      for (let i = 0; i < 4; i++) gen(src[i]);
+      cg.call(funcs.threefry2x32);
+      if (arg === "xor") cg.i32.xor();
+      else if (arg === 0) cg.drop();
+      else if (arg === 1) {
+        const local = cg.local.declare(cg.i32);
+        cg.local.set(local);
+        cg.drop();
+        cg.local.get(local);
+      } else throw new UnsupportedOpError(op, dtype, "wasm", arg);
     } else if (op === AluOp.Const) {
       return dty(cg, op, dtype).const(arg as number);
     } else if (op === AluOp.Special) {
