@@ -121,9 +121,6 @@ function codegenWasm(kernel: Kernel): Uint8Array {
   cg.memory.import("env", "memory");
 
   const kernelFunc = cg.function(rep(kernel.nargs + 1, cg.i32), [], () => {
-    if (kernel.reduction) {
-      throw new Error("TODO: Reductions on wasm backend not implemented yet");
-    }
     const gidx = cg.local.declare(cg.i32);
     cg.loop(cg.void);
     {
@@ -141,8 +138,81 @@ function codegenWasm(kernel: Kernel): Uint8Array {
       cg.i32.mul();
       cg.i32.add();
 
-      // Translate tune.exp to expression and push onto stack.
-      translateExp(cg, tune.exp, { gidx });
+      if (kernel.reduction) {
+        const re = kernel.reduction;
+
+        // If reduction, define accumulator and inner ridx loop.
+        const acc = cg.local.declare(dty(cg, null, kernel.exp.dtype));
+        dty(cg, null, kernel.exp.dtype).const(re.identity);
+        cg.local.set(acc);
+
+        const ridx = cg.local.declare(cg.i32);
+        cg.i32.const(0);
+        cg.local.set(ridx);
+        cg.loop(cg.void);
+        {
+          // if (ridx >= reduction.size) break;
+          cg.block(cg.void);
+          cg.local.get(ridx);
+          cg.i32.const(re.size);
+          cg.i32.ge_u();
+          cg.br_if(0);
+
+          // Translate tune.exp to expression and push onto stack.
+          translateExp(cg, tune.exp, { gidx, ridx });
+
+          // acc = reduction.evaluate(acc, exp)
+          if (re.op === AluOp.Add) {
+            cg.local.get(acc);
+            if (re.dtype === DType.Bool) cg.i32.or();
+            else dty(cg, re.op, re.dtype).add();
+          } else if (re.op === AluOp.Mul) {
+            cg.local.get(acc);
+            if (re.dtype === DType.Bool) cg.i32.and();
+            else dty(cg, re.op, re.dtype).mul();
+          } else if (re.op === AluOp.Min || re.op === AluOp.Max) {
+            if (re.dtype === DType.Float32) {
+              cg.local.get(acc);
+              if (re.op === AluOp.Min) cg.f32.min();
+              else cg.f32.max();
+            } else if (
+              [DType.Int32, DType.Uint32, DType.Bool].includes(re.dtype)
+            ) {
+              // Wasm has no i32.min/max, so emulate with select.
+              const local = cg.local.declare(cg.i32);
+              cg.local.tee(local);
+              cg.local.get(acc);
+              cg.local.get(local);
+              cg.local.get(acc);
+              if (re.op === AluOp.Min) {
+                if (re.dtype === DType.Int32) cg.i32.lt_s();
+                else cg.i32.lt_u();
+              } else {
+                if (re.dtype === DType.Int32) cg.i32.gt_s();
+                else cg.i32.gt_u();
+              }
+              cg.select();
+            } else
+              throw new Error(`invalid reduction min/max over ${re.dtype}`);
+          } else throw new Error(`invalid wasm reduction op: ${re.op}`);
+          cg.local.set(acc);
+
+          // ridx++
+          cg.local.get(ridx);
+          cg.i32.const(1);
+          cg.i32.add();
+          cg.local.set(ridx);
+
+          cg.br(1); // continue ridx loop
+          cg.end();
+        }
+        cg.end();
+
+        translateExp(cg, kernel.reduction.fusion, { acc });
+      } else {
+        // Translate tune.exp to expression and push onto stack.
+        translateExp(cg, tune.exp, { gidx });
+      }
 
       // Store value into output buffer.
       dty(cg, null, kernel.dtype).store(Math.log2(byteWidth(kernel.dtype)));
@@ -153,7 +223,7 @@ function codegenWasm(kernel: Kernel): Uint8Array {
       cg.i32.add();
       cg.local.set(gidx);
 
-      cg.br(1); // continue loop
+      cg.br(1); // continue gidx loop
       cg.end();
     }
     cg.end();
