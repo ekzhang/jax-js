@@ -100,7 +100,7 @@ pnpm test
   - [x] Random and initializers
   - [x] Optimizers (optax package?)
 - [x] Wasm backend (needs malloc)
-  - [ ] Better memory allocation that frees buffers
+  - [x] Better memory allocation that frees buffers
   - [ ] SIMD support for Wasm backend
   - [ ] Async / multithreading Wasm support
 - [ ] Device switching with `.to()` between webgpu/cpu/wasm

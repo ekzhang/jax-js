@@ -9,6 +9,7 @@ import {
 } from "../backend";
 import { tuneNullopt } from "../tuner";
 import { DEBUG, rep, union } from "../utils";
+import { WasmAllocator } from "./wasm/allocator";
 import {
   wasm_cos,
   wasm_exp,
@@ -35,26 +36,19 @@ export class WasmBackend implements Backend {
 
   #memory: WebAssembly.Memory;
   #nextSlot: number;
-  #headPtr: number; // first free byte in memory
+  #allocator: WasmAllocator;
   #buffers: Map<Slot, WasmBuffer>;
 
   constructor() {
-    // 4 GiB = max memory32 size
-    // https://spidermonkey.dev/blog/2025/01/15/is-memory64-actually-worth-using.html
     this.#memory = new WebAssembly.Memory({ initial: 0 });
+    this.#allocator = new WasmAllocator(this.#memory);
     this.#nextSlot = 1;
-    this.#headPtr = 0;
     this.#buffers = new Map();
   }
 
   malloc(size: number, initialData?: Uint8Array): Slot {
-    // TODO: Currently, we just have a bump allocator and never free memory.
-    const ptr = this.#headPtr;
-    if (ptr + size > this.#memory.buffer.byteLength) {
-      this.#memory.grow(
-        ((ptr + size + 65535) >> 16) - (this.#memory.buffer.byteLength >> 16),
-      );
-    }
+    const ptr = this.#allocator.malloc(size);
+
     if (initialData) {
       if (initialData.byteLength !== size)
         throw new Error("initialData size does not match buffer size");
@@ -63,7 +57,6 @@ export class WasmBackend implements Backend {
 
     const slot = this.#nextSlot++;
     this.#buffers.set(slot, { ptr, size, ref: 1 });
-    this.#headPtr += Math.ceil(size / 64) * 64; // align to 64 bytes, like Arrow
     return slot;
   }
 
@@ -78,6 +71,7 @@ export class WasmBackend implements Backend {
     if (!buffer) throw new SlotError(slot);
     buffer.ref--;
     if (buffer.ref === 0) {
+      this.#allocator.free(buffer.ptr);
       this.#buffers.delete(slot);
     }
   }
