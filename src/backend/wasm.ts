@@ -346,12 +346,12 @@ function translateExp(
       else if (op === AluOp.Reciprocal)
         (cg.f32.const(1), gen(src[0]), cg.f32.div());
       else if (op === AluOp.Cast) {
+        gen(src[0]);
         const dtype0 = src[0].dtype;
         const i32repr =
           dtype0 === DType.Int32 ||
           dtype0 === DType.Uint32 ||
           dtype0 === DType.Bool;
-        gen(src[0]);
         if (dtype === DType.Int32) {
           if (dtype0 === DType.Float32) cg.i32.trunc_f32_s();
           else if (i32repr) void 0;
@@ -373,6 +373,7 @@ function translateExp(
           else throw new UnsupportedOpError(op, dtype, "wasm", dtype0);
         } else throw new UnsupportedOpError(op, dtype, "wasm");
       } else if (op === AluOp.Bitcast) {
+        gen(src[0]);
         const dtype0 = src[0].dtype;
         const i32repr = dtype0 === DType.Int32 || dtype0 === DType.Uint32;
         if (dtype === DType.Int32 || dtype === DType.Uint32) {
