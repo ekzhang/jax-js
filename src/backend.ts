@@ -9,7 +9,7 @@
  * and dispatch happens on the level of each shader. Buffers are untyped.
  */
 
-import { Kernel } from "./alu";
+import { AluOp, DType, Kernel } from "./alu";
 import { CpuBackend } from "./backend/cpu";
 
 export type Device = "cpu" | "wasm" | "webgpu";
@@ -172,5 +172,13 @@ export class Executable<T = any> {
 export class SlotError extends Error {
   constructor(slot: Slot) {
     super(`Used a buffer that is invalid or already freed: ${slot}`);
+  }
+}
+
+export class UnsupportedOpError extends Error {
+  constructor(op: AluOp | null, dtype: DType, device: Device, arg?: any) {
+    let msg = `${op || ""}<${dtype}> not supported in ${device} backend`;
+    if (arg !== undefined) msg += ` with arg ${JSON.stringify(arg)}`;
+    super(msg);
   }
 }

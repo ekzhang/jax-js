@@ -261,7 +261,7 @@ export class CodeGenerator {
     this.pop();
     this.emit(0x1a);
   }
-  /** Select one of the first two operands based on the third operand (i32)'s value. */
+  /** Select one of the first two operands (T, F) based on the third operand (i32)'s value. */
   select() {
     assert(
       this.pop().typeId === this.i32.typeId,
@@ -273,6 +273,7 @@ export class CodeGenerator {
       a.typeId === b.typeId,
       "select: expected same type for both operands",
     );
+    this.push(a);
     this.emit(0x1b);
   }
 
@@ -323,6 +324,7 @@ export class CodeGenerator {
   }
 
   push(type: Type) {
+    if (!type) throw new Error(`pushing type ${type}`);
     this.#typeStack.push(type);
   }
   pop(): Type {
@@ -502,6 +504,7 @@ class Local {
     return this.cg.declareLocal(type);
   }
   get(idx: number) {
+    assert(Number.isInteger(idx), "getting non-integer local");
     const inputTypes = this.cg.inputTypes();
     if (idx < inputTypes.length) {
       this.cg.push(inputTypes[idx]);
@@ -668,6 +671,7 @@ class I32 {
   store = STORE_OP("store", 0x36, "i32");
   store8 = STORE_OP("store8", 0x3a, "i32");
   store16 = STORE_OP("store16", 0x3b, "i32");
+  reinterpret_f32 = UNARY_OP("reinterpret_f32", 0xbc, "f32", "i32");
 }
 
 ////////////////////////////////////////
@@ -715,6 +719,7 @@ class F32 {
   convert_i32_u = UNARY_OP("convert_i32_u", 0xb3, "i32", "f32");
   load = LOAD_OP("load", 0x2a, "f32");
   store = STORE_OP("store", 0x38, "f32");
+  reinterpret_i32 = UNARY_OP("reinterpret_i32", 0xbe, "i32", "f32");
 }
 
 ////////////////////////////////////////

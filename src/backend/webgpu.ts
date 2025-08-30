@@ -1,16 +1,23 @@
 import { AluExp, AluGroup, AluOp, DType, isFloatDtype, Kernel } from "../alu";
-import { Backend, Device, Executable, Slot, SlotError } from "../backend";
+import {
+  Backend,
+  Device,
+  Executable,
+  Slot,
+  SlotError,
+  UnsupportedOpError,
+} from "../backend";
 import { tuneWebgpu } from "../tuner";
 import { DEBUG, findPow2, FpHash, strip1 } from "../utils";
 
-type ShaderInfo = {
+interface ShaderInfo {
   shader: string;
   grid: [number, number];
-};
+}
 
-type ShaderDispatch = ShaderInfo & {
+interface ShaderDispatch extends ShaderInfo {
   pipeline: GPUComputePipeline;
-};
+}
 
 /** Implementation of `Backend` that uses WebGPU in browsers. */
 export class WebGPUBackend implements Backend {
@@ -363,7 +370,7 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
       if (arg === "xor") source = `(${x}.x ^ ${x}.y)`;
       else if (arg === 0) source = `${x}.x`;
       else if (arg === 1) source = `${x}.y`;
-      else throw new Error("Invalid Threefry2x32 mode: " + arg);
+      else throw new UnsupportedOpError(op, dtype, "webgpu", arg);
     } else if (op === AluOp.Const) {
       return constToWgsl(dtype, arg);
     } else if (op === AluOp.Special) {
@@ -375,7 +382,7 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
       if (dtype === DType.Bool) source = `(${source} != 0)`; // bool is represented as i32
     }
 
-    if (!source) throw new Error(`Missing impl for op: ${op}`);
+    if (!source) throw new UnsupportedOpError(op, dtype, "webgpu", arg);
     const typeName = dtypeToWgsl(dtype);
     if ((references.get(exp) ?? 0) > 1) {
       const name = gensym();

@@ -1,13 +1,12 @@
+import { AluExp, AluGroup, AluOp, byteWidth, DType, Kernel } from "../alu";
 import {
-  AluExp,
-  AluOp,
-  byteWidth,
-  DType,
-  dtypedArray,
-  isFloatDtype,
-  Kernel,
-} from "../alu";
-import { Backend, Device, Executable, Slot, SlotError } from "../backend";
+  Backend,
+  Device,
+  Executable,
+  Slot,
+  SlotError,
+  UnsupportedOpError,
+} from "../backend";
 import { tuneNullopt } from "../tuner";
 import { rep } from "../utils";
 import { CodeGenerator } from "./wasm/wasmblr";
@@ -16,6 +15,10 @@ interface WasmBuffer {
   ptr: number;
   size: number;
   ref: number;
+}
+
+interface WasmProgram {
+  module: WebAssembly.Module;
 }
 
 /** Backend that compiles into WebAssembly bytecode for immediate execution. */
@@ -78,57 +81,29 @@ export class WasmBackend implements Backend {
     return buffer.slice(start, start + count);
   }
 
-  async prepare(kernel: Kernel): Promise<Executable<void>> {
+  async prepare(kernel: Kernel): Promise<Executable<WasmProgram>> {
     return this.prepareSync(kernel);
   }
 
-  prepareSync(kernel: Kernel): Executable<void> {
-    return new Executable(kernel, undefined);
+  prepareSync(kernel: Kernel): Executable<WasmProgram> {
+    const bytes = codegenWasm(kernel);
+    const module = new WebAssembly.Module(bytes);
+    return new Executable(kernel, { module });
   }
 
   dispatch(
-    { kernel }: Executable<void>,
+    exe: Executable<WasmProgram>,
     inputs: Slot[],
     outputs: Slot[],
   ): void {
-    const { exp } = tuneNullopt(kernel);
-    const inputBuffers = inputs.map((slot) => this.#getBuffer(slot));
-    const outputBuffers = outputs.map((slot) => this.#getBuffer(slot));
-
-    const usedArgs = new Map(
-      exp
-        .collect((exp) => exp.op === AluOp.GlobalIndex)
-        .map((exp) => [exp.arg as number, exp.dtype]),
-    );
-
-    const inputArrays = inputBuffers.map((buf, i) => {
-      const dtype = usedArgs.get(i);
-      if (!dtype) return null!; // This arg is unused, so we just blank it out.
-      return dtypedArray(dtype, buf);
+    const instance = new WebAssembly.Instance(exe.data.module, {
+      env: { memory: this.#memory },
     });
-    const outputArray = dtypedArray(kernel.dtype, outputBuffers[0]);
-
-    const globals = (gid: number, bufidx: number) => {
-      if (gid < 0 || gid >= inputArrays.length)
-        throw new Error("gid out of bounds: " + gid);
-      if (bufidx < 0 || bufidx >= inputArrays[gid].length)
-        throw new Error("bufidx out of bounds: " + bufidx);
-      return inputArrays[gid][bufidx];
-    };
-    if (!kernel.reduction) {
-      for (let i = 0; i < kernel.size; i++) {
-        outputArray[i] = exp.evaluate({ gidx: i }, globals);
-      }
-    } else {
-      for (let i = 0; i < kernel.size; i++) {
-        let acc = kernel.reduction.identity;
-        for (let j = 0; j < kernel.reduction.size; j++) {
-          const item = exp.evaluate({ gidx: i, ridx: j }, globals);
-          acc = kernel.reduction.evaluate(acc, item);
-        }
-        outputArray[i] = kernel.reduction.fusion.evaluate({ acc });
-      }
-    }
+    const func = instance.exports.kernel as (...args: number[]) => void;
+    const ptrs = [...inputs, ...outputs].map(
+      (slot) => this.#buffers.get(slot)!.ptr,
+    );
+    func(...ptrs);
   }
 
   #getBuffer(slot: Slot): Uint8Array {
@@ -138,7 +113,9 @@ export class WasmBackend implements Backend {
   }
 }
 
-function compileWasm(kernel: Kernel): Uint8Array {
+function codegenWasm(kernel: Kernel): Uint8Array {
+  const tune = tuneNullopt(kernel);
+
   const cg = new CodeGenerator();
 
   cg.memory.import("env", "memory");
@@ -164,11 +141,17 @@ function compileWasm(kernel: Kernel): Uint8Array {
       cg.i32.mul();
       cg.i32.add();
 
-      // Translate kernel.exp to expression and push onto stack.
-      translateExp(cg, kernel.exp, { gidx });
+      // Translate tune.exp to expression and push onto stack.
+      translateExp(cg, tune.exp, { gidx });
 
       // Store value into output buffer.
-      dty(cg, kernel.dtype).store(Math.log2(byteWidth(kernel.dtype)));
+      dty(cg, null, kernel.dtype).store(Math.log2(byteWidth(kernel.dtype)));
+
+      // gidx++
+      cg.local.get(gidx);
+      cg.i32.const(1);
+      cg.i32.add();
+      cg.local.set(gidx);
 
       cg.br(1); // continue loop
       cg.end();
@@ -194,7 +177,6 @@ function translateExp(
       for (const src of exp.src) countReferences(src);
     }
   };
-  countReferences(exp);
 
   const expContext = new Map<AluExp, number>();
   const gen = (exp: AluExp) => {
@@ -203,46 +185,155 @@ function translateExp(
 
     // Some of these cases early `return` to force-inline them (no local.set).
     if (AluGroup.Binary.has(op) || AluGroup.Compare.has(op)) {
+      gen(src[0]);
+      gen(src[1]);
       if (op === AluOp.Add) {
-        (gen(src[0]), gen(src[1]));
         if (dtype === DType.Bool) cg.i32.or();
-        else dty(cg, dtype).add();
+        else dty(cg, op, dtype).add();
       } else if (op === AluOp.Sub) {
-        (gen(src[0]), gen(src[1]));
-        dty(cg, dtype).sub();
+        dty(cg, op, dtype).sub();
       } else if (op === AluOp.Mul) {
-        (gen(src[0]), gen(src[1]));
         if (dtype === DType.Bool) cg.i32.and();
-        else dty(cg, dtype).mul();
+        else dty(cg, op, dtype).mul();
       } else if (op === AluOp.Idiv) {
-        if (dtype === DType.Float32) {
-          (gen(src[0]), gen(src[1]));
-          cg.f32.div();
-          cg.f32.floor();
-        } else if (
-          dtype === DType.Uint32 ||
-          (dtype === DType.Int32 && src[0].min >= 0 && src[1].min >= 0)
-        ) {
-          (gen(src[0]), gen(src[1]));
-          cg.i32.div_u();
-        } else if (dtype === DType.Int32) {
-          gen(src[0]);
-          cg.f32.convert_i32_s();
-          gen(src[1]);
-          cg.f32.convert_i32_s();
-          cg.f32.div();
-          cg.f32.floor();
-          cg.i32.trunc_f32_s();
-        } else {
-          throw new Error("Unsupported dtype for Idiv in Wasm: " + dtype);
-        }
+        if (dtype === DType.Float32) (cg.f32.div(), cg.f32.trunc());
+        else if (dtype === DType.Uint32) cg.i32.div_u();
+        else if (dtype === DType.Int32) cg.i32.div_s();
+        else throw new UnsupportedOpError(op, dtype, "wasm");
       } else if (op === AluOp.Mod) {
-      }
+        if (dtype === DType.Float32) {
+          // Emulate a % b = a - trunc(a/b)*b
+          const a = cg.local.declare(cg.f32);
+          const b = cg.local.declare(cg.f32);
+          cg.local.set(b);
+          cg.local.tee(a); // stack: a
+          cg.local.get(a);
+          cg.local.get(b);
+          cg.f32.div();
+          cg.f32.trunc(); // stack: a, trunc(a/b)
+          cg.local.get(b);
+          cg.f32.mul(); // stack: a, trunc(a/b)*b
+          cg.f32.sub();
+        } else if (dtype === DType.Uint32) cg.i32.rem_u();
+        else if (dtype === DType.Int32) cg.i32.rem_s();
+        else throw new UnsupportedOpError(op, dtype, "wasm");
+      } else if (op === AluOp.Min || op === AluOp.Max) {
+        if (dtype === DType.Float32) {
+          if (op === AluOp.Min) cg.f32.min();
+          else cg.f32.max();
+        } else if (dtype === DType.Int32 || dtype === DType.Uint32) {
+          // Wasm has no i32.min, so emulate with select.
+          const a = cg.local.declare(cg.i32);
+          const b = cg.local.declare(cg.i32);
+          cg.local.set(b);
+          cg.local.tee(a);
+          cg.local.get(b);
+          cg.local.get(a);
+          cg.local.get(b);
+          if (dtype === DType.Int32) {
+            if (op === AluOp.Min) cg.i32.lt_s();
+            else cg.i32.gt_s();
+          } else {
+            if (op === AluOp.Min) cg.i32.lt_u();
+            else cg.i32.gt_u();
+          }
+          cg.select();
+        } else throw new UnsupportedOpError(op, dtype, "wasm");
+      } else if (op === AluOp.Cmplt) {
+        const srcDtype = src[0].dtype;
+        if (srcDtype === DType.Float32) cg.f32.lt();
+        else if (srcDtype === DType.Int32) cg.i32.lt_s();
+        else if (srcDtype === DType.Uint32) cg.i32.lt_u();
+        else throw new UnsupportedOpError(op, dtype, "wasm");
+      } else if (op === AluOp.Cmpne) dty(cg, op, src[0].dtype).ne();
+      else throw new UnsupportedOpError(op, dtype, "wasm");
+    } else if (AluGroup.Unary.has(op)) {
+      // TODO: Transcendental functions
+      if (op === AluOp.Sin) throw new UnsupportedOpError(op, dtype, "wasm");
+      else if (op === AluOp.Cos)
+        throw new UnsupportedOpError(op, dtype, "wasm");
+      else if (op === AluOp.Exp)
+        throw new UnsupportedOpError(op, dtype, "wasm");
+      else if (op === AluOp.Log)
+        throw new UnsupportedOpError(op, dtype, "wasm");
+      else if (op === AluOp.Sqrt) (gen(src[0]), cg.f32.sqrt());
+      else if (op === AluOp.Reciprocal)
+        (cg.f32.const(1), gen(src[0]), cg.f32.div());
+      else if (op === AluOp.Cast) {
+        const dtype0 = src[0].dtype;
+        const i32repr =
+          dtype0 === DType.Int32 ||
+          dtype0 === DType.Uint32 ||
+          dtype0 === DType.Bool;
+        gen(src[0]);
+        if (dtype === DType.Int32) {
+          if (dtype0 === DType.Float32) cg.i32.trunc_f32_s();
+          else if (i32repr) void 0;
+          else throw new UnsupportedOpError(op, dtype, "wasm", dtype0);
+        } else if (dtype === DType.Uint32) {
+          if (dtype0 === DType.Float32) cg.i32.trunc_f32_u();
+          else if (i32repr) void 0;
+          else throw new UnsupportedOpError(op, dtype, "wasm", dtype0);
+        } else if (dtype === DType.Float32) {
+          if (dtype0 === DType.Float32) void 0;
+          else if (dtype0 === DType.Int32 || dtype0 === DType.Bool)
+            cg.f32.convert_i32_s();
+          else if (dtype0 === DType.Uint32) cg.f32.convert_i32_u();
+          else throw new UnsupportedOpError(op, dtype, "wasm", dtype0);
+        } else if (dtype === DType.Bool) {
+          if (dtype0 === DType.Bool) void 0;
+          else if (i32repr) (cg.i32.const(0), cg.i32.ne());
+          else if (dtype0 === DType.Float32) (cg.f32.const(0), cg.f32.ne());
+          else throw new UnsupportedOpError(op, dtype, "wasm", dtype0);
+        } else throw new UnsupportedOpError(op, dtype, "wasm");
+      } else if (op === AluOp.Bitcast) {
+        const dtype0 = src[0].dtype;
+        const i32repr = dtype0 === DType.Int32 || dtype0 === DType.Uint32;
+        if (dtype === DType.Int32 || dtype === DType.Uint32) {
+          if (dtype0 === DType.Float32) cg.i32.reinterpret_f32();
+          else if (i32repr) void 0;
+          else throw new UnsupportedOpError(op, dtype, "wasm", dtype0);
+        } else if (dtype === DType.Float32) {
+          if (i32repr) cg.f32.reinterpret_i32();
+          else if (dtype0 === DType.Float32) void 0;
+          else throw new UnsupportedOpError(op, dtype, "wasm", dtype0);
+        } else throw new UnsupportedOpError(op, dtype, "wasm");
+      } else throw new UnsupportedOpError(op, dtype, "wasm");
+    } else if (op === AluOp.Where) {
+      gen(src[1]); // t
+      gen(src[2]); // f
+      gen(src[0]); // cond
+      cg.select();
+    } else if (op === AluOp.Threefry2x32) {
+      // TODO
+      throw new UnsupportedOpError(op, dtype, "wasm", arg);
+    } else if (op === AluOp.Const) {
+      return dty(cg, op, dtype).const(arg as number);
+    } else if (op === AluOp.Special) {
+      return cg.local.get(ctx[arg[0] as string]);
+    } else if (op === AluOp.Variable) {
+      return cg.local.get(ctx[arg as string]);
+    } else if (op === AluOp.GlobalIndex) {
+      gen(src[0]);
+      cg.i32.const(byteWidth(dtype));
+      cg.i32.mul();
+      cg.local.get(arg as number); // base offset of array
+      cg.i32.add();
+      dty(cg, op, dtype).load(Math.log2(byteWidth(dtype)));
+    } else throw new UnsupportedOpError(op, dtype, "wasm");
+
+    if ((references.get(exp) ?? 0) > 1) {
+      const local = cg.local.declare(dty(cg, op, dtype));
+      cg.local.tee(local);
+      expContext.set(exp, local);
     }
   };
+
+  countReferences(exp);
+  gen(exp);
 }
 
-function dty(cg: CodeGenerator, dtype: DType) {
+function dty(cg: CodeGenerator, op: AluOp | null, dtype: DType) {
   switch (dtype) {
     case DType.Float32:
       return cg.f32;
@@ -251,6 +342,6 @@ function dty(cg: CodeGenerator, dtype: DType) {
     case DType.Bool:
       return cg.i32;
     default:
-      throw new Error(`Unsupported dtype in wasm: ${dtype}`);
+      throw new UnsupportedOpError(op, dtype, "wasm");
   }
 }
