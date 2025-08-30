@@ -1,25 +1,27 @@
-/**
- * @file Shared interfaces and code for the low-level backend API.
- *
- * Think of each backend as a _connector_ to a specific hardware or software
- * implementation of the array API.
- *
- * Backends do not share any of the built-in operational semantics of the
- * library. This is a private API. You must allocate and free buffers manually,
- * and dispatch happens on the level of each shader. Buffers are untyped.
- */
+// Shared interfaces and code for the low-level backend API.
+//
+// Think of each backend as a _connector_ to a specific hardware or software
+// implementation of the array API.
+//
+// Backends do not share any of the built-in operational semantics of the
+// library. This is a private API. You must allocate and free buffers manually,
+// and dispatch happens on the level of each shader. Buffers are untyped.
+//
+// The "cpu" backend is very slow and used for debugging. Prefer "wasm".
 
 import { AluOp, DType, Kernel } from "./alu";
 import { CpuBackend } from "./backend/cpu";
+import { WasmBackend } from "./backend/wasm";
 
 export type Device = "cpu" | "wasm" | "webgpu";
 export const devices: Device[] = ["cpu", "wasm", "webgpu"];
 
-// TODO: Switch to Wasm or WebGL after implemented. WebGPU is not available on
-// test platform or all browsers, so it shouldn't be the default.
-let defaultBackend: Device = "cpu";
+let defaultBackend: Device = "wasm";
 const initializedBackends = new Map<Device, Backend>();
+
+// Default backends, initialized at startup.
 initializedBackends.set("cpu", new CpuBackend());
+initializedBackends.set("wasm", new WasmBackend());
 
 /** Set the default device backend (must be initialized). */
 export function setDevice(device: Device): void {
@@ -63,7 +65,6 @@ async function createBackend(device: Device): Promise<Backend | null> {
   if (device === "cpu") {
     return new CpuBackend();
   } else if (device === "wasm") {
-    const { WasmBackend } = await import("./backend/wasm");
     return new WasmBackend();
   } else if (device === "webgpu") {
     if (!navigator.gpu) return null; // WebGPU is not available.

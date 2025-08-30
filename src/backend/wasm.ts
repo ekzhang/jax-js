@@ -34,7 +34,7 @@ export class WasmBackend implements Backend {
   constructor() {
     // 4 GiB = max memory32 size
     // https://spidermonkey.dev/blog/2025/01/15/is-memory64-actually-worth-using.html
-    this.#memory = new WebAssembly.Memory({ initial: 65536 });
+    this.#memory = new WebAssembly.Memory({ initial: 0 });
     this.#nextSlot = 1;
     this.#headPtr = 0;
     this.#buffers = new Map();
@@ -43,6 +43,11 @@ export class WasmBackend implements Backend {
   malloc(size: number, initialData?: Uint8Array): Slot {
     // TODO: Currently, we just have a bump allocator and never free memory.
     const ptr = this.#headPtr;
+    if (ptr + size > this.#memory.buffer.byteLength) {
+      this.#memory.grow(
+        ((ptr + size + 65535) >> 16) - (this.#memory.buffer.byteLength >> 16),
+      );
+    }
     if (initialData) {
       if (initialData.byteLength !== size)
         throw new Error("initialData size does not match buffer size");
