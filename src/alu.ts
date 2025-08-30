@@ -357,28 +357,34 @@ export class AluExp implements FpHashable {
         if (src[0].min <= 0 && src[0].max >= 0) return [-Infinity, Infinity];
         ret = [1 / src[0].max, 1 / src[0].min];
         break;
-      case AluOp.Cast:
+      case AluOp.Cast: {
         // Casts change the dtype.
+        const wasFloat = isFloatDtype(src[0].dtype);
         if (this.dtype === DType.Bool) {
           const canBeZero = src[0].min <= 0 && src[0].max >= 0;
           const mustBeZero = src[0].min === 0 && src[0].max === 0;
           ret = mustBeZero ? [0, 0] : canBeZero ? [0, 1] : [1, 1];
         } else if (this.dtype === DType.Int32) {
-          ret = [Math.trunc(src[0].min), Math.trunc(src[0].max)];
+          const a = wasFloat
+            ? clamp(src[0].min, -2147483648, 2147483647) | 0
+            : src[0].min | 0;
+          const b = wasFloat
+            ? clamp(src[0].max, -2147483648, 2147483647) | 0
+            : src[0].max | 0;
+          ret = a <= b ? [a, b] : [-Infinity, Infinity];
         } else if (this.dtype === DType.Uint32) {
-          const a = Math.trunc(src[0].min);
-          const b = Math.trunc(src[0].max);
-          // If a and b belong to different segments of length 2^32...
-          if (Math.floor(a / 2 ** 32) !== Math.floor(b / 2 ** 32)) {
-            // ...then we return the full range of uint32.
-            ret = [0, -1 >>> 0];
-          } else {
-            ret = [a % 2 ** 32, b % 2 ** 32];
-          }
+          const a = wasFloat
+            ? clamp(src[0].min, 0, 4294967295) >>> 0
+            : src[0].min >>> 0;
+          const b = wasFloat
+            ? clamp(src[0].max, 0, 4294967295) >>> 0
+            : src[0].max >>> 0;
+          ret = a <= b ? [a, b] : [-Infinity, Infinity];
         } else {
           ret = [src[0].min, src[0].max];
         }
         break;
+      }
 
       case AluOp.Cmplt:
         ret = [0, 1];
@@ -923,12 +929,16 @@ export class AluExp implements FpHashable {
           return Math.sqrt(x);
         case AluOp.Reciprocal:
           return 1 / x;
-        case AluOp.Cast:
-          if (this.dtype === DType.Int32) return Math.trunc(x) | 0;
-          else if (this.dtype === DType.Uint32) return Math.trunc(x) >>> 0;
+        case AluOp.Cast: {
+          const wasFloat = isFloatDtype(this.src[0].dtype);
+          if (this.dtype === DType.Int32)
+            return (wasFloat ? clamp(x, -2147483648, 2147483647) : x) | 0;
+          else if (this.dtype === DType.Uint32)
+            return (wasFloat ? clamp(x, 0, 4294967295) : x) >>> 0;
           else if (this.dtype === DType.Float32) return x;
           else if (this.dtype === DType.Bool) return Number(Boolean(x));
           else throw new Error(`Unsupported cast to ${this.dtype}`);
+        }
         case AluOp.Bitcast: {
           const buf = new ArrayBuffer(byteWidth(this.dtype));
           const view = new DataView(buf);

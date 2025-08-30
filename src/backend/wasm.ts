@@ -357,11 +357,11 @@ function translateExp(
           dtype0 === DType.Uint32 ||
           dtype0 === DType.Bool;
         if (dtype === DType.Int32) {
-          if (dtype0 === DType.Float32) cg.i32.trunc_f32_s();
+          if (dtype0 === DType.Float32) cg.i32.trunc_sat_f32_s();
           else if (i32repr) void 0;
           else throw new UnsupportedOpError(op, dtype, "wasm", dtype0);
         } else if (dtype === DType.Uint32) {
-          if (dtype0 === DType.Float32) cg.i32.trunc_f32_u();
+          if (dtype0 === DType.Float32) cg.i32.trunc_sat_f32_u();
           else if (i32repr) void 0;
           else throw new UnsupportedOpError(op, dtype, "wasm", dtype0);
         } else if (dtype === DType.Float32) {

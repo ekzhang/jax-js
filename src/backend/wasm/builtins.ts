@@ -22,7 +22,7 @@ export function wasm_exp(cg: CodeGenerator): number {
     cg.f32.mul();
     cg.f32.nearest();
     cg.local.tee(k_f);
-    cg.i32.trunc_f32_s();
+    cg.i32.trunc_sat_f32_s();
     cg.local.set(k);
 
     // r = x - k*ln2

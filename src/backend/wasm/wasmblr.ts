@@ -65,6 +65,11 @@ function encodeBlocktype(type: Type[]): number[] {
   ];
 }
 
+function encodeOpcode(opcode: number | [number, number]): number[] {
+  if (typeof opcode === "number") return [opcode];
+  return [opcode[0], ...encodeUnsigned(opcode[1])];
+}
+
 function concat(out: number[], inp: number[]): void {
   out.push(...inp);
 }
@@ -185,6 +190,9 @@ export class CodeGenerator {
   }
 
   // Control and branching instructions
+  unreachable() {
+    this._emit(0x00);
+  }
   nop() {
     this._emit(0x01);
   }
@@ -230,6 +238,14 @@ export class CodeGenerator {
     assert(this._pop().typeId === this.i32.typeId, "br_if: expected i32");
     this._emit(0x0d);
     this._emit(encodeUnsigned(depth));
+  }
+  /** Jump table that indexes into a label vector (like switch). */
+  br_table(...depths: number[]) {
+    assert(this._pop().typeId === this.i32.typeId, "br_table: expected i32");
+    assert(depths.length > 0, "br_table: expected at least one default depth");
+    this._emit(0x0e);
+    this._emit(encodeUnsigned(depths.length - 1));
+    for (const d of depths) this._emit(encodeUnsigned(d));
   }
   /** Return from a function, branching out of the outermost block. */
   return() {
@@ -555,7 +571,7 @@ type TypeSpec = "i32" | "f32";
 
 function UNARY_OP(
   op: string,
-  opcode: number,
+  opcode: number | [number, number],
   inType: TypeSpec,
   outType: TypeSpec,
 ) {
@@ -565,14 +581,14 @@ function UNARY_OP(
       t.typeId === this.cg[inType].typeId,
       `invalid type for ${op} (${inType} -> ${outType})`,
     );
-    this.cg._emit(opcode);
+    this.cg._emit(encodeOpcode(opcode));
     this.cg._push(this.cg[outType]);
   };
 }
 
 function BINARY_OP(
   op: string,
-  opcode: number,
+  opcode: number | [number, number],
   typeA: TypeSpec,
   typeB: TypeSpec,
   outType: TypeSpec,
@@ -584,12 +600,16 @@ function BINARY_OP(
       a.typeId === this.cg[typeA].typeId && b.typeId === this.cg[typeB].typeId,
       `invalid type for ${op} (${typeA}, ${typeB} -> ${outType})`,
     );
-    this.cg._emit(opcode);
+    this.cg._emit(encodeOpcode(opcode));
     this.cg._push(this.cg[outType]);
   };
 }
 
-function LOAD_OP(op: string, opcode: number, outType: TypeSpec) {
+function LOAD_OP(
+  op: string,
+  opcode: number | [number, number],
+  outType: TypeSpec,
+) {
   return function (
     this: { cg: CodeGenerator },
     align: number = 0,
@@ -597,14 +617,18 @@ function LOAD_OP(op: string, opcode: number, outType: TypeSpec) {
   ) {
     const idxType = this.cg._pop();
     assert(idxType.typeId === this.cg.i32.typeId, `invalid type for ${op}`);
-    this.cg._emit(opcode);
+    this.cg._emit(encodeOpcode(opcode));
     this.cg._emit(encodeUnsigned(align));
     this.cg._emit(encodeUnsigned(offset));
     this.cg._push(this.cg[outType]);
   };
 }
 
-function STORE_OP(op: string, opcode: number, inType: TypeSpec) {
+function STORE_OP(
+  op: string,
+  opcode: number | [number, number],
+  inType: TypeSpec,
+) {
   return function (
     this: { cg: CodeGenerator },
     align: number = 0,
@@ -617,7 +641,7 @@ function STORE_OP(op: string, opcode: number, inType: TypeSpec) {
       `invalid value type for ${op} (${inType})`,
     );
     assert(idxType.typeId === this.cg.i32.typeId, `invalid type for ${op}`);
-    this.cg._emit(opcode);
+    this.cg._emit(encodeOpcode(opcode));
     this.cg._emit(encodeUnsigned(align));
     this.cg._emit(encodeUnsigned(offset));
   };
@@ -681,6 +705,9 @@ class I32 implements Type {
   store8 = STORE_OP("store8", 0x3a, "i32");
   store16 = STORE_OP("store16", 0x3b, "i32");
   reinterpret_f32 = UNARY_OP("reinterpret_f32", 0xbc, "f32", "i32");
+
+  trunc_sat_f32_s = UNARY_OP("trunc_sat_f32_s", [0xfc, 0x00], "f32", "i32");
+  trunc_sat_f32_u = UNARY_OP("trunc_sat_f32_u", [0xfc, 0x01], "f32", "i32");
 }
 
 ////////////////////////////////////////
@@ -754,8 +781,7 @@ function VECTOR_OP(
         `invalid type for ${op} (${inTypes.join(", ")} -> ${outType})`,
       );
     }
-    this.cg._emit(0xfd);
-    this.cg._emit(encodeUnsigned(vopcode));
+    this.cg._emit(encodeOpcode([0xfd, vopcode]));
     this.cg._push(this.cg[outType]);
   };
 }
@@ -775,8 +801,7 @@ function VECTOR_OPL(
         `invalid type for ${op} (${inTypes} -> ${outType})`,
       );
     }
-    this.cg._emit(0xfd);
-    this.cg._emit(encodeUnsigned(vopcode));
+    this.cg._emit(encodeOpcode([0xfd, vopcode]));
     this.cg._emit(lane); // 1 byte
     this.cg._push(this.cg[outType]);
   };
@@ -790,8 +815,7 @@ function VECTOR_LOAD_OP(op: string, vopcode: number) {
   ) {
     const idxType = this.cg._pop();
     assert(idxType.typeId === this.cg.i32.typeId, `invalid type for ${op}`);
-    this.cg._emit(0xfd);
-    this.cg._emit(encodeUnsigned(vopcode));
+    this.cg._emit(encodeOpcode([0xfd, vopcode]));
     this.cg._emit(encodeUnsigned(align));
     this.cg._emit(encodeUnsigned(offset));
     this.cg._push(this.cg.v128);

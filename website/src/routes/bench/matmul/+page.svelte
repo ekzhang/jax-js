@@ -679,11 +679,14 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
       const b = tf.tensor(randomBuffer, [n, n]);
       await Promise.all([a.data(), b.data()]); // Make sure tensors are ready.
 
+      performance.mark("tfjs-start");
       const start = performance.now();
       const c = tf.matMul(a, b);
       const ar = (await c.data()) as Float32Array;
       printBufferItems(ar);
       const time = performance.now() - start;
+      performance.mark("tfjs-end");
+      performance.measure("tfjs", "tfjs-start", "tfjs-end");
 
       a.dispose();
       b.dispose();
@@ -706,11 +709,14 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
       const b = np.array(randomBuffer, { shape: [n, n] });
       await Promise.all([a.ref.wait(), b.ref.wait()]); // Make sure tensors are ready.
 
+      performance.mark("jax-start");
       const start = performance.now();
       const c = np.dot(a, b);
       const ar = (await c.data()) as Float32Array;
       printBufferItems(ar);
       const time = performance.now() - start;
+      performance.mark("jax-end");
+      performance.measure("jax", "jax-start", "jax-end");
 
       return time / 1000; // seconds
     }

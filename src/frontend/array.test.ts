@@ -270,4 +270,14 @@ suite.each(devices)("device:%s", (device) => {
     expect(b.ref.dataSync()).toEqual(new Float32Array([1, 2, 3]));
     expect(b.js()).toEqual([1, 2, 3]);
   });
+
+  test("cast saturates from large f32 -> i32", () => {
+    const a = array([1e20, -1e20, 1e10, -1e10, 1e5, -1e5], {
+      dtype: DType.Float32,
+    });
+    const b = a.astype(DType.Int32);
+    expect(b.js()).toEqual([
+      2147483647, -2147483648, 2147483647, -2147483648, 100000, -100000,
+    ]);
+  });
 });
