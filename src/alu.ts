@@ -2,13 +2,17 @@ import { PPrint } from "./pprint";
 import { ShapeTracker } from "./shape";
 import { clamp, FpHash, FpHashable, gcd, strip1 } from "./utils";
 
+/** A numerical data type for array contents. */
 export enum DType {
   Float32 = "float32",
   Int32 = "int32",
   Uint32 = "uint32",
   Bool = "bool",
-  Complex64 = "complex64", // TODO: unimplemented
+  Float16 = "float16",
 }
+
+/** @inline */
+export type DataArray = Float32Array | Int32Array | Uint32Array | Float16Array;
 
 export const byteWidth = (dtype: DType): number => {
   switch (dtype) {
@@ -17,20 +21,17 @@ export const byteWidth = (dtype: DType): number => {
     case DType.Uint32:
     case DType.Bool:
       return 4;
-    case DType.Complex64:
-      return 8; // Two float32s.
+    case DType.Float16:
+      return 2;
     default:
       throw new TypeError(`Unknown dtype: ${dtype}`);
   }
 };
 
 export const isFloatDtype = (dtype: DType) =>
-  dtype === DType.Float32 || dtype === DType.Complex64;
+  dtype === DType.Float32 || dtype === DType.Float16;
 
-export function dtypedArray(
-  dtype: DType,
-  data: Uint8Array,
-): Float32Array | Int32Array | Uint32Array {
+export function dtypedArray(dtype: DType, data: Uint8Array): DataArray {
   const { buffer, byteLength, byteOffset } = data;
   const length = byteLength / byteWidth(dtype);
   switch (dtype) {
@@ -41,15 +42,14 @@ export function dtypedArray(
       return new Int32Array(buffer, byteOffset, length);
     case DType.Uint32:
       return new Uint32Array(buffer, byteOffset, length);
+    case DType.Float16:
+      return new Float16Array(buffer, byteOffset, length);
     default:
       throw new Error(`Unimplemented dtype: ${dtype}`);
   }
 }
 
-export function dtypedJsArray(
-  dtype: DType,
-  data: number[],
-): Float32Array | Int32Array | Uint32Array {
+export function dtypedJsArray(dtype: DType, data: number[]): DataArray {
   switch (dtype) {
     case DType.Float32:
       return new Float32Array(data);
@@ -58,6 +58,8 @@ export function dtypedJsArray(
       return new Int32Array(data);
     case DType.Uint32:
       return new Uint32Array(data);
+    case DType.Float16:
+      return new Float16Array(data);
     default:
       throw new Error(`Unimplemented dtype: ${dtype}`);
   }
@@ -200,17 +202,20 @@ export class AluExp implements FpHashable {
     return new AluExp(AluOp.GlobalView, dtype, indices, [gid, st]);
   }
 
+  static f32(value: number): AluExp {
+    return AluExp.const(DType.Float32, value);
+  }
   static i32(value: number): AluExp {
     return AluExp.const(DType.Int32, value);
   }
   static u32(value: number): AluExp {
     return AluExp.const(DType.Uint32, value);
   }
-  static f32(value: number): AluExp {
-    return AluExp.const(DType.Float32, value);
-  }
   static bool(value: boolean): AluExp {
     return AluExp.const(DType.Bool, Number(value));
+  }
+  static f16(value: number): AluExp {
+    return AluExp.const(DType.Float16, value);
   }
 
   not(): AluExp {
@@ -937,7 +942,7 @@ export class AluExp implements FpHashable {
             return (wasFloat ? clamp(x, -2147483648, 2147483647) : x) | 0;
           else if (this.dtype === DType.Uint32)
             return (wasFloat ? clamp(x, 0, 4294967295) : x) >>> 0;
-          else if (this.dtype === DType.Float32) return x;
+          else if (isFloatDtype(this.dtype)) return x;
           else if (this.dtype === DType.Bool) return Number(Boolean(x));
           else throw new Error(`Unsupported cast to ${this.dtype}`);
         }
@@ -949,11 +954,14 @@ export class AluExp implements FpHashable {
           if (fromType === DType.Float32) view.setFloat32(0, x, true);
           else if (fromType === DType.Int32) view.setInt32(0, x, true);
           else if (fromType === DType.Uint32) view.setUint32(0, x, true);
+          else if (fromType === DType.Float16) view.setFloat16(0, x, true);
           else throw new Error(`Unsupported bitcast from ${fromType}`);
           // Read the data in the target dtype.
           if (this.dtype === DType.Float32) return view.getFloat32(0, true);
           else if (this.dtype === DType.Int32) return view.getInt32(0, true);
           else if (this.dtype === DType.Uint32) return view.getUint32(0, true);
+          else if (this.dtype === DType.Float16)
+            return view.getFloat16(0, true);
           else throw new Error(`Unsupported bitcast to ${this.dtype}`);
         }
         default:
@@ -1088,6 +1096,18 @@ export class AluExp implements FpHashable {
       const result = reducer(exp, mappedSrc);
       visited.set(exp, result);
       return result;
+    };
+    return recurse(this);
+  }
+
+  /** Check if any expression in the tree satisfies a predicate. */
+  some(predicate: (exp: AluExp) => boolean): boolean {
+    const visited = new Set<AluExp>();
+    const recurse = (exp: AluExp): boolean => {
+      if (visited.has(exp)) return false;
+      if (predicate(exp)) return true;
+      visited.add(exp);
+      return exp.src.some(recurse);
     };
     return recurse(this);
   }
@@ -1328,7 +1348,7 @@ export class Reduction implements FpHashable {
       else if (this.op === AluOp.Mul) return 1;
       else if (this.op === AluOp.Min) return -1 >>> 0;
       else if (this.op === AluOp.Max) return 0;
-    } else if (this.dtype === DType.Float32) {
+    } else if (isFloatDtype(this.dtype)) {
       if (this.op === AluOp.Add) return 0;
       else if (this.op === AluOp.Mul) return 1;
       else if (this.op === AluOp.Min) return Infinity;
@@ -1371,7 +1391,7 @@ export class Reduction implements FpHashable {
       } else if (this.op === AluOp.Max) {
         return values.reduce((a: number, b: number) => Math.max(a, b), 0);
       }
-    } else if (this.dtype === DType.Float32) {
+    } else if (isFloatDtype(this.dtype)) {
       if (this.op === AluOp.Add) {
         return values.reduce((a: number, b: number) => a + b, 0);
       } else if (this.op === AluOp.Mul) {

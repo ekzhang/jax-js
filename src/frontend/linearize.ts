@@ -1,6 +1,6 @@
 /** @file Implementations of vjp() and partial evaluation. */
 
-import { AluOp, DType } from "../alu";
+import { AluOp, isFloatDtype } from "../alu";
 import { flatten as treeFlatten, unflatten as treeUnflatten } from "../tree";
 import {
   deepEqual,
@@ -952,10 +952,11 @@ export function valueAndGrad(f: (...primals: any) => Tracer) {
     if (!(y instanceof Tracer) || ndim(y) !== 0) {
       throw new TypeError("grad requires a scalar output");
     }
-    if (y.dtype !== DType.Float32) {
-      throw new TypeError("grad currently only supports float32");
+    if (!isFloatDtype(y.dtype)) {
+      throw new TypeError("grad only supports floating-point dtypes");
     }
-    const [ct, ...rest] = fVjp(pureArray(1));
+    // TODO: Use correct device
+    const [ct, ...rest] = fVjp(scalar(1, { dtype: y.dtype }));
     for (const r of rest) r.dispose();
     return [y, ct] as [any, any];
   };

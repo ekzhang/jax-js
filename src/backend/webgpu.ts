@@ -26,7 +26,14 @@ export class WebGPUBackend implements Backend {
 
   readonly pipelines: ShaderPipelineCache;
   readonly syncReader: SyncReader;
-  readonly buffers: Map<Slot, { ref: number; buffer: GPUBuffer }>;
+  readonly buffers: Map<
+    Slot,
+    {
+      ref: number;
+      size: number; // Refers to "true size" requested, less padding.
+      buffer: GPUBuffer;
+    }
+  >;
   nextSlot: number;
 
   #cachedShaderMap = new Map<bigint, ShaderInfo>();
@@ -48,25 +55,37 @@ export class WebGPUBackend implements Backend {
 
   malloc(size: number, initialData?: Uint8Array): Slot {
     let buffer: GPUBuffer;
+    // All GPUBuffer must be a multiple of 4 bytes in length, to support copy
+    // operations. Pad it to a multiple of 4.
+    const paddedSize = Math.ceil(size / 4) * 4;
     if (initialData) {
       if (initialData.byteLength !== size) {
         throw new Error("initialData size does not match buffer size");
       }
       if (initialData.byteLength < 4096) {
-        buffer = this.#createBuffer(size, { mapped: true });
-        new Uint8Array(buffer.getMappedRange()).set(initialData);
+        buffer = this.#createBuffer(paddedSize, { mapped: true });
+        new Uint8Array(buffer.getMappedRange(), 0, size).set(initialData);
         buffer.unmap();
       } else {
         // getMappedRange() seems slower for large buffers, use writeBuffer() instead.
-        buffer = this.#createBuffer(size);
-        this.device.queue.writeBuffer(buffer, 0, initialData);
+        buffer = this.#createBuffer(paddedSize);
+        if (initialData.byteLength % 4 === 0) {
+          this.device.queue.writeBuffer(buffer, 0, initialData);
+        } else {
+          // Copy all but the last few bytes, then copy 4 bytes as remainder.
+          const aligned = initialData.byteLength - (initialData.byteLength % 4);
+          this.device.queue.writeBuffer(buffer, 0, initialData, 0, aligned);
+          const remainder = new Uint8Array(4);
+          remainder.set(initialData.subarray(aligned));
+          this.device.queue.writeBuffer(buffer, aligned, remainder);
+        }
       }
     } else {
-      buffer = this.#createBuffer(size);
+      buffer = this.#createBuffer(paddedSize);
     }
 
     const slot = this.nextSlot++;
-    this.buffers.set(slot, { buffer, ref: 1 });
+    this.buffers.set(slot, { buffer, size, ref: 1 });
     return slot;
   }
 
@@ -89,29 +108,30 @@ export class WebGPUBackend implements Backend {
   }
 
   async read(slot: Slot, start?: number, count?: number): Promise<Uint8Array> {
-    const buffer = this.#getBuffer(slot);
+    const { buffer, size } = this.#getBuffer(slot);
     if (start === undefined) start = 0;
-    if (count === undefined) count = buffer.size - start;
+    if (count === undefined) count = size - start;
 
     // Need a GPUBuffer with MAP_READ usage when transfering data to host.
-    const staging = this.#createBuffer(count, { read: true });
+    const paddedSize = Math.ceil(count / 4) * 4;
+    const staging = this.#createBuffer(paddedSize, { read: true });
     try {
       const commandEncoder = this.device.createCommandEncoder();
-      commandEncoder.copyBufferToBuffer(buffer, start, staging, 0, count);
+      commandEncoder.copyBufferToBuffer(buffer, start, staging, 0, paddedSize);
       this.device.queue.submit([commandEncoder.finish()]);
 
       await staging.mapAsync(GPUMapMode.READ);
       const arrayBuffer = staging.getMappedRange();
-      return new Uint8Array(arrayBuffer.slice());
+      return new Uint8Array(arrayBuffer.slice(), 0, count);
     } finally {
       staging.destroy();
     }
   }
 
   readSync(slot: Slot, start?: number, count?: number): Uint8Array {
-    const buffer = this.#getBuffer(slot);
+    const { buffer, size } = this.#getBuffer(slot);
     if (start === undefined) start = 0;
-    if (count === undefined) count = buffer.size - start;
+    if (count === undefined) count = size - start;
     return this.syncReader.read(buffer, start, count);
   }
 
@@ -142,15 +162,15 @@ export class WebGPUBackend implements Backend {
     inputs: Slot[],
     outputs: Slot[],
   ): void {
-    const inputBuffers = inputs.map((slot) => this.#getBuffer(slot));
-    const outputBuffers = outputs.map((slot) => this.#getBuffer(slot));
+    const inputBuffers = inputs.map((slot) => this.#getBuffer(slot).buffer);
+    const outputBuffers = outputs.map((slot) => this.#getBuffer(slot).buffer);
     pipelineSubmit(this.device, exe.data, inputBuffers, outputBuffers);
   }
 
-  #getBuffer(slot: Slot): GPUBuffer {
+  #getBuffer(slot: Slot): { buffer: GPUBuffer; size: number } {
     const buffer = this.buffers.get(slot);
     if (!buffer) throw new SlotError(slot);
-    return buffer.buffer;
+    return { buffer: buffer.buffer, size: buffer.size };
   }
 
   /**
@@ -193,6 +213,8 @@ function dtypeToWgsl(dtype: DType, storage: boolean = false): string {
       return "u32"; // WebGPU supports uint32 in buffers.
     case DType.Float32:
       return "f32";
+    case DType.Float16:
+      return "f16";
     default:
       throw new Error(`Unsupported dtype: ${dtype}`);
   }
@@ -206,6 +228,12 @@ function constToWgsl(dtype: DType, value: any): string {
     if (Number.isNaN(value)) return "nan()";
     if (!Number.isFinite(value)) return value > 0 ? "inf()" : "-inf()";
     return "f32(" + value.toString() + ")";
+  }
+  if (dtype === DType.Float16) {
+    if (Number.isNaN(value)) return "f16(nan())";
+    if (!Number.isFinite(value))
+      return value > 0 ? "f16(inf())" : "f16(-inf())";
+    return "f16(" + value.toString() + ")";
   }
   throw new Error(`Unsupported const dtype: ${dtype}`);
 }
@@ -239,6 +267,15 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
       else shader.push(line ? indent + (line as string) : line);
     }
   };
+
+  if (
+    tune.exp.some((exp) => exp.dtype === DType.Float16) ||
+    re?.fusion.some((exp) => exp.dtype === DType.Float16)
+  ) {
+    if (!device.features.has("shader-f16"))
+      throw new Error("WebGPU device does not support shader-f16 feature");
+    emit("enable f16;");
+  }
 
   // Global functions at the start of the shader..
   emit(
@@ -693,17 +730,15 @@ class SyncReader {
   read(buffer: GPUBuffer, start: number, count: number): Uint8Array {
     if (!this.initialized) this.#init();
 
-    if (count % 4 !== 0) {
-      throw new Error("Read size must be a multiple of 4 bytes");
-    }
-
     const deviceStorage = this.deviceStorage!;
     const deviceContexts = this.deviceContexts!;
     const hostContext = this.hostContext!;
 
-    const pixelsSize = count / 4;
+    // WebGPU has a fundamental alignment requirement of 4 bytes when copying or
+    // accessing buffers, so we round up the size here.
+    const pixelsSize = Math.ceil(count / 4);
     const bytesPerRow = SyncReader.width * 4;
-    const valsGPU = new ArrayBuffer(count);
+    const valsGPU = new ArrayBuffer(pixelsSize * 4);
 
     for (let i = 0; i < deviceContexts.length; i++) {
       const texture = deviceContexts[i].getCurrentTexture();
@@ -755,7 +790,7 @@ class SyncReader {
       if (remainder > 0) readData(remainder, 1, offset);
     }
 
-    return new Uint8Array(valsGPU);
+    return new Uint8Array(valsGPU, 0, count);
   }
 }
 

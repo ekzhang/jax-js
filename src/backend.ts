@@ -88,10 +88,18 @@ async function createBackend(device: Device): Promise<Backend | null> {
       "maxStorageTexturesPerShaderStage",
     ];
 
+    const requestedFeatures: GPUFeatureName[] = [
+      "shader-f16", // "enable f16;" feature support for f16 data type
+      "timestamp-query", // Performance timing queries.
+    ];
+
     try {
       const device = await adapter.requestDevice({
         requiredLimits: Object.fromEntries(
-          importantLimits.map((feature) => [feature, adapter.limits[feature]]),
+          importantLimits.map((limit) => [limit, adapter.limits[limit]]),
+        ),
+        requiredFeatures: requestedFeatures.filter((feature) =>
+          adapter.features.has(feature),
         ),
       });
       return new WebGPUBackend(device);
