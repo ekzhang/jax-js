@@ -1,0 +1,42 @@
+{
+  "name": "@jax-js/opfs",
+  "version": "0.0.1",
+  "description": "Persistent, OPFS-based cache for downloding large files like model weights in browser",
+  "keywords": [
+    "machine learning",
+    "jax",
+    "numpy",
+    "numerical computing"
+  ],
+  "author": {
+    "name": "Eric Zhang",
+    "email": "ekzhang1@gmail.com",
+    "url": "https://www.ekzhang.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ekzhang/jax-js.git"
+  },
+  "type": "module",
+  "files": [
+    "/dist"
+  ],
+  "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./dist/index.d.ts": {
+      "import": "./dist/index.d.ts",
+      "require": "./dist/index.d.cts"
+    }
+  },
+  "types": "dist/index.d.ts",
+  "module": "dist/index.js",
+  "license": "MIT",
+  "scripts": {
+    "prepublishOnly": "pnpm -C ../.. build",
+    "postpublish": "git tag opfs/v$npm_package_version && git push --tags"
+  }
+}

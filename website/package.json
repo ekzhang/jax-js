@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "@jax-js/jax": "workspace:*",
+    "@jax-js/opfs": "workspace:*",
     "@jax-js/optax": "workspace:*",
     "@observablehq/plot": "^0.6.17",
     "@rich_harris/svelte-split-pane": "^2.0.0",

@@ -1,3 +1,5 @@
+import { cachedFetch } from "@jax-js/opfs";
+
 // CORS-enabled version of https://github.com/cvdfoundation/mnist
 const mnistLinks = {
   train: {
@@ -33,13 +35,10 @@ const mnistLinks = {
 async function fetchIdxFile(
   url: string,
 ): Promise<{ shape: number[]; data: Int32Array | Float32Array }> {
-  const resp = await fetch(url);
-  if (!resp.ok) {
-    throw new Error(
-      `Failed to fetch ${url}: ${resp.status} ${resp.statusText}`,
-    );
-  }
-  const stream = resp.body!.pipeThrough(new DecompressionStream("gzip"));
+  const bytes = await cachedFetch(url);
+  const stream = new Blob([bytes])
+    .stream()
+    .pipeThrough(new DecompressionStream("gzip"));
   const buffer = await new Response(stream).arrayBuffer();
   let view = new DataView(buffer);
 
