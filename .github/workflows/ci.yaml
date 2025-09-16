@@ -7,14 +7,20 @@ on:
 
 jobs:
   build-test:
-    name: Build, lint and test
-    runs-on: ubuntu-latest
+    name: Build and test ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -23,28 +29,28 @@ jobs:
 
       - run: pnpm build
 
-      - run: pnpm check
-
-      - run: pnpm lint
-
       - run: pnpm exec playwright install chromium-headless-shell
 
       - run: pnpm test
 
-  format:
-    name: Format
+  check-lint-format:
+    name: Check, lint and format
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      - run: pnpm check
+
+      - run: pnpm lint
 
       - run: pnpm format:check
