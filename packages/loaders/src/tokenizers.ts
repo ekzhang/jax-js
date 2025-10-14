@@ -1,7 +1,7 @@
 import { cachedFetch } from "./opfs";
 
 /** Supported tokenizer types. */
-export type TokenizerType = "clip" | string;
+export type TokenizerType = "clip" | (string & {});
 
 /** Tokenizer interface for encoding/decoding text. */
 export interface Tokenizer {
