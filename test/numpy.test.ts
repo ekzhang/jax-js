@@ -894,4 +894,26 @@ suite.each(devices)("device:%s", (device) => {
       expect(x.js()).toEqual(2); // Index of maximum in flattened array
     });
   });
+
+  suite("jax.numpy.tanh()", () => {
+    const vals = [-1, -0.7, 0, 0.5, 1.7, 10];
+
+    test("sinh values", () => {
+      for (const x of vals) {
+        expect(np.sinh(x).js()).toBeCloseTo(Math.sinh(x));
+      }
+    });
+
+    test("cosh values", () => {
+      for (const x of vals) {
+        expect(np.cosh(x).js()).toBeCloseTo(Math.cosh(x));
+      }
+    });
+
+    test("tanh values", () => {
+      for (const x of vals) {
+        expect(np.tanh(x).js()).toBeCloseTo(Math.tanh(x));
+      }
+    });
+  });
 });

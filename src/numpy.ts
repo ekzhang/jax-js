@@ -737,3 +737,36 @@ export function log2(x: ArrayLike): Array {
 export function log10(x: ArrayLike): Array {
   return log(x).mul(Math.LOG10E);
 }
+
+/**
+ * Calculate element-wise hyperbolic sine of input.
+ *
+ * `sinh(x) = (exp(x) - exp(-x)) / 2`
+ */
+export function sinh(x: ArrayLike): Array {
+  const ex = exp(x);
+  const emx = reciprocal(ex.ref);
+  return ex.sub(emx).mul(0.5);
+}
+
+/**
+ * Calculate element-wise hyperbolic cosine of input.
+ *
+ * `cosh(x) = (exp(x) + exp(-x)) / 2`
+ */
+export function cosh(x: ArrayLike): Array {
+  const ex = exp(x);
+  const emx = reciprocal(ex.ref);
+  return ex.add(emx).mul(0.5);
+}
+
+/**
+ * Calculate element-wise hyperbolic tangent of input.
+ *
+ * `tanh(x) = sinh(x)/cosh(x) = (exp(x) - exp(-x)) / (exp(x) + exp(-x))`
+ */
+export function tanh(x: ArrayLike): Array {
+  x = fudgeArray(x);
+  const e2x = exp(x.ref.add(x));
+  return e2x.ref.sub(1).div(e2x.add(1));
+}
