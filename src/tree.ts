@@ -11,6 +11,7 @@ export enum NodeType {
   Leaf = "Leaf",
 }
 
+/** Analog to the JAX "pytree" object, but for JavaScript. */
 export type JsTree<T> = T | JsTree<T>[] | { [key: string]: JsTree<T> };
 
 type Same<X, Y> =
@@ -18,19 +19,19 @@ type Same<X, Y> =
     ? true
     : false;
 
-// Convert a subtype of JsTree<A> into a JsTree<B>, with the same structure.
-export type MapJsTree<T, A, B> =
-  Same<A, B> extends true
-    ? T
-    : T extends A
-      ? B
-      : T extends globalThis.Array<infer U>
-        ? number extends T["length"]
-          ? MapJsTree<U, A, B>[] // plain array
-          : { [K in keyof T]: MapJsTree<T[K], A, B> } // tuple: map each slot, keep tuple shape
-        : { [K in keyof T]: MapJsTree<T[K], A, B> }; // object: map each slot, keep object shape
+type MappedJsTree<T, A, B> = T extends A
+  ? B
+  : T extends globalThis.Array<infer U>
+    ? number extends T["length"]
+      ? MapJsTree<U, A, B>[] // plain array
+      : { [K in keyof T]: MapJsTree<T[K], A, B> } // tuple: map each slot, keep tuple shape
+    : { [K in keyof T]: MapJsTree<T[K], A, B> }; // object: map each slot, keep object shape
 
-/** Analog to the JAX "pytree" object, but for JavaScript. */
+/** @ignore Convert a subtype of JsTree<A> into a JsTree<B>, with the same structure. */
+export type MapJsTree<T, A, B> =
+  Same<A, B> extends true ? T : MappedJsTree<T, A, B>;
+
+/** Represents the structure of a JsTree. */
 export class JsTreeDef {
   static leaf = new JsTreeDef(NodeType.Leaf, null, []);
 

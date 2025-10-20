@@ -8,7 +8,7 @@ import { bind1, conv as convPrimitive, Primitive } from "./frontend/core";
 import { vmap } from "./frontend/vmap";
 import { rep, zipn } from "./utils";
 
-type PaddingType = "VALID" | "SAME" | "SAME_LOWER" | [number, number][];
+export type PaddingType = "VALID" | "SAME" | "SAME_LOWER" | [number, number][];
 
 function padtypeToPads(
   inShape: number[],

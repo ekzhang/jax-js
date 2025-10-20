@@ -66,6 +66,12 @@ export const makeJaxpr = jaxprModule.makeJaxpr as unknown as <
   treedef: JsTreeDef;
 };
 
+/**
+ * Mark a function for automatic JIT compilation, with operator fusion.
+ *
+ * The function will be compiled the first time it is called with a set of
+ * argument shapes.
+ */
 export const jit = jaxprModule.jit as <
   F extends (...args: any[]) => JsTree<Array>,
 >(
