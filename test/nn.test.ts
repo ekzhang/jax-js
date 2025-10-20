@@ -76,6 +76,19 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.nn.gelu()", () => {
+    test("estimates gelu for various values", () => {
+      // computed from torch.nn.functional.gelu()
+      const geluValues = [
+        [-10, -1, -0.3, 0, 0.1, 0.5, 1, 3, 5],
+        [-0, -0.158655, -0.114627, 0, 0.053983, 0.345731, 0.841345, 2.99595, 5],
+      ];
+      const x = np.array(geluValues[0]);
+      const y = nn.gelu(x);
+      expect(y).toBeAllclose(geluValues[1], { atol: 0.02 });
+    });
+  });
+
   suite("jax.nn.softmax()", () => {
     test("should compute softmax", () => {
       const x = np.array([

@@ -131,6 +131,20 @@ export function celu(x: ArrayLike, alpha: number = 1.0): Array {
 }
 
 /**
+ * Gaussion error linear unit (GELU) activation function.
+ *
+ * This is computed element-wise. Currently jax-js does not support the erf() or
+ * gelu() functions exactly as primitives, so an approximation is used:
+ * `gelu(x) ~= x * sigmoid(1.702 * x)`.
+ *
+ * This will be improved in the future.
+ */
+export function gelu(x: ArrayLike): Array {
+  x = fudgeArray(x);
+  return x.ref.mul(sigmoid(x.mul(1.702)));
+}
+
+/**
  * Gated linear unit (GLU) activation function.
  *
  * Splits the `axis` dimension of the input into two halves, a and b, then

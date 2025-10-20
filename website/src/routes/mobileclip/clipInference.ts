@@ -31,7 +31,7 @@ export function runMobileCLIPTextBlock(
   // Pre-norm MLP block
   const normed2 = runLayerNorm(ln2, x.ref);
   let mlpOut = runLinear(mlpUp, normed2);
-  mlpOut = nn.relu(mlpOut); // TODO: Use GELU activation
+  mlpOut = nn.gelu(mlpOut);
   mlpOut = runLinear(mlpDown, mlpOut);
   x = x.add(mlpOut); // Residual connection
 
