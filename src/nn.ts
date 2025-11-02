@@ -2,6 +2,7 @@
 
 import { eye, fudgeArray, ones, zeros } from "./frontend/array";
 import { broadcast, shrink, stopGradient } from "./frontend/core";
+import { jit } from "./frontend/jaxpr";
 import {
   absolute,
   Array,
@@ -135,14 +136,22 @@ export function celu(x: ArrayLike, alpha: number = 1.0): Array {
  *
  * This is computed element-wise. Currently jax-js does not support the erf() or
  * gelu() functions exactly as primitives, so an approximation is used:
- * `gelu(x) ~= x * sigmoid(1.702 * x)`.
+ * `gelu(x) ~= x * 0.5 * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))`.
+ *
+ * Reference: https://ml-explore.github.io/mlx/build/html/python/nn/_autosummary_functions/mlx.nn.gelu_approx.html
  *
  * This will be improved in the future.
  */
-export function gelu(x: ArrayLike): Array {
-  x = fudgeArray(x);
-  return x.ref.mul(sigmoid(x.mul(1.702)));
-}
+export const gelu = jit((x: Array): Array => {
+  const SQRT_2_OVER_PI = Math.sqrt(2 / Math.PI);
+  return x.ref
+    .mul(0.5)
+    .mul(
+      tanh(
+        x.ref.mul(x.ref.mul(x).mul(0.044715).add(1)).mul(SQRT_2_OVER_PI),
+      ).add(1),
+    );
+});
 
 /**
  * Gated linear unit (GLU) activation function.

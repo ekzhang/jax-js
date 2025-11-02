@@ -85,7 +85,7 @@ suite.each(devices)("device:%s", (device) => {
       ];
       const x = np.array(geluValues[0]);
       const y = nn.gelu(x);
-      expect(y).toBeAllclose(geluValues[1], { atol: 0.02 });
+      expect(y).toBeAllclose(geluValues[1], { atol: 0.001 });
     });
   });
 
