@@ -1,9 +1,9 @@
 import { expect, suite, test } from "vitest";
 
-import { get as getTokenizer } from "./tokenizers";
+import { getBpe } from "./tokenizers";
 
 /** Helper function to check CLIP tokenizer results */
-function expectClipTokens(tokens: Uint32Array, expectedTokens: number[]) {
+function expectClipTokens(tokens: number[], expectedTokens: number[]) {
   expect(tokens.length).toBe(77);
 
   // Create expected array with padding
@@ -13,11 +13,12 @@ function expectClipTokens(tokens: Uint32Array, expectedTokens: number[]) {
     expected[i] = expectedTokens[i];
   }
 
-  expect(tokens).toEqual(expected);
+  expect(new Uint32Array(tokens)).toEqual(expected);
 }
 
 suite("CLIP tokenizer", async () => {
-  const tokenizer = await getTokenizer("clip");
+  const tokenizer = await getBpe("clip");
+
   test('should encode "a photo of a cat"', () => {
     const tokens = tokenizer.encode("a photo of a cat");
     expectClipTokens(tokens, [49406, 320, 1125, 539, 320, 2368, 49407]);
@@ -28,9 +29,9 @@ suite("CLIP tokenizer", async () => {
     expectClipTokens(tokens, [49406, 3306, 267, 1002, 256, 49407]);
   });
 
-  test("should encode empty string", () => {
-    const tokens = tokenizer.encode("");
-    expectClipTokens(tokens, [49406, 49407]);
+  test("should encode empty string or whitespace", () => {
+    expectClipTokens(tokenizer.encode(""), [49406, 49407]);
+    expectClipTokens(tokenizer.encode("    \t\n"), [49406, 49407]);
   });
 
   test("should handle long text with truncation", () => {
@@ -85,17 +86,8 @@ suite("CLIP tokenizer", async () => {
   });
 
   test("should decode tokens back to text", () => {
-    const tokens = new Uint32Array([49406, 320, 1125, 539, 320, 2368, 49407]);
+    const tokens = [49406, 320, 1125, 539, 320, 2368, 49407];
     const decoded = tokenizer.decode(tokens);
-
-    expect(decoded).toBe("a photo of a cat");
-  });
-
-  test("should encode without special tokens", async () => {
-    const tokens = tokenizer.encode("a photo of a cat", {
-      addSpecialTokens: false,
-    });
-    // Should not have BOS (49406) at start or EOS (49407) at end
-    expectClipTokens(tokens, [320, 1125, 539, 320, 2368]);
+    expect(decoded).toBe("<|startoftext|>a photo of a cat <|endoftext|>");
   });
 });

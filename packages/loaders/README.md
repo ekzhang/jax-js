@@ -61,7 +61,7 @@ safetensors.parse(buf); // => { tensors: { ... } };
 
 ## Tokenizers
 
-Tokenization for preparing the inputs to a model. These implement byte-pair encoding (BPE) and include common configurations for models like CLIP.
+Tokenization for preparing the inputs to a model. This currently implements [byte-pair encoding (BPE)](https://github.com/openai/tiktoken).
 
 Since these tokenizer definitions can be nontrivially large (~1 MB), their data is fetched from CDN as needed.
 

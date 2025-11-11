@@ -62,8 +62,8 @@
     "tsx": "^4.20.3",
     "typedoc": "^0.28.14",
     "typedoc-theme-fresh": "^0.2.1",
-    "typescript": "~5.8.3",
-    "typescript-eslint": "^8.38.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.46.4",
     "vitest": "^3.2.4"
   },
   "packageManager": "pnpm@10.13.1",

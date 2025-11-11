@@ -76,10 +76,12 @@
       console.log("-------- MODEL --------");
       console.log(model);
 
-      const tokenizer = await tokenizers.get("clip");
+      const tokenizer = await tokenizers.getBpe("clip");
       console.log(tokenizer.encode("hello world"));
 
-      const tokens = np.array(tokenizer.encode("hello world"));
+      const tokens = np.array(tokenizer.encode("hello world"), {
+        dtype: np.uint32,
+      });
       const encoded = runMobileCLIPTextEncoder(model.text, tokens);
       console.log("-------- ENCODED --------");
       console.log(encoded.js());

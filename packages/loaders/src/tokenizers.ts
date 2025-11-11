@@ -1,300 +1,301 @@
 import { cachedFetch } from "./opfs";
 
 /** Supported tokenizer types. */
-export type TokenizerType = "clip" | (string & {});
-
-/** Tokenizer interface for encoding/decoding text. */
-export interface Tokenizer {
-  /** Encode text to token IDs. */
-  encode(text: string, options?: { addSpecialTokens?: boolean }): Uint32Array;
-
-  /** Decode token IDs back to text. */
-  decode(tokens: Uint32Array | number[]): string;
-}
+export type BpeEncodingName = "clip" | (string & {});
 
 /** Get a tokenizer by name. */
-export async function get(name: TokenizerType): Promise<Tokenizer> {
+export async function getBpe(name: BpeEncodingName): Promise<BpeEncoding> {
   if (name === "clip") {
-    const { vocab, merges } = await loadClipTokenizer();
-    return new BpeTokenizer({
-      vocab,
-      merges,
-      bosTokenId: vocab.size - 2, // 49406
-      eosTokenId: vocab.size - 1, // 49407
-      padTokenId: 0,
-      contextLength: 77,
-    });
+    const vocab = await loadClipData();
+    return new ClipEncoding(vocab);
   }
 
   throw new Error(`Unsupported tokenizer: ${name}`);
 }
 
-/** Configuration for BPE tokenizer. */
-export interface BpeTokenizerConfig {
-  /** BPE vocabulary mappings */
-  vocab: Map<string, number>;
-  /** BPE merge rules */
-  merges: string[];
-  /** Token IDs for special tokens */
-  bosTokenId: number;
-  eosTokenId: number;
-  padTokenId: number;
-  unkTokenId?: number;
-  /** Context length / max sequence length */
-  contextLength: number;
+function _bytePairMerge(
+  ranks: Map<string, number>,
+  piece: string,
+): [number, number][] {
+  // Note: keys of `ranks` are hex-encoded, and piece is also hex-encoded.
+  const RANK_MAX = ~(1 << 31); // Large number for no pair
+
+  const n = piece.length / 2; // Should be integer
+  const parts: [number, number][] = [];
+  let minRank: [number, number] = [RANK_MAX, -1];
+  for (let i = 0; i < n - 1; i++) {
+    const rank = ranks.get(piece.substring(2 * i, 2 * (i + 2))) ?? RANK_MAX;
+    if (rank < minRank[0]) {
+      minRank = [rank, i];
+    }
+    parts.push([i, rank]);
+  }
+  parts.push([n - 1, RANK_MAX]);
+  parts.push([n, RANK_MAX]);
+
+  const getRank = (i: number) => {
+    if (i + 3 < parts.length) {
+      // Similar to `piece[i..i + 2]` above. The +3 is because we haven't yet deleted
+      // parts[i + 1], see comment in the main loop.
+      return (
+        ranks.get(piece.substring(2 * parts[i][0], 2 * parts[i + 3][0])) ??
+        RANK_MAX
+      );
+    }
+    return RANK_MAX;
+  };
+
+  while (minRank[0] !== RANK_MAX) {
+    const i = minRank[1];
+    // Update parts[i] and parts[i - 1] before removing parts[i + 1], since
+    // `parts.remove(i + 1)` will thrash the cache.
+    if (i > 0) parts[i - 1][1] = getRank(i - 1);
+    parts[i][1] = getRank(i);
+    parts.splice(i + 1, 1);
+
+    minRank = [RANK_MAX, -1];
+    for (let j = 0; j < parts.length - 1; j++) {
+      if (parts[j][1] < minRank[0]) {
+        minRank = [parts[j][1], j];
+      }
+    }
+  }
+  return parts;
 }
 
-/** Byte-pair encoding (BPE) tokenizer implementation. */
-export class BpeTokenizer implements Tokenizer {
-  #vocab: Map<string, number>;
-  #invVocab: Map<number, string>;
-  #merges: Map<string, number>;
-  #bosTokenId: number;
-  #eosTokenId: number;
-  #padTokenId: number;
-  #unkTokenId: number | undefined;
-  #contextLength: number;
-  #byteEncoder: Map<number, string>;
-  #byteDecoder: Map<string, number>;
+function bytePairEncode(piece: string, ranks: Map<string, number>): number[] {
+  if (piece.length / 2 === 1) return [ranks.get(piece)!];
 
-  constructor(config: BpeTokenizerConfig) {
-    this.#vocab = config.vocab;
-    this.#invVocab = new Map(
-      Array.from(config.vocab.entries()).map(([k, v]) => [v, k]),
+  const parts = _bytePairMerge(ranks, piece);
+  const tokens: number[] = [];
+  for (let i = 0; i < parts.length - 1; i++) {
+    tokens.push(
+      ranks.get(piece.substring(2 * parts[i][0], 2 * parts[i + 1][0]))!,
+    );
+  }
+  return tokens;
+}
+
+/**
+ * Byte-pair encoding tokenizer, based on the [Tiktoken] library.
+ *
+ * This handles special tokens and correctly merges adjacent pairs in order of
+ * priority (lowest ranks first). This is enough to support LLMs, although some
+ * models like CLIP have particular behavior (BOS/EOS, padding,
+ * case-insensitivity, whitespace) implemented in subclasses.
+ *
+ * The internals of this class work in hex strings instead of Uint8Array because
+ * strings are more optimized in JavaScript.
+ *
+ * [Tiktoken]: <https://github.com/openai/tiktoken/blob/0.12.0/src/lib.rs>
+ */
+export class BpeEncoding {
+  encoder: Map<string, number>; // bytes (hex) -> rank
+  specialTokensEncoder: Map<string, number>; // special token (string) -> rank
+  decoder: Map<number, string>; // rank -> bytes (hex)
+  specialTokensDecoder: Map<number, string>; // rank -> special token bytes (hex)
+  regex: RegExp; // pattern for pre-tokenization
+  specialRegex: RegExp; // pattern for special tokens
+
+  /** Construct a new BPE encoding. */
+  constructor(
+    encoder: Map<string, number>,
+    specialTokensEncoder: Map<string, number>,
+    regex: RegExp,
+  ) {
+    if (!regex.global) {
+      throw new Error("Regex for BPE pattern should have global flag set");
+    }
+    const specialRegex = new RegExp(
+      [...specialTokensEncoder.keys()].map(_escapeRegex).join("|"),
+      "g",
     );
 
-    // Create merge priority map
-    this.#merges = new Map(config.merges.map((merge, i) => [merge, i]));
+    const decoder = new Map();
+    for (const [bytes, rank] of encoder.entries()) {
+      if (decoder.has(rank))
+        throw new Error(`Duplicate rank in encoder: ${rank}`);
+      decoder.set(rank, bytes);
+    }
 
-    this.#bosTokenId = config.bosTokenId;
-    this.#eosTokenId = config.eosTokenId;
-    this.#padTokenId = config.padTokenId;
-    this.#unkTokenId = config.unkTokenId;
-    this.#contextLength = config.contextLength;
+    const specialTokensDecoder = new Map();
+    for (const [token, rank] of specialTokensEncoder.entries()) {
+      if (decoder.has(rank) || specialTokensDecoder.has(rank))
+        throw new Error(`Duplicate rank in special tokens: ${rank}`);
+      specialTokensDecoder.set(
+        rank,
+        _bytesToHex(new TextEncoder().encode(token)),
+      );
+    }
 
-    // Initialize byte encoder/decoder for BPE
-    this.#byteEncoder = new Map();
-    this.#byteDecoder = new Map();
-    this.#initByteEncoding();
+    this.encoder = encoder;
+    this.specialTokensEncoder = specialTokensEncoder;
+    this.decoder = decoder;
+    this.specialTokensDecoder = specialTokensDecoder;
+    this.regex = regex;
+    this.specialRegex = specialRegex;
   }
 
-  /** Initialize byte-level encoding mappings. */
-  #initByteEncoding(): void {
-    // Create a mapping from bytes to unicode characters
-    // This follows the OpenAI GPT-2 byte encoder
-    const chars: string[] = [];
+  /**
+   * Decode tokens into a string.
+   *
+   * May be lossy if the tokens output bytes that don't correspond to a valid
+   * UTF-8 string.
+   */
+  decode(tokens: number[]): string {
+    return new TextDecoder().decode(this.decodeBytes(tokens));
+  }
 
-    // Add printable ASCII characters (excluding space)
-    for (let i = 33; i <= 126; i++) {
-      chars.push(String.fromCharCode(i));
-    }
-    for (let i = 161; i <= 172; i++) {
-      chars.push(String.fromCharCode(i));
-    }
-    for (let i = 174; i <= 255; i++) {
-      chars.push(String.fromCharCode(i));
-    }
-
-    const bytes: number[] = Array.from(chars, (c) => c.charCodeAt(0));
-    let n = 0;
-
-    // Map remaining bytes to unicode characters
-    for (let b = 0; b < 256; b++) {
-      if (!bytes.includes(b)) {
-        bytes.push(b);
-        chars.push(String.fromCharCode(256 + n));
-        n++;
+  /** Decode tokens into a byte array (may not be UTF-8). */
+  decodeBytes(tokens: number[]): Uint8Array {
+    tokens = this._beforeDecode(tokens);
+    const decodedHex: string[] = [];
+    for (const token of tokens) {
+      let bytes = this.decoder.get(token);
+      if (bytes === undefined) bytes = this.specialTokensDecoder.get(token);
+      if (bytes === undefined) {
+        throw new Error(`Unknown token during decode: ${token}`);
       }
+      decodedHex.push(bytes);
     }
-
-    for (let i = 0; i < bytes.length; i++) {
-      this.#byteEncoder.set(bytes[i], chars[i]);
-      this.#byteDecoder.set(chars[i], bytes[i]);
-    }
+    return _bytesFromHex(decodedHex.join(""));
   }
 
-  /** Apply BPE merges to a word. */
-  #bpe(token: string): string {
-    if (token.length <= 1) return token + "</w>";
+  /** Encode a text string into tokens, optionally supporting special tokens. */
+  encode(text: string, allowedSpecial?: Set<string>): number[] {
+    text = this._beforeEncode(text);
+    const ret: number[] = [];
 
-    // Add end-of-word marker to last character
-    const chars = token.split("");
-    chars[chars.length - 1] = chars[chars.length - 1] + "</w>";
-    let word = chars;
-    let pairs = this.#getPairs(word);
-
+    let start = 0;
     while (true) {
-      if (pairs.length === 0) break;
-
-      // Find the pair with the lowest merge priority
-      let minPair: [string, string] | null = null;
-      let minRank = Infinity;
-
-      for (const pair of pairs) {
-        const pairStr = `${pair[0]} ${pair[1]}`;
-        const rank = this.#merges.get(pairStr);
-        if (rank !== undefined && rank < minRank) {
-          minRank = rank;
-          minPair = pair;
-        }
+      let nextSpecial: RegExpExecArray | null = null;
+      this.specialRegex.lastIndex = start;
+      while (true) {
+        nextSpecial = this.specialRegex.exec(text);
+        if (nextSpecial === null) break;
+        if (allowedSpecial?.has(nextSpecial[0])) break;
+        this.specialRegex.lastIndex = nextSpecial.index + 1; // start+1
       }
+      const end = nextSpecial ? nextSpecial.index : text.length;
 
-      if (!minPair) break;
+      // Now encode the next fragment [start, end)
+      for (const mat of text.slice(start, end).matchAll(this.regex)) {
+        const pieceBytes = new TextEncoder().encode(mat[0]);
+        const piece = _bytesToHex(pieceBytes);
 
-      const [first, second] = minPair;
-      const newWord: string[] = [];
-      let i = 0;
-
-      while (i < word.length) {
-        const j = word.indexOf(first, i);
-        if (j === -1) {
-          newWord.push(...word.slice(i));
-          break;
-        }
-
-        newWord.push(...word.slice(i, j));
-        if (
-          word[j] === first &&
-          j < word.length - 1 &&
-          word[j + 1] === second
-        ) {
-          newWord.push(first + second);
-          i = j + 2;
+        const token = this.encoder.get(piece);
+        if (token !== undefined) {
+          ret.push(token);
         } else {
-          newWord.push(word[j]);
-          i = j + 1;
+          const tokens = bytePairEncode(piece, this.encoder);
+          ret.push(...tokens);
         }
       }
 
-      word = newWord;
-      if (word.length === 1) break;
-      pairs = this.#getPairs(word);
+      // And handle the special token if any
+      if (nextSpecial !== null) {
+        const piece = nextSpecial[0];
+        const token = this.specialTokensEncoder.get(piece)!;
+        ret.push(token);
+        start = nextSpecial.index + nextSpecial.length;
+      } else {
+        break;
+      }
     }
-
-    return word.join(" ");
+    return this._afterEncode(ret);
   }
 
-  /** Get all adjacent pairs in a word. */
-  #getPairs(word: string[]): Array<[string, string]> {
-    const pairs: Array<[string, string]> = [];
-    for (let i = 0; i < word.length - 1; i++) {
-      pairs.push([word[i], word[i + 1]]);
-    }
-    return pairs;
+  /** Retrieve a list of special tokens in this encoding. */
+  specialTokens(): Set<string> {
+    return new Set(this.specialTokensEncoder.keys());
   }
 
-  /** Encode text to token IDs. */
-  encode(text: string, options?: { addSpecialTokens?: boolean }): Uint32Array {
-    const addSpecialTokens = options?.addSpecialTokens ?? true;
+  /** Encode text with all special tokens allowed. */
+  encodeWithSpecialTokens(text: string): number[] {
+    return this.encode(text, this.specialTokens());
+  }
 
-    // Normalize whitespace and convert to lowercase for CLIP
+  /** Can be overridden to change behavior of decode(). */
+  _beforeDecode(tokens: number[]): number[] {
+    return tokens;
+  }
+
+  /** Can be overridden to change behavior of encode(). */
+  _beforeEncode(text: string): string {
+    return text;
+  }
+
+  /** Can be overridden to change behavior of encode(). */
+  _afterEncode(tokens: number[]): number[] {
+    return tokens;
+  }
+}
+
+/** BPE encoding with modifications for OpenAI CLIP models. */
+class ClipEncoding extends BpeEncoding {
+  static readonly pattern =
+    /(?:'s|'t|'re|'ve|'m|'ll|'d|[a-z]+|[0-9]|[^\s\w]+) ?/g;
+
+  constructor(encoder: Map<string, number>) {
+    const specialTokensEncoder = new Map<string, number>([
+      ["<|startoftext|>", encoder.size], // 49406
+      ["<|endoftext|>", encoder.size + 1], // 49407
+    ]);
+    super(encoder, specialTokensEncoder, ClipEncoding.pattern);
+  }
+
+  _beforeEncode(text: string): string {
+    // CLIP lowercases and collapses whitespace
     text = text.toLowerCase().replace(/\s+/g, " ").trim();
-
-    // Tokenize using CLIP's pattern: handles contractions, letters, numbers, and other chars
-    // Pattern: 's|'t|'re|'ve|'m|'ll|'d|[a-z]+|[0-9]|[^\\s\\w]+
-    const pattern = /'s|'t|'re|'ve|'m|'ll|'d|[a-z]+|[0-9]|[^\s\w]+/gi;
-    const tokens: number[] = [];
-
-    // Add BOS token if needed
-    if (addSpecialTokens) {
-      tokens.push(this.#bosTokenId);
-    }
-
-    // Process each word/token
-    const matches = text.match(pattern) || [];
-    for (const match of matches) {
-      // Convert to bytes then to BPE characters
-      const encoder = new TextEncoder();
-      const bytes = encoder.encode(match);
-      const bpeChars = Array.from(bytes, (b) => this.#byteEncoder.get(b) ?? "");
-      const bpeToken = bpeChars.join("");
-
-      // Apply BPE and convert to token IDs
-      const bpeResult = this.#bpe(bpeToken);
-      const parts = bpeResult.split(" ");
-
-      for (const part of parts) {
-        const tokenId = this.#vocab.get(part);
-        if (tokenId !== undefined) {
-          tokens.push(tokenId);
-        } else {
-          if (this.#unkTokenId === undefined) {
-            throw new Error(`Unknown token encountered: ${part}`);
-          }
-          tokens.push(this.#unkTokenId); // Handle unknown tokens
-        }
-      }
-    }
-
-    // Add EOS token if needed
-    if (addSpecialTokens) {
-      tokens.push(this.#eosTokenId);
-    }
-
-    // Truncate or pad to context length
-    const result = new Uint32Array(this.#contextLength);
-    if (this.#padTokenId !== 0) {
-      result.fill(this.#padTokenId);
-    }
-
-    const length = Math.min(tokens.length, this.#contextLength);
-    for (let i = 0; i < length; i++) {
-      result[i] = tokens[i];
-    }
-
-    return result;
+    // CLIP adds spaces (really "</w>") to each token
+    return [...text.matchAll(ClipEncoding.pattern).map((m) => m[0] + " ")].join(
+      "",
+    );
   }
 
-  /** Decode token IDs back to text. */
-  decode(tokens: Uint32Array | number[]): string {
-    const words: string[] = [];
-    let currentWord = "";
-
-    for (const tokenId of tokens) {
-      // Skip padding tokens (0) and special tokens
-      if (
-        tokenId === 0 ||
-        tokenId === this.#bosTokenId ||
-        tokenId === this.#eosTokenId
-      ) {
-        continue;
-      }
-
-      const token = this.#invVocab.get(tokenId);
-      if (token !== undefined) {
-        // Check if token ends with </w> (end of word marker)
-        if (token.endsWith("</w>")) {
-          // Remove </w> marker and add to current word
-          currentWord += token.slice(0, -4);
-          // Decode current word and add to words
-          const bytes: number[] = [];
-          for (const char of currentWord) {
-            const byte = this.#byteDecoder.get(char);
-            if (byte !== undefined) bytes.push(byte);
-          }
-          const decoder = new TextDecoder();
-          words.push(decoder.decode(new Uint8Array(bytes)));
-          currentWord = "";
-        } else {
-          // Continue building current word
-          currentWord += token;
-        }
-      }
-    }
-
-    // Handle any remaining characters
-    if (currentWord.length > 0) {
-      const bytes: number[] = [];
-      for (const char of currentWord) {
-        const byte = this.#byteDecoder.get(char);
-        if (byte !== undefined) bytes.push(byte);
-      }
-      const decoder = new TextDecoder();
-      words.push(decoder.decode(new Uint8Array(bytes)));
-    }
-
-    return words.join(" ");
+  _afterEncode(tokens: number[]): number[] {
+    // Add bos/eos tokens and pad to length 77
+    const bosToken = this.specialTokensEncoder.get("<|startoftext|>")!;
+    const eosToken = this.specialTokensEncoder.get("<|endoftext|>")!;
+    const padToken = 0;
+    const result: number[] = [bosToken, ...tokens, eosToken];
+    while (result.length < 77) result.push(padToken);
+    return result.slice(0, 77);
   }
+
+  _beforeDecode(tokens: number[]): number[] {
+    return tokens.filter((t) => t !== 0); // Remove padding tokens (0)
+  }
+}
+
+function _escapeRegex(s: string): string {
+  // Replace with RegExp.escape() when available (2025 baseline).
+  if ("escape" in RegExp) {
+    return (RegExp as any).escape(s);
+  }
+  return s.replace(/[/\-\\^$*+?.()|[\]{}]/g, "\\$&");
+}
+
+function _bytesToHex(arr: Uint8Array): string {
+  // Use Uint8Array.toHex() if available (2025 baseline).
+  if ("toHex" in Uint8Array.prototype) {
+    return (arr as any).toHex();
+  }
+  return Array.from(arr)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function _bytesFromHex(hex: string): Uint8Array {
+  // Use Uint8Array.fromHex() if available (2025 baseline).
+  if ("fromHex" in Uint8Array) {
+    return (Uint8Array as any).fromHex(hex);
+  }
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substring(2 * i, 2 * i + 2), 16);
+  }
+  return bytes;
 }
 
 /** Convert a text stream into an async iterator of lines. */
@@ -325,10 +326,7 @@ async function* streamLines(
 }
 
 /** Load CLIP tokenizer data from OpenAI CLIP repository. */
-async function loadClipTokenizer(): Promise<{
-  vocab: Map<string, number>;
-  merges: string[];
-}> {
+async function loadClipData(): Promise<Map<string, number>> {
   const url =
     "https://cdn.jsdelivr.net/gh/mlfoundations/open_clip@v3.2.0/src/open_clip/bpe_simple_vocab_16e6.txt.gz";
 
@@ -344,11 +342,9 @@ async function loadClipTokenizer(): Promise<{
 
   // Parse merge rules from file (each line has two tokens separated by space)
   // Skip first line (header) and take merges[1:48895] which is 48894 merges
-  // This gives us total vocab size of: 256 + 256 + 48894 + 2 = 49408
-  // Special tokens at indices 49406 and 49407
+  // This gives us total vocab size of: 256 + 256 + 48894 = 49406
   const maxMerges = 48894;
   let lineNumber = 0;
-
   for await (const line of streamLines(textStream)) {
     if (lineNumber > 0 && merges.length < maxMerges) {
       const trimmed = line.trim();
@@ -360,63 +356,50 @@ async function loadClipTokenizer(): Promise<{
       }
     }
     lineNumber++;
-
-    // Exit early if we have all the merges we need
-    if (merges.length >= maxMerges) {
-      break;
-    }
+    if (merges.length >= maxMerges) break;
   }
 
-  // Build vocabulary following CLIP's exact approach
-  // vocab = 256 bytes + 256 bytes</w> + merges + special tokens
-  const vocab = new Map<string, number>();
-  let vocabIndex = 0;
+  // Port of byte-based format in data_gym_to_mergeable_bpe_ranks()
+  //
+  // Most printable characters are mapped to themselves, but non-printable bytes
+  // are mapped to an arbitrary 256+n range of Unicode characters.
+  const rankToIntbyte: number[] = [];
+  for (let i = 33; i <= 126; i++) rankToIntbyte.push(i);
+  for (let i = 161; i <= 172; i++) rankToIntbyte.push(i);
+  for (let i = 174; i <= 255; i++) rankToIntbyte.push(i);
 
-  // Build byte encoder mapping (bytes_to_unicode in Python)
-  const byteEncoder: string[] = [];
-  for (let i = 33; i <= 126; i++) {
-    byteEncoder.push(String.fromCharCode(i));
-  }
-  for (let i = 161; i <= 172; i++) {
-    byteEncoder.push(String.fromCharCode(i));
-  }
-  for (let i = 174; i <= 255; i++) {
-    byteEncoder.push(String.fromCharCode(i));
-  }
-
-  const bytes = Array.from(byteEncoder, (c) => c.charCodeAt(0));
+  const dataGymByteToByte = new Map<string, number>(
+    rankToIntbyte.map((b) => [String.fromCharCode(b), b]),
+  );
   let n = 0;
+  let escapedSpace = " ";
   for (let b = 0; b < 256; b++) {
-    if (!bytes.includes(b)) {
-      bytes.push(b);
-      byteEncoder.push(String.fromCharCode(256 + n));
+    if (!rankToIntbyte.includes(b)) {
+      rankToIntbyte.push(b);
+      dataGymByteToByte.set(String.fromCharCode(256 + n), b);
+      if (b === 0x20) escapedSpace = String.fromCharCode(256 + n);
       n++;
     }
   }
 
-  // Add byte-level tokens to vocab (first 256)
-  for (const char of byteEncoder) {
-    vocab.set(char, vocabIndex++);
+  const decodeDataGym = (value: string): string => {
+    value = value.replace(/<\/w>/g, escapedSpace);
+    return _bytesToHex(
+      new Uint8Array(value.split("").map((c) => dataGymByteToByte.get(c)!)),
+    );
+  };
+
+  // First replace </w> with the CLIP unicode character for space
+  const encoder = new Map<string, number>();
+  for (const [i, b] of rankToIntbyte.entries()) {
+    encoder.set(_bytesToHex(new Uint8Array([b])), i);
   }
-
-  // Add byte-level tokens with end-of-word marker (next 256)
-  for (const char of byteEncoder) {
-    vocab.set(char + "</w>", vocabIndex++);
+  for (const [i, b] of rankToIntbyte.entries()) {
+    encoder.set(_bytesToHex(new Uint8Array([b, 0x20])), i + 256);
   }
-
-  // Add all merged tokens (don't add if already exists from the base+</w> set)
-  for (const merge of merges) {
-    const merged = merge.replace(/\s+/g, "");
-    if (!vocab.has(merged)) {
-      vocab.set(merged, vocabIndex++);
-    }
+  for (const line of merges) {
+    const [first, second] = line.split(" ");
+    encoder.set(decodeDataGym(first) + decodeDataGym(second), encoder.size);
   }
-
-  // At this point, vocabIndex should be exactly 49406
-  // (256 bytes + 256 bytes</w> + up to 48894 unique merges = 49406)
-  // Add special tokens at the end
-  vocab.set("<|startoftext|>", vocabIndex++); // Should be 49406
-  vocab.set("<|endoftext|>", vocabIndex++); // Should be 49407
-
-  return { vocab, merges };
+  return encoder;
 }
