@@ -1282,7 +1282,7 @@ export class Kernel implements FpHashable {
   /** The dtype of the values output by this kernel. */
   get dtype(): DType {
     if (this.reduction) {
-      return this.reduction.fusion.dtype;
+      return this.reduction.epilogue.dtype;
     } else {
       return this.exp.dtype;
     }
@@ -1318,20 +1318,20 @@ export class Reduction implements FpHashable {
     /** Size of the reduction axis. */
     readonly size: number,
     /** Follow-up expression defined with the "acc" variable, defaults to identity. */
-    readonly fusion: AluExp = AluVar.acc(dtype), // TODO: Currently not used except in tests.
+    readonly epilogue: AluExp = AluVar.acc(dtype), // TODO: Currently not used except in tests.
   ) {
     if (!AluGroup.Reduce.has(op)) {
       throw new TypeError(`Unsupported reduction: ${op}`);
     }
-    this.fusion = fusion.simplify();
+    this.epilogue = epilogue.simplify();
   }
 
   hash(state: FpHash): void {
-    state.update(this.dtype, this.op, this.size, this.fusion);
+    state.update(this.dtype, this.op, this.size, this.epilogue);
   }
 
   toString(): string {
-    return `${this.op}{${this.size}} -> ${this.fusion}`;
+    return `${this.op}{${this.size}} -> ${this.epilogue}`;
   }
 
   /** Get the identity for this reduction operation. */
@@ -1430,7 +1430,6 @@ export function accessorGlobal(
 
 /** Expression for accessing `indices` in an array recipe with variable "idx". */
 export function accessorAluExp(
-  dtype: DType,
   exp: AluExp,
   st: ShapeTracker,
   indices: AluExp[],
@@ -1439,7 +1438,7 @@ export function accessorAluExp(
   return AluExp.where(
     valid,
     exp.substitute({ idx: index }),
-    AluExp.const(dtype, 0),
+    AluExp.const(exp.dtype, 0),
   );
 }
 

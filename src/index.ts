@@ -28,16 +28,11 @@ export {
   tree,
 };
 
-// Assert that a function's arguments are a subtype of the given type.
-/** @inline */
-type WithArgsSubtype<F extends (args: any[]) => any, T> =
-  Parameters<F> extends T ? F : never;
-
 /** Compute the forward-mode Jacobian-vector product for a function. */
 export const jvp = jvpModule.jvp as <
   F extends (...args: any[]) => JsTree<Array>,
 >(
-  f: WithArgsSubtype<F, JsTree<ArrayLike>>,
+  f: F,
   primals: MapJsTree<Parameters<F>, Array, ArrayLike>,
   tangents: MapJsTree<Parameters<F>, Array, ArrayLike>,
 ) => [ReturnType<F>, ReturnType<F>];
@@ -46,7 +41,7 @@ export const jvp = jvpModule.jvp as <
 export const vmap = vmapModule.vmap as <
   F extends (...args: any[]) => JsTree<Array>,
 >(
-  f: WithArgsSubtype<F, JsTree<ArrayLike>>,
+  f: F,
   inAxes?: number | MapJsTree<Parameters<F>, ArrayLike, number | null>,
 ) => (...args: MapJsTree<Parameters<F>, Array, ArrayLike>) => ReturnType<F>;
 
@@ -59,7 +54,7 @@ export const jacfwd = vmapModule.jacfwd as <F extends (x: Array) => Array>(
 export const makeJaxpr = jaxprModule.makeJaxpr as unknown as <
   F extends (...args: any[]) => JsTree<Array>,
 >(
-  f: WithArgsSubtype<F, JsTree<ArrayLike>>,
+  f: F,
 ) => (...args: Parameters<F>) => {
   jaxpr: jaxprModule.Jaxpr;
   consts: Array[];
@@ -75,7 +70,7 @@ export const makeJaxpr = jaxprModule.makeJaxpr as unknown as <
 export const jit = jaxprModule.jit as <
   F extends (...args: any[]) => JsTree<Array>,
 >(
-  f: WithArgsSubtype<F, JsTree<ArrayLike>>,
+  f: F,
 ) => (...args: MapJsTree<Parameters<F>, Array, ArrayLike>) => ReturnType<F>;
 
 /**
@@ -85,7 +80,7 @@ export const jit = jaxprModule.jit as <
 export const linearize = linearizeModule.linearize as <
   F extends (...args: any[]) => JsTree<Array>,
 >(
-  f: WithArgsSubtype<F, JsTree<ArrayLike>>,
+  f: F,
   ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
 ) => [
   ReturnType<F>,
@@ -96,7 +91,7 @@ export const linearize = linearizeModule.linearize as <
 export const vjp = linearizeModule.vjp as <
   F extends (...args: any[]) => JsTree<Array>,
 >(
-  f: WithArgsSubtype<F, JsTree<ArrayLike>>,
+  f: F,
   ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
 ) => [
   ReturnType<F>,
@@ -112,7 +107,7 @@ export const vjp = linearizeModule.vjp as <
 export const grad = linearizeModule.grad as <
   F extends (...args: any[]) => JsTree<Array>,
 >(
-  f: WithArgsSubtype<F, JsTree<ArrayLike>>,
+  f: F,
 ) => (
   ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
 ) => MapJsTree<Parameters<F>[0], ArrayLike, Array>;
@@ -121,7 +116,7 @@ export const grad = linearizeModule.grad as <
 export const valueAndGrad = linearizeModule.valueAndGrad as <
   F extends (...args: any[]) => JsTree<Array>,
 >(
-  f: WithArgsSubtype<F, JsTree<ArrayLike>>,
+  f: F,
 ) => (
   ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
 ) => [ReturnType<F>, MapJsTree<Parameters<F>[0], ArrayLike, Array>];

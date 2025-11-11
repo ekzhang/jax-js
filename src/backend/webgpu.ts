@@ -270,7 +270,7 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
 
   if (
     tune.exp.some((exp) => exp.dtype === DType.Float16) ||
-    re?.fusion.some((exp) => exp.dtype === DType.Float16)
+    re?.epilogue.some((exp) => exp.dtype === DType.Float16)
   ) {
     if (!device.features.has("shader-f16"))
       throw new Error("WebGPU device does not support shader-f16 feature");
@@ -284,7 +284,7 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
     "fn inf() -> f32 { let bits = 0x7f800000u; return bitcast<f32>(bits); }",
   );
 
-  const distinctOps = union(tune.exp.distinctOps(), re?.fusion.distinctOps());
+  const distinctOps = union(tune.exp.distinctOps(), re?.epilogue.distinctOps());
   if (distinctOps.has(AluOp.Threefry2x32)) {
     emit(threefrySrc);
   }
@@ -503,7 +503,7 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
       outputIdxExps.push(exp.simplify(cache));
       countReferences(outputIdxExps[i]);
       fusionExps.push(
-        re.fusion
+        re.epilogue
           .substitute({ acc: AluExp.variable(re.dtype, acc[i]) })
           .simplify(cache),
       );

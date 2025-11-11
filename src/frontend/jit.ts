@@ -385,6 +385,19 @@ export function jitCompile(
   return jp;
 }
 
+/**
+ * Rule for fusing the operation into a JIT expression to the backend.
+ *
+ * This takes in the expressions of the `src[]` inputs and produces a Kernel
+ * object with a new expression, as well as a size and reduction. The expression
+ * uses AluVar.gidx (output index) and AluVar.ridx (reduction index).
+ *
+ * Some ops trigger a dispatch, others can produce intermediates if:
+ *
+ * - No GlobalIndex expressions are present, and all GlobalView expressions take
+ *   a plain AluVar.gidx unravelled as indices.
+ * - No reductions are present. (may be changed to support epilogue)
+ */
 type JitRule<P extends Primitive> = (
   nargs: number,
   exps: AluExp[],
@@ -409,6 +422,8 @@ function reshapeViews(
           : unravelAlu(newSt.shape, AluVar.gidx);
         return AluExp.globalView(exp.dtype, gid, newSt, indices);
       }
+    } else if (exp.op === AluOp.GlobalIndex) {
+      throw new Error("internal: reshapeViews() called with GlobalIndex op");
     }
   });
 }
@@ -537,7 +552,6 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
       axis: [cs.ndim - 1],
     });
   },
-
   [Primitive.Conv](nargs, [a, b], [as, bs], params) {
     const [stX, stY] = prepareConv(
       ShapeTracker.fromShape(as.shape),
@@ -564,9 +578,55 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   }),
   [Primitive.Shrink]: reshapeJit((st, { slice }) => st.shrink(slice)),
   [Primitive.Pad]: reshapeJit((st, { width }) => st.pad(width)),
-  [Primitive.Gather]() {
-    // TODO: Implement Gather in JIT.
-    throw new Error("Gather is not implemented in JIT yet");
+  [Primitive.Gather](
+    nargs,
+    [x, ...indices],
+    [xs, ...indicesShapes],
+    { axis, outDim },
+  ) {
+    const axisSet = new Set(axis);
+
+    // First, broadcast each integer array in `indices`.
+    const indexShape = indicesShapes
+      .map((c) => c.shape)
+      .reduce(generalBroadcast);
+    const finalShape = xs.shape.filter((_, i) => !axisSet.has(i));
+    finalShape.splice(outDim, 0, ...indexShape);
+
+    // Make variables for expression indices for gathered axes, and non-axis.
+    const idxAll = unravelAlu(finalShape, AluVar.gidx);
+    const idxNonaxis = [...idxAll];
+    const _idxAxis = idxNonaxis.splice(outDim, indexShape.length);
+
+    // Then, construct a kernel expression that gathers the data.
+    const src: AluExp[] = [...idxNonaxis];
+    for (let i = 0; i < xs.shape.length; i++) {
+      // insert 'null' as axis placeholder, overwritten below as src[axis[i]].
+      if (axisSet.has(i)) src.splice(i, 0, null as any);
+    }
+
+    for (const [i, iexp] of indices.entries()) {
+      // Index iexp by the idxAxis variables, after broadcasting (via GlobalView).
+      // [ ... | outDim | ... <iexp> | outDim + indexShape.length | ... ]
+      src[axis[i]] = AluExp.cast(
+        DType.Int32,
+        reshapeViews(iexp, (st) =>
+          st.broadcast(finalShape, [
+            // Broadcast indices (aligned to the right), plus leading before outDim.
+            ...range(outDim + indexShape.length - st.shape.length),
+            // Indices to the right of outDim.
+            ...range(outDim + indexShape.length, finalShape.length),
+          ]),
+        ),
+      );
+    }
+
+    // Finally, index into "x" by replacing its gidx with a flat accessor into
+    // the gathered indices.
+    const [index, valid] = ShapeTracker.fromShape(xs.shape).toAluExp(src);
+    if (!valid.resolve())
+      throw new Error("internal: expected full validity mask in Gather");
+    return new Kernel(nargs, prod(finalShape), x.substitute({ gidx: index }));
   },
   [Primitive.JitCall]() {
     throw new Error(
@@ -588,9 +648,12 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
 
   // Move backwards through the program and compute "black" endpoints.
   //
-  // Black nodes are the endpoints of a fused expression, where we dispatch a
-  // kernel to the backend. The outputs are marked black, as well as any
-  // reductions.
+  // Black nodes are the endpoints where we dispatch a kernel to the backend
+  // rather than producing intermediates. This includes:
+  //
+  // - Kernel outputs
+  // - Reductions (intermediates cannot have reductions)
+  // - Gather operation (violates rule on GlobalView indices)
   //
   // Also, mark a node black if there are at least two black nodes that can be
   // reached from it, while only going through non-black nodes.
@@ -614,6 +677,7 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
     const eqn = jaxpr.eqns[i];
     if (
       reducePrimitives.includes(eqn.primitive) ||
+      eqn.primitive === Primitive.Gather ||
       eqn.outBinders.some((v) => blackNodes.has(v))
     ) {
       for (const v of eqn.outBinders) {

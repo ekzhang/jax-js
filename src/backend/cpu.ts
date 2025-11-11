@@ -103,7 +103,7 @@ export class CpuBackend implements Backend {
           const item = exp.evaluate({ gidx: i, ridx: j }, globals);
           acc = kernel.reduction.evaluate(acc, item);
         }
-        outputArray[i] = kernel.reduction.fusion.evaluate({ acc });
+        outputArray[i] = kernel.reduction.epilogue.evaluate({ acc });
       }
     }
   }

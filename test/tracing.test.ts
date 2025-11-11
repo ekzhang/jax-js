@@ -254,6 +254,14 @@ suite("jax.jit()", () => {
     expect(b.js()).toEqual(3);
   });
 
+  test("processes gather ops", () => {
+    const f = jit((x: np.Array) =>
+      x.slice(np.array([1, 3, 2, 0], { dtype: np.int32 })),
+    );
+    const a = f(np.array([10, 20, 30, 40]));
+    expect(a.js()).toEqual([20, 40, 30, 10]);
+  });
+
   test("jit-of-jit", () => {
     const f = jit((x: np.Array) => x.ref.mul(x));
     const g = jit((x: np.Array) => f(f(x)));

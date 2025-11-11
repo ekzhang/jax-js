@@ -282,7 +282,7 @@ export class Array extends Tracer {
       if (ar.#source instanceof AluExp) {
         src[axis[i]] = AluExp.cast(
           DType.Int32,
-          accessorAluExp(ar.#dtype, ar.#source, ar.#st, idxAxis),
+          accessorAluExp(ar.#source, ar.#st, idxAxis),
         );
       } else {
         let gid = inputs.indexOf(ar.#source);
@@ -300,7 +300,7 @@ export class Array extends Tracer {
     let exp: AluExp;
     if (this.#source instanceof AluExp) {
       // This is an AluExp, not an actual array, so turn it into an expression.
-      exp = accessorAluExp(this.#dtype, this.#source, this.#st, src);
+      exp = accessorAluExp(this.#source, this.#st, src);
     } else {
       let gid = inputs.indexOf(this.#source);
       if (gid === -1) {
@@ -453,12 +453,7 @@ export class Array extends Tracer {
         arrays.map((ar) => {
           const src = ar.#source as AluExp;
           if (ar.#st.contiguous) return src;
-          return accessorAluExp(
-            ar.#dtype,
-            src,
-            ar.#st,
-            unravelAlu(newShape, AluVar.idx),
-          );
+          return accessorAluExp(src, ar.#st, unravelAlu(newShape, AluVar.idx));
         }),
       );
       const st = ShapeTracker.fromShape(newShape);
@@ -477,7 +472,7 @@ export class Array extends Tracer {
     const src: AluExp[] = [];
     for (const ar of arrays) {
       if (ar.#source instanceof AluExp) {
-        src.push(accessorAluExp(ar.#dtype, ar.#source, ar.#st, indices));
+        src.push(accessorAluExp(ar.#source, ar.#st, indices));
       } else {
         let gid = inputs.indexOf(ar.#source);
         if (gid === -1) {
@@ -524,7 +519,7 @@ export class Array extends Tracer {
     let exp: AluExp;
     const inputs: Slot[] = [];
     if (this.#source instanceof AluExp) {
-      exp = accessorAluExp(this.#dtype, this.#source, this.#st, indices);
+      exp = accessorAluExp(this.#source, this.#st, indices);
     } else {
       inputs.push(this.#source);
       exp = accessorGlobal(this.#dtype, 0, this.#st, indices);
@@ -558,7 +553,7 @@ export class Array extends Tracer {
     this.#check();
     const indices = unravelAlu(this.#st.shape, AluVar.gidx);
     if (this.#source instanceof AluExp) {
-      const exp = accessorAluExp(this.#dtype, this.#source, this.#st, indices);
+      const exp = accessorAluExp(this.#source, this.#st, indices);
       const kernel = new Kernel(0, this.#st.size, exp);
       const output = this.#backend.malloc(kernel.bytes);
       const pendingItem = new PendingExecute(

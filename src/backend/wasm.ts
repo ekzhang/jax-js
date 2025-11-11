@@ -130,7 +130,7 @@ function codegenWasm(kernel: Kernel): Uint8Array {
   const cg = new CodeGenerator();
   cg.memory.import("env", "memory");
 
-  const distinctOps = union(tune.exp.distinctOps(), re?.fusion.distinctOps());
+  const distinctOps = union(tune.exp.distinctOps(), re?.epilogue.distinctOps());
   const funcs: Record<string, number> = {};
   if (distinctOps.has(AluOp.Sin)) funcs.sin = wasm_sin(cg);
   if (distinctOps.has(AluOp.Cos)) funcs.cos = wasm_cos(cg);
@@ -225,7 +225,7 @@ function codegenWasm(kernel: Kernel): Uint8Array {
         }
         cg.end();
 
-        translateExp(cg, funcs, kernel.reduction.fusion, { acc });
+        translateExp(cg, funcs, kernel.reduction.epilogue, { acc });
       } else {
         // Translate tune.exp to expression and push onto stack.
         translateExp(cg, funcs, tune.exp, { gidx });
