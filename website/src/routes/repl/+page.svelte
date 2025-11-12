@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { replaceState } from "$app/navigation";
   import { base } from "$app/paths";
+  import { page } from "$app/state";
 
   import { SplitPane } from "@rich_harris/svelte-split-pane";
   import type { Plugin } from "@rollup/browser";
@@ -16,66 +18,39 @@
 
   import ReplEditor from "$lib/repl/ReplEditor.svelte";
 
+  const samplesSrc: Record<string, string> = import.meta.glob("./*.ts", {
+    eager: true,
+    query: "?raw",
+    import: "default",
+  });
+
   const codeSamples: {
     title: string;
     code: string;
   }[] = [
-    {
-      title: "Arrays",
-      code: String.raw`import { grad, numpy as np } from "@jax-js/jax";
-
-const f = (x: np.Array) => x.ref.mul(x).sum();
-const df = grad(f);
-
-const x = np.array([1, 2, 3, 4]);
-console.log(f(x.ref).js());
-console.log(df(x).js());
-`,
-    },
-    {
-      title: "Tracing Jaxprs",
-      code: String.raw`import { jvp, makeJaxpr, numpy as np } from "@jax-js/jax";
-
-const f = (x: np.Array) => np.multiply(x.ref.add(2), x);
-const fdot = (x: np.Array) => jvp(f, [x], [np.array(1)])[1];
-
-console.log(makeJaxpr(f)(np.array(2)).jaxpr.toString());
-
-const { jaxpr, consts } = makeJaxpr(fdot)(np.array(2));
-console.log(jaxpr.toString());
-`,
-    },
-    {
-      title: "Logistic regression",
-      code: String.raw`import { numpy as np } from "@jax-js/jax";
-
-const X = np.array([[1, 1], [1, 2], [2, 2], [2, 3]]);
-const y = np.dot(X, np.array([1, 2])).add(3);
-
-// TODO
-`,
-    },
-    {
-      title: "Mandelbrot set",
-      code: String.raw`import { numpy as np } from "@jax-js/jax";
-// TODO
-`,
-    },
-    {
-      title: "Testing",
-      code: String.raw`import { grad, makeJaxpr, numpy as np } from "@jax-js/jax";
-
-const f = (x: np.Array) => np.dot(x.ref, x).sum();
-const df = grad(f);
-
-const { jaxpr } = makeJaxpr(df)(np.zeros([4]));
-console.log(jaxpr.toString());
-`,
-    },
+    { title: "Arrays", code: samplesSrc["./01-arrays.ts"] },
+    { title: "Tracing Jaxprs", code: samplesSrc["./02-tracing.ts"] },
+    { title: "Logistic regression", code: samplesSrc["./03-logistic.ts"] },
+    { title: "Mandelbrot set", code: samplesSrc["./04-mandelbrot.ts"] },
   ];
 
-  let selected = $state(0);
+  let pageSelected = $derived.by(() => {
+    const str = page.url.searchParams.get("sample") ?? "0";
+    const i = parseInt(str);
+    if (Number.isInteger(i) && i >= 0 && i < codeSamples.length) return i;
+    return 0;
+  });
+  // svelte-ignore state_referenced_locally
+  let selected = $state(pageSelected);
+
   let replEditor: ReplEditor;
+
+  $effect(() => {
+    // When selected changes, update the query string in the URL.
+    if (selected !== pageSelected) {
+      replaceState(page.url.pathname + `?sample=${selected}`, page.state);
+    }
+  });
 
   async function handleFormat() {
     const { formatWithCursor } = await import("prettier");
