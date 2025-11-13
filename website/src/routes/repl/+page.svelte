@@ -14,6 +14,7 @@
     LoaderIcon,
     PaletteIcon,
     PlayIcon,
+    TerminalIcon,
     X,
   } from "lucide-svelte";
 
@@ -272,13 +273,16 @@
 <div class="h-dvh">
   <SplitPane
     type="horizontal"
-    pos="288px"
-    min="240px"
+    pos="280px"
+    min="200px"
     max="40%"
     --color="var(--color-gray-200)"
   >
     {#snippet a()}
-      <div class="bg-gray-50 px-4 py-4">
+      <div
+        class="bg-gray-50 px-4 pt-4 pb-12 !overflow-y-auto"
+        style:scrollbar-width="thin"
+      >
         <h1 class="text-xl font-light mb-4">
           <a href="{base}/"><span class="font-medium">jax-js</span> REPL</a>
         </h1>
@@ -358,8 +362,8 @@
           </div>
         {/snippet}
         {#snippet b()}
-          <div class="px-4 py-2 !overflow-y-auto">
-            <p class="text-gray-400 text-sm mb-2 select-none">
+          <div class="flex flex-col h-full">
+            <p class="text-gray-500 text-sm py-2 px-4 select-none shrink-0">
               Console
               {#if running}
                 <LoaderIcon
@@ -370,11 +374,14 @@
                 <span>(empty)</span>
               {/if}
             </p>
-            <div class="flex flex-col">
+            <div
+              class="pb-2 px-4 flex flex-col grow overflow-y-auto"
+              style:scrollbar-width="thin"
+            >
               {#each consoleLines as line, i (i)}
                 <div
                   class={[
-                    "py-1 px-2 border-t flex items-start gap-x-2",
+                    "py-0.5 border-t flex items-start gap-x-2",
                     line.level === "error"
                       ? "border-red-200 bg-red-50"
                       : line.level === "warn"
@@ -394,8 +401,10 @@
                   <p class="text-sm font-mono whitespace-pre-wrap">
                     {line.data.join(" ")}
                   </p>
-                  <p class="ml-auto shrink-0 text-sm font-mono text-gray-400">
-                    [{new Date(line.time).toLocaleTimeString()}]
+                  <p
+                    class="hidden md:block ml-auto shrink-0 text-sm font-mono text-gray-400 select-none"
+                  >
+                    {new Date(line.time).toLocaleTimeString()}
                   </p>
                 </div>
               {/each}
