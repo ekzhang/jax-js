@@ -47,7 +47,53 @@ suite("dtype promotion rules", () => {
   });
 });
 
-suite("type promotion through tracing", () => {
+suite("weak types", () => {
+  test("number constants are weak", () => {
+    const a = np.array(5);
+    expect(a.dtype).toBe(np.float32);
+    expect(a.weakType).toBe(true);
+    a.dispose();
+    const b = np.multiply(3, 5);
+    expect(b.dtype).toBe(np.float32);
+    expect(b.weakType).toBe(true);
+    b.dispose();
+  });
+
+  test("bool constants are not weak type", () => {
+    const a = np.array(true);
+    expect(a.dtype).toBe(np.bool);
+    expect(a.weakType).toBe(false);
+    a.dispose();
+    const b = np.array([true, false]);
+    expect(b.dtype).toBe(np.bool);
+    expect(b.weakType).toBe(false);
+    b.dispose();
+  });
+
+  test("constant as operand is cast to int32", () => {
+    const a = np.array(5, { dtype: np.int32 });
+    const b = a.add(3); // 3 is a JS number constant
+    expect(b.dtype).toBe(np.int32);
+    expect(b.weakType).toBe(false);
+    b.dispose();
+  });
+
+  test("constant as operand is cast to uint32", () => {
+    const a = np.array(5, { dtype: np.uint32 });
+    const b = a.sub(2.8); // Should truncate to 2, which fits in uint32
+    expect(b.dtype).toBe(np.uint32);
+    expect(b.weakType).toBe(false);
+    expect(b.js()).toEqual(3);
+  });
+
+  test("ops preserve weak float", () => {
+    const a = np.array(5, { dtype: np.int32 });
+    const b = a.add(np.multiply(3, 3));
+    expect(b.dtype).toBe(np.int32);
+    expect(b.weakType).toBe(false);
+    expect(b.js()).toEqual(14);
+  });
+
   test("weak type in jit constants", () => {
     const f = jit(() => {
       return np.sin(3);
@@ -83,31 +129,5 @@ suite("type promotion through tracing", () => {
     expect(b.dtype).toBe(np.int32);
     expect(b.weakType).toBe(false);
     expect(b.js()).toEqual(10);
-  });
-});
-
-suite("weak dtypes for constants", () => {
-  test("constant as operand is cast to int32", () => {
-    const a = np.array(5, { dtype: np.int32 });
-    const b = a.add(3); // 3 is a JS number constant
-    expect(b.dtype).toBe(np.int32);
-    expect(b.weakType).toBe(false);
-    b.dispose();
-  });
-
-  test("constant as operand is cast to uint32", () => {
-    const a = np.array(5, { dtype: np.uint32 });
-    const b = a.sub(2.8); // Should truncate to 2, which fits in uint32
-    expect(b.dtype).toBe(np.uint32);
-    expect(b.weakType).toBe(false);
-    expect(b.js()).toEqual(3);
-  });
-
-  test("ops preserve weak float", () => {
-    const a = np.array(5, { dtype: np.int32 });
-    const b = a.add(np.multiply(3, 3));
-    expect(b.dtype).toBe(np.int32);
-    expect(b.weakType).toBe(false);
-    expect(b.js()).toEqual(14);
   });
 });
