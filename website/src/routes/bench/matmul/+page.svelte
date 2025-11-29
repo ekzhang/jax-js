@@ -21,6 +21,17 @@
     );
   }
 
+  // Uncomment to intercept and print out shader code.
+  // onMount(() => {
+  //   const csm = GPUDevice.prototype.createShaderModule;
+  //   GPUDevice.prototype.createShaderModule = function (
+  //     descriptor: GPUShaderModuleDescriptor,
+  //   ) {
+  //     console.info("Intercepted createShaderModule:\n\n" + descriptor.code);
+  //     return csm.call(this, descriptor);
+  //   };
+  // });
+
   abstract class Strategy {
     abstract name: string;
     abstract run(): Promise<number>;
