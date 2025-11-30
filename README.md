@@ -50,6 +50,9 @@ const x = np.ones([4096, 4096]);
 const y = np.dot(x.ref, x); // JIT-compiled into a matrix multiplication kernel
 ```
 
+Most common JAX APIs are supported. See the [compatibility table](./FEATURES.md) for a full
+breakdown of what features are available.
+
 ## Development
 
 This repository is managed by [`pnpm`](https://pnpm.io/). You can compile and build all packages in
@@ -121,14 +124,14 @@ pnpm -C website dev
   - [ ] Weak types - [ref](https://docs.jax.dev/en/latest/type_promotion.html#weak-types)
   - [ ] Committed devices - [ref](https://docs.jax.dev/en/latest/sharded-computation.html#sharded-data-placement)
   - [ ] Device switching with `device_put()` between webgpu/cpu/wasm
-- [ ] numpy/jax API compatibility table
+- [x] numpy/jax API compatibility table
 
 ## Future work / help wanted
 
 Contributions are welcomed in the following areas:
 
-- Adding support for more JAX functions and operations (e.g., `trace()`, `fft()`, `qr()`, …)
-- Improving performance of the WebGPU and Wasm runtimes, generating better kernels, using SIMD and multithreading
-- Adding WebGL runtime for older browsers that don't support WebGPU
-- Making a great transformer inference engine, comparing against onnxruntime-web
-- Ergonomics and API improvements
+- Adding support for more JAX functions and operations, see [compatibility table](./FEATURES.md).
+- Improving performance of the WebGPU and Wasm runtimes, generating better kernels, using SIMD and multithreading.
+- Adding WebGL runtime for older browsers that don't support WebGPU.
+- Making a fast transformer inference engine, comparing against onnxruntime-web.
+- Ergonomics and API improvements.
