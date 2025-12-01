@@ -39,7 +39,7 @@ In the tables below, we use a color legend to refer to functions in JAX:
 | `default_backend`    | ⚪️      | XLA feature                                     |
 | `named_call`         | ⚪️      | XLA feature                                     |
 | `named_scope`        | ⚪️      | XLA feature                                     |
-| `block_until_ready`  | 🟠      |                                                 |
+| `block_until_ready`  | 🟢      |                                                 |
 | `copy_to_host_async` | ⚪️      | no separate "host" device                       |
 | `make_mesh`          | ⚪️      | device sharding                                 |
 | `set_mesh`           | ⚪️      | device sharding                                 |

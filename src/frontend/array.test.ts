@@ -228,7 +228,7 @@ suite.each(devices)("device:%s", (device) => {
   if (device !== "cpu") {
     test("large array dispatch", async () => {
       const x = ones([100, 1000, 1000], { dtype: DType.Int32 }); // 100M elements
-      await x.wait();
+      await x.blockUntilReady();
       expect(await x.sum().jsAsync()).toEqual(100_000_000);
     });
   }

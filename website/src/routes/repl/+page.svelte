@@ -147,7 +147,7 @@
           "displayImage() only supports 2D (H, W) or 3D (H, W, C) array",
         );
       }
-      await ar.wait();
+      await ar.blockUntilReady();
 
       if (ar.ndim === 2) {
         // If 2D, convert to (H, W, 1)

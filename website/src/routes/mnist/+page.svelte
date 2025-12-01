@@ -1,5 +1,6 @@
 <script lang="ts">
   import {
+    blockUntilReady,
     defaultDevice,
     init,
     jit,
@@ -223,7 +224,7 @@
     testMetrics = [];
 
     let params = Model.init(random.key(0));
-    await Promise.all(tree.leaves(params).map((ar) => ar.wait()));
+    await blockUntilReady(params);
 
     const loss = lossFn(Model.predict);
 
@@ -264,7 +265,7 @@
           [updates, optState] = solver.update(lossGrad, optState);
           params = applyUpdates(params, updates);
 
-          await Promise.all(Object.values(params).map((val) => val.wait()));
+          await blockUntilReady(params);
           const duration = performance.now() - startTime;
           const lossNumber = (await lossVal.jsAsync()) as number;
           log(

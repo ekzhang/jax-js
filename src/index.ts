@@ -170,3 +170,23 @@ export const jacrev = linearizeModule.jacrev as typeof jacfwd;
  * Compute the Jacobian with reverse-mode AD. Alias for `jacrev()`.
  */
 export const jacobian = jacrev;
+
+/**
+ * Wait until all `Array` leaves are ready by calling `Array.blockUntilReady()`.
+ *
+ * This can be used to wait for the results of an intermediate computation to
+ * finish. It's recommended to call this regularly in an iterative computation
+ * to avoid queueing up too many pending operations.
+ *
+ * Does not consume reference to the arrays.
+ */
+export async function blockUntilReady<T extends JsTree<any>>(x: T): Promise<T> {
+  const promises: Promise<Array>[] = [];
+  for (const leaf of tree.leaves(x)) {
+    if (leaf instanceof Array) {
+      promises.push(leaf.blockUntilReady());
+    }
+  }
+  await Promise.all(promises);
+  return x;
+}

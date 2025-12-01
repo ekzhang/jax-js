@@ -652,8 +652,11 @@ export class Array extends Tracer {
    *
    * If you are mapping from `data()` or `dataSync()`, it will also trigger
    * dispatch of operations as well.
+   *
+   * **Note:** `jax.blockUntilReady()` is a higher-level API, it calls this
+   * asynchronously for multiple arrays.
    */
-  async wait(): Promise<Array> {
+  async blockUntilReady(): Promise<Array> {
     this.#check();
     if (this.#source instanceof AluExp) return this;
     const pending = this.#pending;
