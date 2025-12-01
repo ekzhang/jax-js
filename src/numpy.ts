@@ -1095,7 +1095,7 @@ export function tanh(x: ArrayLike): Array {
 export function var_(
   x: ArrayLike,
   axis: core.Axis = null,
-  opts?: { correction?: number } & core.ReduceOpts,
+  opts?: { mean?: ArrayLike; correction?: number } & core.ReduceOpts,
 ): Array {
   x = fudgeArray(x);
   axis = normalizeAxis(axis, x.ndim);
@@ -1103,7 +1103,10 @@ export function var_(
   if (n === 0) {
     throw new Error("var: cannot compute variance over zero-length axis");
   }
-  const mu = mean(x.ref, axis, { keepdims: true });
+  const mu =
+    opts?.mean !== undefined
+      ? opts.mean
+      : mean(x.ref, axis, { keepdims: true });
   return square(x.sub(mu))
     .sum(axis, { keepdims: opts?.keepdims })
     .mul(1 / (n - (opts?.correction ?? 0)));
@@ -1121,7 +1124,7 @@ export function var_(
 export function std(
   x: ArrayLike,
   axis: core.Axis = null,
-  opts?: { correction?: number } & core.ReduceOpts,
+  opts?: { mean?: ArrayLike; correction?: number } & core.ReduceOpts,
 ): Array {
   return sqrt(var_(x, axis, opts));
 }

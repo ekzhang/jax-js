@@ -647,7 +647,7 @@ would need substantial changes to work well in JavaScript.
 | `log_softmax`                   | 🟢      |                          |
 | `logmeanexp`                    | 🟢      |                          |
 | `logsumexp`                     | 🟢      |                          |
-| `standardize`                   | 🟠      |                          |
+| `standardize`                   | 🟢      |                          |
 | `one_hot`                       | 🟢      |                          |
 | `dot_product_attention`         | 🟠      | FlashAttention is tricky |
 | `scaled_matmul`                 | 🟠      | for microscaling         |

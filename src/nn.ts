@@ -276,6 +276,42 @@ export function logmeanexp(x: ArrayLike, axis: Axis = null): Array {
 }
 
 /**
+ * Standardizes input to zero mean and unit variance.
+ *
+ * By default, this is computed over the last axis. You can pass in a different
+ * axis, or `null` to standardize over all elements.
+ *
+ * Epsilon is added to denominator, it defaults to `1e-5` for stability.
+ */
+export function standardize(
+  x: ArrayLike,
+  axis: Axis = -1,
+  opts: {
+    mean?: ArrayLike;
+    variance?: ArrayLike;
+    epsilon?: ArrayLike;
+  } = {},
+) {
+  x = fudgeArray(x);
+  axis = normalizeAxis(axis, x.ndim);
+  if (axis.length === 0) return x;
+
+  const mu =
+    opts.mean !== undefined
+      ? fudgeArray(opts.mean)
+      : x.ref.mean(axis, { keepdims: true });
+
+  // Like JAX, we'll use the Var[X] = E[X^2] - (E[X])^2 formula for this one.
+  // It's supposed to be better in the case of neural network activations.
+  const sigma2 =
+    opts.variance !== undefined
+      ? fudgeArray(opts.variance)
+      : square(x.ref).mean(axis, { keepdims: true }).sub(square(mu.ref));
+
+  return x.sub(mu).div(sqrt(sigma2.add(opts.epsilon ?? 1e-5)));
+}
+
+/**
  * One-hot encodes the given indices.
  *
  * Each index in the integer input `x` is encoded as a vector of zeros of length

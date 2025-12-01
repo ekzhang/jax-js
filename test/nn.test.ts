@@ -172,6 +172,20 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.nn.standardize()", () => {
+    test("standardizes over last axis by default", () => {
+      const x = np.array([
+        [1, 2, 3],
+        [4, 5, 6],
+      ]);
+      const y = nn.standardize(x);
+      expect(y).toBeAllclose([
+        [-1.22474487, 0, 1.22474487],
+        [-1.22474487, 0, 1.22474487],
+      ]);
+    });
+  });
+
   suite("jax.nn.oneHot()", () => {
     test("does basic one-hot encoding", () => {
       const x = np.array([1, 1, 2], { dtype: np.int32 });
