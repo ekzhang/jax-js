@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { browser } from "$app/environment";
   import { resolve } from "$app/paths";
 
   import { ArrowUpRight } from "lucide-svelte";
@@ -156,7 +157,10 @@
     <h2 class="text-xl mb-2">Try it out!</h2>
 
     <p class="mb-4 text-sm text-gray-600">
-      This is a live editor, the code is running in your browser.
+      This is a live editor, the code is running in your browser{browser &&
+      navigator.gpu
+        ? " with WebGPU"
+        : ""}.
     </p>
 
     <EmbeddedRepl
@@ -193,17 +197,17 @@ console.log(df(x).js());
       </a>
 
       <a
-        href="https://github.com/ekzhang/jax-js?tab=readme-ov-file#examples"
+        href={resolve("/mnist")}
         class="bg-primary/5 hover:bg-primary/15 transition-colors p-4 rounded-lg"
       >
         <h3 class="mb-2">
-          Examples <ArrowUpRight
+          MNIST Training <ArrowUpRight
             size={18}
             class="inline-block text-gray-400 mb-px"
           />
         </h3>
         <p class="text-sm text-gray-600">
-          Featured apps and demos built with jax-js.
+          Demo of training a neural network on MNIST.
         </p>
       </a>
 
