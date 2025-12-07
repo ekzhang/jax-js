@@ -1,7 +1,7 @@
 import { beforeEach, expect, suite, test } from "vitest";
 
 import { defaultDevice, devices, init } from "../backend";
-import { arange, array, eye, ones, scalar, zeros } from "./array";
+import { arange, array, eye, ones, zeros } from "./array";
 import { DType } from "../alu";
 
 const devicesAvailable = await init();
@@ -253,7 +253,7 @@ suite.each(devices)("device:%s", (device) => {
     expect(a.ref.dataSync()).toEqual(new Uint32Array([1, 2, 3]));
     expect(a.ref.js()).toEqual([1, 2, 3]);
 
-    const b = a.sub(scalar(2, { dtype: DType.Uint32 }));
+    const b = a.sub(array(2, { dtype: DType.Uint32 }));
     expect(b.dtype).toBe(DType.Uint32);
     expect(b.ref.dataSync()).toEqual(new Uint32Array([4294967295, 0, 1]));
     expect(b.js()).toEqual([4294967295, 0, 1]);

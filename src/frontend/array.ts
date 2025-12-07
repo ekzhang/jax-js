@@ -972,44 +972,6 @@ export class Array extends Tracer {
   }
 }
 
-/** Construct an array from a single scalar constant. */
-export function scalar(
-  value: number | boolean,
-  { dtype, device }: DTypeAndDevice = {},
-) {
-  // TODO: This should probably be merged with numpy.full().
-  let weakType = dtype == undefined;
-  if (typeof value === "number") {
-    dtype ??= DType.Float32; // default dtype for JS numbers
-    if (
-      ![DType.Float32, DType.Float16, DType.Int32, DType.Uint32].includes(dtype)
-    )
-      throw new TypeError(`Mismatched dtype for scalar ${value}`);
-  } else if (typeof value === "boolean") {
-    dtype ??= DType.Bool;
-    weakType = false; // booleans are never weakly typed
-    if (
-      ![
-        DType.Float32,
-        DType.Float16,
-        DType.Int32,
-        DType.Uint32,
-        DType.Bool,
-      ].includes(dtype)
-    )
-      throw new TypeError(`Mismatched dtype for scalar ${value}`);
-  } else {
-    throw new TypeError(`Invalid type for scalar ${value}`);
-  }
-  return new Array({
-    source: AluExp.const(dtype, value),
-    st: ShapeTracker.fromShape([]),
-    dtype,
-    weakType,
-    backend: getBackend(device),
-  });
-}
-
 /** Constructor for creating a new array from data. */
 export function array(
   values:
@@ -1053,6 +1015,7 @@ export function array(
       );
     }
     if (size === 0) return zeros(shape, { dtype, device });
+    if (size === 1) return full(shape, flat[0], { dtype, device });
     if (typeof flat[0] === "boolean") {
       dtype = dtype ?? DType.Bool;
       const data = new Int32Array(flat.map((x) => (x ? 1 : 0)));
@@ -1145,7 +1108,7 @@ export function pureArray(x: TracerValue): Tracer {
   if (x instanceof Tracer) {
     return x;
   } else {
-    return scalar(x);
+    return array(x);
   }
 }
 
@@ -1382,7 +1345,7 @@ export function linspace(
   } else if (num === 0) {
     return zeros([0], { dtype, device });
   } else if (num === 1) {
-    return scalar(start, { dtype, device }).reshape([1]);
+    return full([1], start, { dtype, device });
   } else if (start === stop) {
     return full([num], start, { dtype, device });
   }

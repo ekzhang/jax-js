@@ -13,7 +13,6 @@ import {
   linspace,
   ones,
   onesLike as onesLikeUnfudged,
-  scalar,
   zeros,
   zerosLike as zerosLikeUnfudged,
 } from "./frontend/array";
@@ -278,7 +277,7 @@ export function argmin(
   }
   const shape = a.shape;
   const isMax = equal(a, min(a.ref, axis, { keepdims: true }));
-  const length = scalar(shape[axis], { dtype: int32, device: a.device });
+  const length = array(shape[axis], { dtype: int32, device: a.device });
   const idx = isMax.astype(DType.Int32).mul(
     // Index by length-i instead of i, so we can take the max and get the first i.
     arange(shape[axis], 0, -1, { dtype: int32, device: a.device }).reshape([
@@ -309,7 +308,7 @@ export function argmax(
   }
   const shape = a.shape;
   const isMax = equal(a, max(a.ref, axis, { keepdims: true }));
-  const length = scalar(shape[axis], { dtype: int32, device: a.device });
+  const length = array(shape[axis], { dtype: int32, device: a.device });
   const idx = isMax.astype(DType.Int32).mul(
     // Index by length-i instead of i, so we can take the max and get the first i.
     arange(shape[axis], 0, -1, { dtype: int32, device: a.device }).reshape([

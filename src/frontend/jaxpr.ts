@@ -18,7 +18,7 @@ import {
   unzip2,
   zip,
 } from "../utils";
-import { Array, pureArray, scalar } from "./array";
+import { array, Array, pureArray } from "./array";
 import { checkConvShape, checkPoolShape } from "./convolution";
 import {
   AbstractValue,
@@ -492,13 +492,13 @@ export function evalJaxpr(jaxpr: Jaxpr, args: Tracer[]): Tracer[] {
 
   const remainingRefs = new Map<Var, number>();
 
-  // TODO: Use correct backend when constructing scalar() here.
+  // TODO: Use correct backend when constructing array() here.
   const read = (x: Atom) => {
     if (x instanceof Var) {
       remainingRefs.set(x, (remainingRefs.get(x) ?? 0) - 1);
       return env.get(x)!;
     } else {
-      return scalar(x.value, { dtype: x.dtype });
+      return array(x.value, { dtype: x.dtype });
     }
   };
 
@@ -576,7 +576,7 @@ class JaxprTrace extends Trace {
       tracer = this.builder.newTracer(this, ShapedArray.fromAval(getAval(val)));
       this.builder.addConst(
         tracer,
-        val instanceof Tracer ? val.ref : scalar(val),
+        val instanceof Tracer ? val.ref : array(val),
       );
     }
     return tracer;
