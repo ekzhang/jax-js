@@ -47,12 +47,12 @@ export function scaleByAdam({
       };
       mu = treeUpdateMoment(tree.ref(updates), mu, b1, 1);
       nu = treeUpdateMoment(tree.ref(updates), nu, b2, 2);
-      count = count.add(u32(1));
+      count = count.add(1);
       let muHat: typeof mu;
       if (nesterov) {
         muHat = tree.map(
           (m: np.Array, g: np.Array) => m.mul(b1).add(g.mul(1 - b1)),
-          treeBiasCorrection(tree.ref(mu), b1, count.ref.add(u32(1))),
+          treeBiasCorrection(tree.ref(mu), b1, count.ref.add(1)),
           treeBiasCorrection(tree.ref(updates), b1, count.ref),
         );
       } else {
