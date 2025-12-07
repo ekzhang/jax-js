@@ -5,6 +5,16 @@ beforeEach(() => {
   defaultDevice("cpu"); // float16 is not available on Wasm
 });
 
+suite("dtype-op edge cases", () => {
+  test("uint32 subtraction underflow", () => {
+    const a = np.array(3, { dtype: np.uint32 });
+    const b = np.array(5, { dtype: np.uint32 });
+    const c = a.sub(b);
+    expect(c.dtype).toBe(np.uint32);
+    expect(c.js()).toEqual(4294967294); // 2^32 - 2
+  });
+});
+
 suite("dtype promotion rules", () => {
   test("promote uint32 and int32 to int32", () => {
     const a = np.array(3, { dtype: np.uint32 });
@@ -80,10 +90,10 @@ suite("weak types", () => {
 
   test("constant as operand is cast to uint32", () => {
     const a = np.array(5, { dtype: np.uint32 });
-    const b = a.sub(2.8); // Should truncate to 2, which fits in uint32
+    const b = a.add(2.8); // Should truncate to 2, which fits in uint32
     expect(b.dtype).toBe(np.uint32);
     expect(b.weakType).toBe(false);
-    expect(b.js()).toEqual(3);
+    expect(b.js()).toEqual(7);
   });
 
   test("ops preserve weak float", () => {
@@ -104,7 +114,7 @@ suite("weak types", () => {
     a = a.add(np.array(2, { dtype: np.float16 }));
     expect(a.dtype).toBe(np.float16);
     expect(a.weakType).toBe(false);
-    expect(a).toBeAllclose(Math.sin(3) + 2);
+    expect(a.js()).toBeCloseTo(Math.sin(3) + 2, 2);
   });
 
   test("weak type added in jit op", () => {

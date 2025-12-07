@@ -16,6 +16,7 @@ import { Backend, Device, Executable, getBackend, Slot } from "../backend";
 import { ShapeTracker, unravelAlu } from "../shape";
 import {
   deepEqual,
+  generalBroadcast,
   isPermutation,
   prod,
   range,
@@ -30,11 +31,13 @@ import {
   prepareConv,
 } from "./convolution";
 import {
+  AbstractValue,
   CompareOp,
   getAval,
   newMain,
   Primitive,
   PrimitiveParams,
+  promoteAvals,
   ShapedArray,
   Trace,
   Tracer,
@@ -120,6 +123,15 @@ export class PendingExecute {
 /** @inline */
 export type DTypeAndDevice = { dtype?: DType; device?: Device };
 
+type ArrayConstructorArgs = {
+  source: AluExp | Slot;
+  st: ShapeTracker;
+  dtype: DType;
+  weakType: boolean;
+  backend: Backend;
+  pending?: Iterable<PendingExecute>;
+};
+
 /**
  * A multidimensional numeric array with data stored on CPU or GPU.
  *
@@ -135,6 +147,7 @@ export class Array extends Tracer {
 
   id: number;
   #dtype: DType;
+  #weakType: boolean;
   #source: AluExp | Slot;
   #st: ShapeTracker;
   #backend: Backend;
@@ -148,36 +161,27 @@ export class Array extends Tracer {
    * is a backend `Slot`, this constructor _takes ownership_ of the slot. It
    * will be freed when the array is disposed.
    */
-  constructor(
-    source: AluExp | Slot,
-    st: ShapeTracker,
-    dtype: DType,
-    backend: Backend,
-    {
-      pending = null,
-    }: {
-      pending?: Iterable<PendingExecute> | null;
-    } = {},
-  ) {
+  constructor(args: ArrayConstructorArgs) {
     super(baseArrayTrace);
     this.id = Array.#nextId++;
-    this.#dtype = dtype;
-    this.#source = source;
-    this.#st = st;
-    this.#backend = backend;
+    this.#dtype = args.dtype;
+    this.#weakType = args.weakType;
+    this.#source = args.source;
+    this.#st = args.st;
+    this.#backend = args.backend;
     this.#rc = 1;
 
-    this.#pendingSet = new Set(pending);
+    this.#pendingSet = new Set(args.pending);
     if (this.#pendingSet.size === 0) {
       this.#pendingSet = null;
-    } else if (source instanceof AluExp) {
+    } else if (this.#source instanceof AluExp) {
       throw new Error("internal: AluExp source cannot have pending executes");
     }
   }
 
   /** @ignore */
   get aval() {
-    return new ShapedArray(this.#st.shape, this.#dtype);
+    return new ShapedArray(this.#st.shape, this.#dtype, this.#weakType);
   }
 
   /** Return a simple string representation of the array's dimensions. */
@@ -191,6 +195,18 @@ export class Array extends Tracer {
 
   #check() {
     if (this.#rc <= 0) throw new UseAfterFreeError(this);
+  }
+
+  /** Construct an array, copying fields from `this`. */
+  #newArrayFrom(args: Partial<ArrayConstructorArgs>) {
+    return new Array({
+      source: args.source ?? this.#source,
+      st: args.st ?? this.#st,
+      dtype: args.dtype ?? this.#dtype,
+      weakType: this.#weakType,
+      backend: args.backend ?? this.#backend,
+      pending: args.pending ?? this.#pending ?? undefined,
+    });
   }
 
   get ref() {
@@ -249,9 +265,7 @@ export class Array extends Tracer {
     const pending = this.#pending;
     for (const exe of pending) exe.updateRc(+1);
     if (typeof this.#source === "number") this.#backend.incRef(this.#source);
-    const ar = new Array(this.#source, st, this.#dtype, this.#backend, {
-      pending,
-    });
+    const ar = this.#newArrayFrom({ st, pending });
     this.dispose(); // After constructing Array, so we don't free this.#source early.
     return ar;
   }
@@ -333,13 +347,11 @@ export class Array extends Tracer {
     this.dispose();
     for (const ar of indices) ar.dispose();
 
-    return new Array(
-      output,
-      ShapeTracker.fromShape(finalShape),
-      this.#dtype,
-      this.#backend,
-      { pending },
-    );
+    return this.#newArrayFrom({
+      source: output,
+      st: ShapeTracker.fromShape(finalShape),
+      pending,
+    });
   }
 
   /** Move axes to the rightmost dimension of the shape. */
@@ -369,13 +381,18 @@ export class Array extends Tracer {
   }
 
   #unary(op: AluOp, dtypeOutput?: DType) {
+    const weakType = !dtypeOutput && this.#weakType;
     dtypeOutput ??= this.#dtype; // Default to current dtype unless changed.
 
     this.#check();
     // Short circuit if the array is already AluExp.
     if (this.#source instanceof AluExp) {
       const exp = new AluExp(op, dtypeOutput, [this.#source]);
-      return new Array(exp.simplify(), this.#st, dtypeOutput, this.#backend);
+      return this.#newArrayFrom({
+        source: exp.simplify(),
+        dtype: dtypeOutput,
+        weakType,
+      });
     }
 
     const indices = unravelAlu(this.#st.shape, AluVar.gidx);
@@ -391,17 +408,17 @@ export class Array extends Tracer {
     );
 
     this.dispose(); // Dispose of inputs after creating PendingExecute.
-    return new Array(
-      output,
-      ShapeTracker.fromShape(this.shape),
-      dtypeOutput,
-      this.#backend,
-      { pending },
-    );
+    return this.#newArrayFrom({
+      source: output,
+      st: ShapeTracker.fromShape(this.shape),
+      dtype: dtypeOutput,
+      weakType,
+      pending,
+    });
   }
 
   #binary(op: AluOp, other: Array): Array {
-    const custom = (src: AluExp[]) => new AluExp(op, this.#dtype, src);
+    const custom = (src: AluExp[]) => new AluExp(op, src[0].dtype, src);
     return Array.#naryCustom(op, custom, [this, other]);
   }
 
@@ -411,11 +428,11 @@ export class Array extends Tracer {
     arrays: Array[],
     {
       dtypeOverride,
-      dtypeOutput,
+      strongTypeOutput,
       reduceAxis,
     }: {
       dtypeOverride?: (DType | undefined)[];
-      dtypeOutput?: DType;
+      strongTypeOutput?: boolean;
       reduceAxis?: boolean;
     } = {},
   ): Array {
@@ -425,7 +442,8 @@ export class Array extends Tracer {
 
     for (const ar of arrays) ar.#check();
 
-    let dtype: DType | undefined;
+    let castDtype: DType | undefined;
+    let castWeakType = true;
     for (let i = 0; i < n; i++) {
       if (dtypeOverride?.[i]) {
         if (arrays[i].#dtype !== dtypeOverride[i]) {
@@ -434,12 +452,15 @@ export class Array extends Tracer {
           );
         }
       } else {
-        // Should match dtype of other arguments in the operation.
-        if (!dtype) dtype = arrays[i].#dtype;
-        else if (arrays[i].#dtype !== dtype) {
-          throw new TypeError(
-            `Dtype mismatch in ${name}: ${dtype} vs ${arrays[i].#dtype}`,
-          );
+        // Try to cast with dtype of other arguments in the operation.
+        if (castDtype === undefined) {
+          castDtype = arrays[i].#dtype;
+          castWeakType = arrays[i].#weakType;
+        } else {
+          ({ dtype: castDtype, weakType: castWeakType } = promoteAvals(
+            new ShapedArray([], castDtype, castWeakType),
+            new ShapedArray([], arrays[i].#dtype, arrays[i].#weakType),
+          ));
         }
       }
       if (arrays[i].#backend !== backend) {
@@ -448,29 +469,47 @@ export class Array extends Tracer {
         );
       }
     }
-    dtypeOutput ??= dtype;
-    if (!dtypeOutput) throw new TypeError("nary operation with no dtype");
+    const weakType = castWeakType && !strongTypeOutput;
 
     arrays = Array.#broadcastArrays(arrays);
     const newShape = [...arrays[0].shape];
 
     // Short circuit if all are already AluExp.
     if (arrays.every((ar) => ar.#source instanceof AluExp) && !reduceAxis) {
+      const sources = arrays.map((ar, i) => {
+        if (!dtypeOverride?.[i]) {
+          return AluExp.cast(castDtype!, ar.#source as AluExp);
+        } else {
+          return ar.#source as AluExp;
+        }
+      });
       if (arrays.every((ar) => deepEqual(ar.#st, arrays[0].#st))) {
         // All are AluExp and have the same shape tracker.
-        const exp = custom(arrays.map((ar) => ar.#source as AluExp));
-        return new Array(exp.simplify(), arrays[0].#st, exp.dtype, backend);
+        const exp = custom(sources);
+        return new Array({
+          source: exp.simplify(),
+          st: arrays[0].#st,
+          dtype: exp.dtype,
+          weakType: weakType,
+          backend,
+        });
       }
       // If their shape trackers are different, we need to normalize them.
       const exp = custom(
-        arrays.map((ar) => {
-          const src = ar.#source as AluExp;
+        arrays.map((ar, i) => {
+          const src = sources[i];
           if (ar.#st.contiguous) return src;
           return accessorAluExp(src, ar.#st, unravelAlu(newShape, AluVar.idx));
         }),
       );
       const st = ShapeTracker.fromShape(newShape);
-      return new Array(exp.simplify(), st, exp.dtype, backend);
+      return new Array({
+        source: exp.simplify(),
+        st,
+        dtype: exp.dtype,
+        weakType,
+        backend,
+      });
     }
 
     let indices: AluExp[];
@@ -483,17 +522,20 @@ export class Array extends Tracer {
 
     const inputs: Slot[] = [];
     const src: AluExp[] = [];
-    for (const ar of arrays) {
+    for (const [i, ar] of arrays.entries()) {
+      let nextSrc: AluExp;
       if (ar.#source instanceof AluExp) {
-        src.push(accessorAluExp(ar.#source, ar.#st, indices));
+        nextSrc = accessorAluExp(ar.#source, ar.#st, indices);
       } else {
         let gid = inputs.indexOf(ar.#source);
         if (gid === -1) {
           gid = inputs.length;
           inputs.push(ar.#source);
         }
-        src.push(AluExp.globalView(ar.#dtype, gid, ar.#st, indices));
+        nextSrc = AluExp.globalView(ar.#dtype, gid, ar.#st, indices);
       }
+      if (!dtypeOverride?.[i]) nextSrc = AluExp.cast(castDtype!, nextSrc);
+      src.push(nextSrc);
     }
 
     const exp = custom(src);
@@ -509,19 +551,18 @@ export class Array extends Tracer {
     pending.add(new PendingExecute(backend, kernel, inputs, [output]));
 
     for (const ar of arrays) ar.dispose(); // Dispose of inputs after creating PendingExecute.
-    return new Array(
-      output,
-      ShapeTracker.fromShape(newShape),
-      dtypeOutput,
+    return new Array({
+      source: output,
+      st: ShapeTracker.fromShape(newShape),
+      dtype: kernel.dtype,
+      weakType,
       backend,
-      { pending },
-    );
+      pending,
+    });
   }
 
   /** Reduce the last dimension of the array by an operation. */
   #reduce(op: AluOp): Array {
-    this.#check();
-    if (this.ndim === 0) throw new Error("Cannot reduce a scalar");
     const shape = this.shape;
     const reduction = new Reduction(this.#dtype, op, shape[shape.length - 1]);
     const newShape = shape.slice(0, -1); // first n-1 axes are in the shape
@@ -545,13 +586,11 @@ export class Array extends Tracer {
     pending.push(new PendingExecute(this.#backend, kernel, inputs, [output]));
 
     this.dispose(); // Dispose of inputs after creating PendingExecute.
-    return new Array(
-      output,
-      ShapeTracker.fromShape(newShape),
-      this.#dtype,
-      this.#backend,
-      { pending },
-    );
+    return this.#newArrayFrom({
+      source: output,
+      st: ShapeTracker.fromShape(newShape),
+      pending,
+    });
   }
 
   /**
@@ -600,8 +639,10 @@ export class Array extends Tracer {
 
   #dataInline(): DataArray {
     this.#check();
-    const exp = this.#source as AluExp;
-    const ar = new Array(exp, this.#st, this.dtype, getBackend("cpu"));
+    if (!(this.#source instanceof AluExp))
+      throw new Error("internal: #dataInline called on non-AluExp source");
+    // TODO: Consider switching to Wasm if CPU is slow?
+    const ar = this.#newArrayFrom({ backend: getBackend("cpu") });
     this.dispose();
     return ar.dataSync();
   }
@@ -765,7 +806,7 @@ export class Array extends Tracer {
           x.#backend.incRef(x.#source);
           const pending = x.#pending;
           for (const exe of pending) exe.updateRc(+1);
-          const y = new Array(x.#source, x.#st, dtype, x.#backend, { pending });
+          const y = x.#newArrayFrom({ dtype, weakType: false, pending });
           x.dispose();
           return [y];
         }
@@ -855,7 +896,7 @@ export class Array extends Tracer {
         const custom = ([x, y]: AluExp[]) => aluCompare(x, y, op);
         return [
           Array.#naryCustom("compare", custom, [x, y], {
-            dtypeOutput: DType.Bool,
+            strongTypeOutput: true, // outputs strongly typed bool
           }),
         ];
       },
@@ -911,13 +952,14 @@ export class Array extends Tracer {
         args.forEach((x) => x.dispose()); // Dispose of args after dispatch.
 
         return outputs.map((source, i) => {
-          return new Array(
+          return new Array({
             source,
-            ShapeTracker.fromShape(jaxpr.outs[i].aval.shape),
-            jaxpr.outs[i].aval.dtype,
+            st: ShapeTracker.fromShape(jaxpr.outs[i].aval.shape),
+            dtype: jaxpr.outs[i].aval.dtype,
+            weakType: jaxpr.outs[i].aval.weakType,
             backend,
-            { pending },
-          );
+            pending,
+          });
         });
       },
     };
@@ -936,6 +978,7 @@ export function scalar(
   { dtype, device }: DTypeAndDevice = {},
 ) {
   // TODO: This should probably be merged with numpy.full().
+  let weakType = dtype == undefined;
   if (typeof value === "number") {
     dtype ??= DType.Float32; // default dtype for JS numbers
     if (
@@ -944,6 +987,7 @@ export function scalar(
       throw new TypeError(`Mismatched dtype for scalar ${value}`);
   } else if (typeof value === "boolean") {
     dtype ??= DType.Bool;
+    weakType = false; // booleans are never weakly typed
     if (
       ![
         DType.Float32,
@@ -957,12 +1001,13 @@ export function scalar(
   } else {
     throw new TypeError(`Invalid type for scalar ${value}`);
   }
-  return new Array(
-    AluExp.const(dtype, value),
-    ShapeTracker.fromShape([]),
+  return new Array({
+    source: AluExp.const(dtype, value),
+    st: ShapeTracker.fromShape([]),
     dtype,
-    getBackend(device),
-  );
+    weakType,
+    backend: getBackend(device),
+  });
 }
 
 /** Constructor for creating a new array from data. */
@@ -982,8 +1027,7 @@ export function array(
       values = values.reshape(shape);
     }
     if (dtype && values.dtype !== dtype) {
-      throw new Error("array astype not implemented yet"); // TODO
-      // values = values.astype(dtype);
+      values = values.astype(dtype);
     }
     return values;
   } else if (ArrayBuffer.isView(values)) {
@@ -1014,9 +1058,10 @@ export function array(
       const data = new Int32Array(flat.map((x) => (x ? 1 : 0)));
       return arrayFromData(data, shape, { dtype, device });
     } else {
+      const weakType = dtype == undefined;
       dtype = dtype ?? DType.Float32;
       const data = dtypedJsArray(dtype, flat as number[]);
-      return arrayFromData(data, shape, { dtype, device });
+      return arrayFromData(data, shape, { dtype, device }, weakType);
     }
   }
 }
@@ -1024,8 +1069,31 @@ export function array(
 function arrayFromData(
   data: DataArray,
   shape: number[],
-  { dtype, device }: DTypeAndDevice = {},
+  { dtype, device }: DTypeAndDevice,
+  weakType = false,
 ): Array {
+  if (data instanceof Float32Array) {
+    if (dtype && dtype !== DType.Float32)
+      throw new Error("Float32Array must have float32 type");
+    dtype ??= DType.Float32;
+  } else if (data instanceof Int32Array) {
+    if (dtype && dtype !== DType.Int32 && dtype !== DType.Bool)
+      throw new Error("Int32Array must have int32 or bool type");
+    dtype ??= DType.Int32;
+  } else if (data instanceof Uint32Array) {
+    if (dtype && dtype !== DType.Uint32)
+      throw new Error("Uint32Array must have uint32 type");
+    dtype ??= DType.Uint32;
+  } else if (data instanceof Float16Array) {
+    if (dtype && dtype !== DType.Float16)
+      throw new Error("Float16Array must have float16 type");
+    dtype ??= DType.Float16;
+  } else {
+    throw new Error(
+      "Unsupported data array type: " + (data as any).constructor.name,
+    );
+  }
+
   if (data.length < inlineArrayLimit) {
     // Check if all elements are of the same value and short-circuit.
     let allEqual = true;
@@ -1037,39 +1105,21 @@ function arrayFromData(
     }
     if (allEqual) {
       // If all elements are equal, we can use a constant expression.
-      return full(shape, data[0], { dtype, device });
+      const sa = new ShapedArray(shape, dtype, weakType);
+      return fullInternal(sa, data[0], device);
     }
   }
 
   const backend = getBackend(device);
-  if (ArrayBuffer.isView(data)) {
-    const buf = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-    if (data instanceof Float32Array) {
-      if (dtype && dtype !== DType.Float32)
-        throw new Error("Float32Array must have float32 type");
-      dtype ??= DType.Float32;
-    } else if (data instanceof Int32Array) {
-      if (dtype && dtype !== DType.Int32 && dtype !== DType.Bool)
-        throw new Error("Int32Array must have int32 or bool type");
-      dtype ??= DType.Int32;
-    } else if (data instanceof Uint32Array) {
-      if (dtype && dtype !== DType.Uint32)
-        throw new Error("Uint32Array must have uint32 type");
-      dtype ??= DType.Uint32;
-    } else if (data instanceof Float16Array) {
-      if (dtype && dtype !== DType.Float16)
-        throw new Error("Float16Array must have float16 type");
-      dtype ??= DType.Float16;
-    } else {
-      throw new Error(
-        "Unsupported data array type: " + (data as any).constructor.name,
-      );
-    }
-    const slot = backend.malloc(data.byteLength, buf);
-    return new Array(slot, ShapeTracker.fromShape(shape), dtype, backend);
-  } else {
-    throw new Error("Unsupported data type: " + (data as any).constructor.name);
-  }
+  const buf = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  const slot = backend.malloc(data.byteLength, buf);
+  return new Array({
+    source: slot,
+    st: ShapeTracker.fromShape(shape),
+    dtype,
+    weakType,
+    backend,
+  });
 }
 
 function dataToJs(
@@ -1122,18 +1172,34 @@ type ImplRule<P extends Primitive> = (
 ) => Array[];
 const implRules: { [P in Primitive]: ImplRule<P> } = Array._implRules();
 
+export function fullInternal(
+  aval: AbstractValue,
+  fillValue: number | boolean,
+  device?: Device,
+) {
+  return new Array({
+    source: AluExp.const(aval.dtype, fillValue),
+    st: ShapeTracker.fromShape(aval.shape),
+    dtype: aval.dtype,
+    weakType: aval.weakType,
+    backend: getBackend(device),
+  });
+}
+
 export function zerosLike(val: TracerValue, dtype?: DType): Array {
   const aval = getAval(val);
   if (val instanceof Tracer) val.dispose();
   // TODO: Use correct device.
-  return zeros(aval.shape, { dtype: dtype ?? aval.dtype });
+  const sa = new ShapedArray(aval.shape, dtype ?? aval.dtype, aval.weakType);
+  return fullInternal(sa, 0);
 }
 
 export function onesLike(val: TracerValue, dtype?: DType): Array {
   const aval = getAval(val);
   if (val instanceof Tracer) val.dispose();
   // TODO: Use correct device.
-  return ones(aval.shape, { dtype: dtype ?? aval.dtype });
+  const sa = new ShapedArray(aval.shape, dtype ?? aval.dtype, aval.weakType);
+  return fullInternal(sa, 1);
 }
 
 export function fullLike(
@@ -1143,8 +1209,14 @@ export function fullLike(
 ): Array {
   const aval = getAval(val);
   if (val instanceof Tracer) val.dispose();
+  if (fillValue instanceof Tracer) {
+    // TODO: Full can also take an array as a fill value. This is equivalent to
+    // expanding the array.
+    throw new Error("numpy.fullLike() with array argument not implemented yet");
+  }
   // TODO: Use correct device.
-  return full(aval.shape, fillValue, { dtype: dtype ?? aval.dtype });
+  const sa = new ShapedArray(aval.shape, dtype ?? aval.dtype, aval.weakType);
+  return fullInternal(sa, fillValue);
 }
 
 /** Return a new array of given shape and type, filled with zeros. */
@@ -1169,16 +1241,12 @@ export function full(
   fillValue: number | boolean | Array,
   { dtype, device }: DTypeAndDevice = {},
 ): Array {
-  let source: AluExp;
+  let weakType = dtype == undefined;
   if (typeof fillValue === "number") {
     dtype = dtype ?? DType.Float32;
-    source = AluExp.const(dtype, fillValue);
-  } else if (typeof fillValue === "bigint") {
-    dtype = dtype ?? DType.Int32;
-    source = AluExp.const(dtype, Number(fillValue));
   } else if (typeof fillValue === "boolean") {
     dtype = dtype ?? DType.Bool;
-    source = AluExp.const(dtype, fillValue ? 1 : 0);
+    weakType = false; // booleans are never weakly typed
   } else if (fillValue instanceof Tracer) {
     // TODO: Full can also take an array as a fill value. This is equivalent to
     // expanding the array.
@@ -1186,11 +1254,10 @@ export function full(
   } else {
     throw new TypeError(`Invalid type for full: ${fillValue}`);
   }
-  return new Array(
-    source,
-    ShapeTracker.fromShape(shape),
-    dtype ?? DType.Float32,
-    getBackend(device),
+  return fullInternal(
+    new ShapedArray(shape, dtype, weakType),
+    fillValue,
+    device,
   );
 }
 
@@ -1206,6 +1273,7 @@ export function eye(
   { dtype, device }: DTypeAndDevice = {},
 ): Array {
   numCols = numCols ?? numRows;
+  const weakType = dtype == undefined;
   dtype = dtype ?? DType.Float32;
 
   if (numCols < numRows) {
@@ -1222,12 +1290,13 @@ export function eye(
     AluExp.mod(AluVar.idx, AluExp.i32(numCols + 1)),
     AluExp.i32(1),
   );
-  return new Array(
-    AluExp.cast(dtype, exp),
-    ShapeTracker.fromShape([numRows, numCols]),
+  return new Array({
+    source: AluExp.cast(dtype, exp),
+    st: ShapeTracker.fromShape([numRows, numCols]),
     dtype,
-    getBackend(device),
-  );
+    weakType,
+    backend: getBackend(device),
+  });
 }
 
 /** Return the identity matrix, with ones on the main diagonal. */
@@ -1279,7 +1348,13 @@ export function arange(
     AluExp.mul(AluExp.cast(dtype, AluVar.idx), AluExp.const(dtype, step)),
   );
   const st = ShapeTracker.fromShape([size]);
-  return new Array(exp, st, dtype, getBackend(device));
+  return new Array({
+    source: exp,
+    st,
+    dtype,
+    weakType: false,
+    backend: getBackend(device),
+  });
 }
 
 /**
@@ -1326,7 +1401,13 @@ export function linspace(
     ),
   );
   const st = ShapeTracker.fromShape([num]);
-  return new Array(exp, st, dtype, getBackend(device));
+  return new Array({
+    source: exp,
+    st,
+    dtype,
+    weakType: false,
+    backend: getBackend(device),
+  });
 }
 
 export function aluCompare(a: AluExp, b: AluExp, op: CompareOp): AluExp {
@@ -1349,43 +1430,4 @@ export function aluCompare(a: AluExp, b: AluExp, op: CompareOp): AluExp {
     case CompareOp.LessEqual:
       return AluExp.add(AluExp.cmplt(a, b), AluExp.cmpne(a, b).not());
   }
-}
-
-/**
- * Implements a NumPy-style generalized broadcast rule on two array shapes.
- *
- * "When operating on two arrays, NumPy compares their shapes element-wise. It
- * starts with the trailing (i.e. rightmost) dimension and works its way left.
- * Two dimensions are compatible when:
- *   1. they are equal, or
- *   2. one of them is 1."
- *
- * Throws a TypeError if the broadcast is not possible.
- *
- * <https://numpy.org/doc/stable/user/basics.broadcasting.html#general-broadcasting-rules>
- */
-export function generalBroadcast(a: number[], b: number[]): number[] {
-  const out: number[] = [];
-  let i = a.length - 1;
-  let j = b.length - 1;
-  for (; i >= 0 && j >= 0; i--, j--) {
-    const x = a[i];
-    const y = b[j];
-    if (x === y) {
-      out.push(x);
-    } else if (x === 1) {
-      out.push(y);
-    } else if (y === 1) {
-      out.push(x);
-    } else {
-      throw new TypeError(`Incompatible array broadcast shapes: ${a} vs ${b}`);
-    }
-  }
-  for (; i >= 0; i--) {
-    out.push(a[i]);
-  }
-  for (; j >= 0; j--) {
-    out.push(b[j]);
-  }
-  return out.reverse();
 }

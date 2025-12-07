@@ -13,13 +13,15 @@ import {
   deepEqual,
   FpHash,
   FpHashable,
+  generalBroadcast,
   runWithCache,
   unzip2,
   zip,
 } from "../utils";
-import { Array, generalBroadcast, pureArray, scalar } from "./array";
+import { Array, pureArray, scalar } from "./array";
 import { checkConvShape, checkPoolShape } from "./convolution";
 import {
+  AbstractValue,
   bind,
   flattenFun,
   fullRaise,
@@ -29,6 +31,7 @@ import {
   newMain,
   Primitive,
   PrimitiveParams,
+  promoteAvals,
   ShapedArray,
   Trace,
   Tracer,
@@ -63,14 +66,19 @@ export class Var {
 
 /** Literal in a Jaxpr expression. Currently, only scalars are supported. */
 export class Lit {
-  readonly dtype: DType;
   readonly value: number;
   readonly aval: ShapedArray;
 
-  constructor(dtype: DType, value: number) {
-    this.dtype = dtype;
+  get dtype(): DType {
+    return this.aval.dtype;
+  }
+
+  constructor(aval: AbstractValue, value: number) {
+    if (aval.shape.length !== 0) {
+      throw new Error(`internal: Lit must be a scalar`);
+    }
     this.value = value;
-    this.aval = new ShapedArray([], dtype);
+    this.aval = ShapedArray.fromAval(aval);
   }
 }
 
@@ -268,7 +276,7 @@ export class Jaxpr implements FpHashable {
           context.set(
             c,
             new Lit(
-              a.dtype,
+              promoteAvals(a.aval, b.aval),
               a.dtype === DType.Bool
                 ? Math.min(a.value + b.value, 1) // Special case: Bool ||
                 : a.value + b.value,
@@ -281,7 +289,7 @@ export class Jaxpr implements FpHashable {
         const [a] = inputs;
         const c = eqn.outBinders[0];
         if (atomIsLit(a)) {
-          context.set(c, new Lit(a.dtype, -a.value));
+          context.set(c, new Lit(a.aval, -a.value));
         } else {
           newEqns.push(eqn);
         }
@@ -294,7 +302,10 @@ export class Jaxpr implements FpHashable {
         } else if (atomIsLit(b, 1)) {
           context.set(c, a);
         } else if (atomIsLit(a) && atomIsLit(b)) {
-          context.set(c, new Lit(a.dtype, a.value * b.value));
+          context.set(
+            c,
+            new Lit(promoteAvals(a.aval, b.aval), a.value * b.value),
+          );
         } else {
           newEqns.push(eqn);
         }
@@ -667,7 +678,7 @@ function _inlineLiterals(jaxpr: Jaxpr, consts: Tracer[]): [Jaxpr, Tracer[]] {
   for (let i = 0; i < consts.length; i++) {
     if (ndim(consts[i]) === 0 && consts[i] instanceof Array) {
       const ar = consts[i] as Array;
-      literals.set(jaxpr.inBinders[i], new Lit(ar.dtype, ar.dataSync()[0]));
+      literals.set(jaxpr.inBinders[i], new Lit(ar.aval, ar.dataSync()[0]));
     } else {
       constBinders.push(jaxpr.inBinders[i]);
       newConsts.push(consts[i]);
@@ -702,22 +713,15 @@ function binopAbstractEval([x, y]: ShapedArray[]) {
   if (!(x instanceof ShapedArray) || !(y instanceof ShapedArray)) {
     throw new TypeError("binopAbstractEval expects ShapedArray inputs");
   }
-  if (x.dtype !== y.dtype) {
-    // TODO: Relax this restriction on dtype equality, or add automatic casts.
-    throw new TypeError(`Mismatched dtypes: ${x.dtype} vs ${y.dtype}`);
-  }
-  return [new ShapedArray(generalBroadcast(x.shape, y.shape), x.dtype)];
+  return [promoteAvals(x, y)];
 }
 
 function compareAbstractEval([x, y]: ShapedArray[]) {
   if (!(x instanceof ShapedArray) || !(y instanceof ShapedArray)) {
     throw new TypeError("compareAbstractEval expects ShapedArray inputs");
   }
-  if (x.dtype !== y.dtype) {
-    // TODO: Relax this restriction on dtype equality, or add automatic casts.
-    throw new TypeError(`Mismatched dtypes: ${x.dtype} vs ${y.dtype}`);
-  }
-  return [new ShapedArray(generalBroadcast(x.shape, y.shape), DType.Bool)];
+  const aval = promoteAvals(x, y); // Make sure they can be typecast for comparison.
+  return [new ShapedArray(aval.shape, DType.Bool, false)];
 }
 
 function vectorizedUnopAbstractEval([x]: ShapedArray[]) {
@@ -732,7 +736,7 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
   [Primitive.Reciprocal]: vectorizedUnopAbstractEval,
   [Primitive.StopGradient]: vectorizedUnopAbstractEval,
   [Primitive.Cast]([x]: ShapedArray[], { dtype }) {
-    return [new ShapedArray(x.shape, dtype)];
+    return [new ShapedArray(x.shape, dtype, false)];
   },
   [Primitive.Bitcast]([x]: ShapedArray[], { dtype }) {
     if (x.dtype === DType.Bool || dtype === DType.Bool) {
@@ -743,7 +747,7 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
         `Bitcast from ${x.dtype} to ${dtype} with different byte width`,
       );
     }
-    return [new ShapedArray(x.shape, dtype)];
+    return [new ShapedArray(x.shape, dtype, false)];
   },
   [Primitive.RandomBits]([k0, k1]: ShapedArray[], { shape }) {
     if (k0.dtype !== DType.Uint32 || k1.dtype !== DType.Uint32) {
@@ -757,7 +761,7 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
         `Keys of shapes ${k0.shape} and ${k1.shape} cannot be broadcast to shape ${shape}`,
       );
     }
-    return [new ShapedArray(shape, DType.Uint32)];
+    return [new ShapedArray(shape, DType.Uint32, false)];
   },
   [Primitive.Sin]: vectorizedUnopAbstractEval,
   [Primitive.Cos]: vectorizedUnopAbstractEval,
@@ -771,11 +775,11 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
   [Primitive.Reduce]([x], { axis }) {
     const axisSet = new Set(axis);
     const newShape = x.shape.filter((_, i) => !axisSet.has(i));
-    return [new ShapedArray(newShape, x.dtype)];
+    return [new ShapedArray(newShape, x.dtype, x.weakType)];
   },
   [Primitive.Pool]([x], { window, strides }) {
     const shape = checkPoolShape(x.shape, window, strides);
-    return [new ShapedArray(shape, x.dtype)];
+    return [new ShapedArray(shape, x.dtype, x.weakType)];
   },
   [Primitive.PoolTranspose]([x], { inShape, window, strides }) {
     const shape = checkPoolShape(inShape, window, strides);
@@ -784,61 +788,56 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
         `PoolTranspose shape mismatch: expected ${JSON.stringify(shape)}, got ${JSON.stringify(x.shape)}`,
       );
     }
-    return [new ShapedArray(inShape, x.dtype)];
+    return [new ShapedArray(inShape, x.dtype, x.weakType)];
   },
   [Primitive.Dot]([x, y]) {
-    if (x.dtype !== y.dtype)
-      throw new TypeError(`Dot dtype mismatch, got ${x.dtype} vs ${y.dtype}`);
     if (x.ndim === 0 && y.ndim === 0)
       throw new TypeError("Dot requires at least 1D inputs");
-    const shape = generalBroadcast(x.shape, y.shape);
+    const { shape, dtype, weakType } = promoteAvals(x, y);
     shape.splice(-1, 1); // Remove the contracted dimension.
-    return [new ShapedArray(shape, x.dtype)];
+    return [new ShapedArray(shape, dtype, weakType)];
   },
   [Primitive.Conv]([lhs, rhs], params) {
-    if (lhs.dtype !== rhs.dtype)
-      throw new TypeError(
-        `Conv dtype mismatch, got ${lhs.dtype} vs ${rhs.dtype}`,
-      );
+    const { dtype, weakType } = promoteAvals(
+      new ShapedArray([], lhs.dtype, lhs.weakType),
+      new ShapedArray([], rhs.dtype, rhs.weakType),
+    );
     const shape = checkConvShape(lhs.shape, rhs.shape, params);
-    return [new ShapedArray(shape, lhs.dtype)];
+    return [new ShapedArray(shape, dtype, weakType)];
   },
   [Primitive.Compare]: compareAbstractEval,
   [Primitive.Where]([cond, x, y]) {
     if (cond.dtype !== DType.Bool)
       throw new TypeError(`Condition must be boolean, got ${cond.dtype}`);
-    if (x.dtype !== y.dtype)
-      throw new TypeError(`Mismatched dtypes: ${x.dtype} vs ${y.dtype}`);
-    const shape = generalBroadcast(
-      cond.shape,
-      generalBroadcast(x.shape, y.shape),
-    );
-    return [new ShapedArray(shape, x.dtype)];
+    const xy = promoteAvals(x, y);
+    const shape = generalBroadcast(cond.shape, xy.shape);
+    return [new ShapedArray(shape, xy.dtype, xy.weakType)];
   },
   [Primitive.Transpose]([x], { perm }) {
     return [
       new ShapedArray(
         perm.map((i) => x.shape[i]),
         x.dtype,
+        x.weakType,
       ),
     ];
   },
   [Primitive.Broadcast]([x], { shape }) {
-    return [new ShapedArray(shape, x.dtype)];
+    return [new ShapedArray(shape, x.dtype, x.weakType)];
   },
   [Primitive.Reshape]([x], { shape }) {
-    return [new ShapedArray(shape, x.dtype)];
+    return [new ShapedArray(shape, x.dtype, x.weakType)];
   },
   [Primitive.Flip]([x], _) {
-    return [new ShapedArray(x.shape, x.dtype)];
+    return [ShapedArray.fromAval(x)];
   },
   [Primitive.Shrink]([x], { slice }) {
     const newShape = slice.map((s) => s[1] - s[0]);
-    return [new ShapedArray(newShape, x.dtype)];
+    return [new ShapedArray(newShape, x.dtype, x.weakType)];
   },
   [Primitive.Pad]([x], { width }) {
     const newShape = x.shape.map((dim, i) => dim + width[i][0] + width[i][1]);
-    return [new ShapedArray(newShape, x.dtype)];
+    return [new ShapedArray(newShape, x.dtype, x.weakType)];
   },
   [Primitive.Gather]([x, ...indices], { axis, outDim }) {
     for (const a of indices)
@@ -863,7 +862,7 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     );
     const newShape = x.shape.filter((_, i) => !axisSet.has(i));
     newShape.splice(outDim, 0, ...gatherShape);
-    return [new ShapedArray(newShape, x.dtype)];
+    return [new ShapedArray(newShape, x.dtype, x.weakType)];
   },
   [Primitive.JitCall](args, { jaxpr }) {
     const { inTypes, outTypes } = typecheckJaxpr(jaxpr);

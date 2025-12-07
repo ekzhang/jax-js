@@ -1,6 +1,6 @@
 /** @file Core library internals and interpreter stack, based on Autodidax. */
 
-import { AluGroup, AluOp, DType, isFloatDtype } from "../alu";
+import { AluGroup, AluOp, DType, isFloatDtype, promoteTypes } from "../alu";
 import { type Pair } from "../shape";
 import {
   JsTreeDef,
@@ -10,6 +10,7 @@ import {
 import {
   checkAxis,
   DEBUG,
+  generalBroadcast,
   isNumberPair,
   isPermutation,
   normalizeAxis,
@@ -429,9 +430,57 @@ export abstract class Trace {
   ): Tracer[];
 }
 
+/** Internal representation of an array value. */
 export interface AbstractValue {
+  /** Shape of the array. Must be a static tuple of non-negative dimensions. */
   shape: number[];
+
+  /** Concrete data type of array elements. */
   dtype: DType;
+
+  /**
+   * Arrays created from JavaScript numbers (e.g., `np.array(3)`) are created as
+   * _weakly typed_ unless a dtype is explicitly specified.
+   *
+   * Weakly typed values will automatically cast to the data type of other
+   * arrays when used as an operand as an expression. This property only affects
+   * how they promote in type casting; their memory layout is still determined
+   * by the actual `dtype` field.
+   *
+   * ```ts
+   * const x = np.array(3); // weakType = true, dtype = float32
+   * const y = np.array([1, 2], { dtype: np.int32 }); // weakType = false, dtype = int32
+   * const z = x.add(y); // z has dtype int32 because x is weakly typed
+   * ```
+   *
+   * Weak types are present in JIT programs in their spec (e.g., Jaxpr inputs
+   * and outputs can be weakly typed) form. But they're solely a frontend
+   * concept. Backends are not aware of weak types.
+   */
+  weakType: boolean;
+}
+
+/**
+ * Broadcast shapes and promote types with casting for two avals.
+ *
+ * This implements the weak type behavior described in `promoteTypes()`, but not
+ * implemented in that function as `weakType` is not passed.
+ */
+export function promoteAvals(a: AbstractValue, b: AbstractValue): ShapedArray {
+  const shape = generalBroadcast(a.shape, b.shape);
+  const weakType = a.weakType && b.weakType;
+  let dtype: DType;
+  if (a.weakType === b.weakType) {
+    // Both weak or both strong: use normal promotion rules.
+    dtype = promoteTypes(a.dtype, b.dtype);
+  } else if (a.weakType) {
+    // a is weak, b is strong: use b's dtype.
+    dtype = promoteTypes(b.dtype, DType.Uint32);
+  } else {
+    // b is weak, a is strong: use a's dtype.
+    dtype = promoteTypes(a.dtype, DType.Uint32);
+  }
+  return new ShapedArray(shape, dtype, weakType);
 }
 
 export abstract class Tracer {
@@ -502,9 +551,18 @@ export abstract class Tracer {
   get size(): number {
     return prod(this.shape);
   }
-  /** The dtype of the array. */
+  /** The dtype of elements stored in the array. */
   get dtype(): DType {
     return this.aval.dtype;
+  }
+  /**
+   * Whether the array is weakly typed.
+   *
+   * Weakly typed arrays will cast to the dtype of the other operand. See
+   * `promoteTypes()` for details.
+   */
+  get weakType(): boolean {
+    return this.aval.weakType;
   }
 
   /** The number of dimensions of the array. */
@@ -863,10 +921,11 @@ export class ShapedArray implements AbstractValue {
   constructor(
     readonly shape: number[],
     readonly dtype: DType,
+    readonly weakType: boolean,
   ) {}
 
   static fromAval(aval: AbstractValue) {
-    return new ShapedArray(aval.shape, aval.dtype);
+    return new ShapedArray(aval.shape, aval.dtype, aval.weakType);
   }
 
   get ndim() {
@@ -894,6 +953,7 @@ export function getAval(x: TracerValue): AbstractValue {
     return new ShapedArray(
       [],
       typeof x === "boolean" ? DType.Bool : DType.Float32,
+      typeof x === "boolean" ? false : true,
     );
   } else {
     throw new TypeError(`Unknown value: ${x}`);

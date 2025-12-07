@@ -263,6 +263,45 @@ export function findPow2(hint: number, max: number): number {
   return ret;
 }
 
+/**
+ * Implements a NumPy-style generalized broadcast rule on two array shapes.
+ *
+ * "When operating on two arrays, NumPy compares their shapes element-wise. It
+ * starts with the trailing (i.e. rightmost) dimension and works its way left.
+ * Two dimensions are compatible when:
+ *   1. they are equal, or
+ *   2. one of them is 1."
+ *
+ * Throws a TypeError if the broadcast is not possible.
+ *
+ * <https://numpy.org/doc/stable/user/basics.broadcasting.html#general-broadcasting-rules>
+ */
+export function generalBroadcast(a: number[], b: number[]): number[] {
+  const out: number[] = [];
+  let i = a.length - 1;
+  let j = b.length - 1;
+  for (; i >= 0 && j >= 0; i--, j--) {
+    const x = a[i];
+    const y = b[j];
+    if (x === y) {
+      out.push(x);
+    } else if (x === 1) {
+      out.push(y);
+    } else if (y === 1) {
+      out.push(x);
+    } else {
+      throw new TypeError(`Incompatible array broadcast shapes: ${a} vs ${b}`);
+    }
+  }
+  for (; i >= 0; i--) {
+    out.push(a[i]);
+  }
+  for (; j >= 0; j--) {
+    out.push(b[j]);
+  }
+  return out.reverse();
+}
+
 /** @inline */
 export type RecursiveArray<T> = T | RecursiveArray<T>[];
 

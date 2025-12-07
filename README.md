@@ -174,8 +174,8 @@ Contributions are welcomed in the following areas:
   - [ ] SIMD support for Wasm backend
   - [ ] Async / multithreading Wasm support
 - [ ] Full support of weak types and committed devices
-  - [ ] High-level ops have automatic type promotion
-  - [ ] Weak types - [ref](https://docs.jax.dev/en/latest/type_promotion.html#weak-types)
+  - [x] High-level ops have automatic type promotion
+  - [x] Weak types - [ref](https://docs.jax.dev/en/latest/type_promotion.html#weak-types)
   - [ ] Committed devices -
         [ref](https://docs.jax.dev/en/latest/sharded-computation.html#sharded-data-placement)
   - [ ] Device switching with `device_put()` between webgpu/cpu/wasm

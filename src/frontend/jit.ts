@@ -4,8 +4,16 @@ import { AluExp, AluOp, AluVar, DType, Kernel, Reduction } from "../alu";
 import { Backend, Slot } from "../backend";
 import { PPrint } from "../pprint";
 import { ShapeTracker, unravelAlu } from "../shape";
-import { DEBUG, deepEqual, FpHash, prod, range, rep } from "../utils";
-import { aluCompare, Array, generalBroadcast, PendingExecute } from "./array";
+import {
+  DEBUG,
+  deepEqual,
+  FpHash,
+  generalBroadcast,
+  prod,
+  range,
+  rep,
+} from "../utils";
+import { aluCompare, Array, PendingExecute } from "./array";
 import { pool, poolTranspose, prepareConv } from "./convolution";
 import { Primitive, PrimitiveParams, ShapedArray } from "./core";
 import { Jaxpr, Lit, Var } from "./jaxpr";

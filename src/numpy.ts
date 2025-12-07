@@ -9,7 +9,6 @@ import {
   fudgeArray,
   full,
   fullLike as fullLikeUnfudged,
-  generalBroadcast,
   identity,
   linspace,
   ones,
@@ -24,6 +23,7 @@ import * as vmapModule from "./frontend/vmap";
 import {
   checkAxis,
   deepEqual,
+  generalBroadcast,
   prod as iprod,
   normalizeAxis,
   range,

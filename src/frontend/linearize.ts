@@ -9,13 +9,14 @@ import {
 import {
   DEBUG,
   deepEqual,
+  generalBroadcast,
   invertPermutation,
   partitionList,
   range,
   toposort,
   unzip2,
 } from "../utils";
-import { eye, generalBroadcast, pureArray, scalar, zeros } from "./array";
+import { eye, pureArray, scalar, zeros } from "./array";
 import {
   AbstractValue,
   add,

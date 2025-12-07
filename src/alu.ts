@@ -45,12 +45,12 @@ export const isFloatDtype = (dtype: DType) =>
  * **Type lattice:**
  * ```text
  * bool -> uint32 -> int32 -> float16 -> float32
- *  weak f* --^
+ *  weakType --^
  * ```
  *
- * The asterisk f* is a weak type used for JS number constants. When creating
- * arrays, JS numbers default to float32 but "weak" so they cast to the dtype of
- * any array they are first combined with.
+ * `weakType` represents weakly typed arrays. These are created for JS numbers,
+ * which default to float32 but "weak" so they cast to the dtype of any array
+ * they are first combined with, except `bool`.
  *
  * **Examples:**
  * - `promoteTypes(bool, int32) → int32`

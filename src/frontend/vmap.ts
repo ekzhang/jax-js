@@ -53,7 +53,7 @@ import { jvp } from "./jvp";
 function mappedAval(batchDim: number, aval: AbstractValue) {
   const shape = [...aval.shape];
   shape.splice(batchDim, 1); // Remove the batch dimension.
-  return new ShapedArray(shape, aval.dtype);
+  return new ShapedArray(shape, aval.dtype, aval.weakType);
 }
 
 /** Move one axis to a different index. */
@@ -337,7 +337,7 @@ function vmapJaxpr(
     if (dims[i] === null) return v.aval;
     const shape = [...v.aval.shape];
     shape.splice(dims[i], 0, axisSize); // Insert the mapped axis into the shape.
-    return new ShapedArray(shape, v.aval.dtype);
+    return new ShapedArray(shape, v.aval.dtype, v.aval.weakType);
   });
   const { jaxpr: newJaxpr, consts: newConsts } = makeJaxpr((args: Tracer[]) =>
     vmapFlat(jaxprAsFun(jaxpr), dims, args),
