@@ -129,6 +129,7 @@ type ArrayConstructorArgs = {
   dtype: DType;
   weakType: boolean;
   backend: Backend;
+  committed: boolean;
   pending?: Iterable<PendingExecute>;
 };
 
@@ -151,6 +152,7 @@ export class Array extends Tracer {
   #source: AluExp | Slot;
   #st: ShapeTracker;
   #backend: Backend;
+  #committed: boolean; // if array is committed to device (passed explicitly)
   #rc: number; // reference count for this specific Array object
 
   #pendingSet: Set<PendingExecute> | null; // only if source is `Slot`
@@ -169,6 +171,7 @@ export class Array extends Tracer {
     this.#source = args.source;
     this.#st = args.st;
     this.#backend = args.backend;
+    this.#committed = args.committed;
     this.#rc = 1;
 
     this.#pendingSet = new Set(args.pending);
@@ -205,6 +208,7 @@ export class Array extends Tracer {
       dtype: args.dtype ?? this.#dtype,
       weakType: this.#weakType,
       backend: args.backend ?? this.#backend,
+      committed: args.committed ?? this.#committed,
       pending: args.pending ?? this.#pending ?? undefined,
     });
   }
@@ -942,6 +946,7 @@ export class Array extends Tracer {
             `jit_call expects ${jaxpr.inBinders.length} args, got ${args.length}`,
           );
         }
+        // XXX
         const backend = getBackend(); // TODO: Use correct backend.
         const consts = args.slice(0, numConsts);
         const tracers = args.slice(numConsts);
@@ -1087,6 +1092,7 @@ function arrayFromData(
     dtype,
     weakType,
     backend,
+    committed: device != undefined,
   });
 }
 
@@ -1151,6 +1157,7 @@ export function fullInternal(
     dtype: aval.dtype,
     weakType: aval.weakType,
     backend: getBackend(device),
+    committed: device != undefined,
   });
 }
 
@@ -1174,7 +1181,6 @@ export function fullLike(
     // expanding the array.
     throw new Error("numpy.fullLike() with array argument not implemented yet");
   }
-  // TODO: Use correct device.
   const sa = new ShapedArray(aval.shape, dtype ?? aval.dtype, aval.weakType);
   return fullInternal(sa, fillValue);
 }
@@ -1256,6 +1262,7 @@ export function eye(
     dtype,
     weakType,
     backend: getBackend(device),
+    committed: device != undefined,
   });
 }
 
@@ -1314,6 +1321,7 @@ export function arange(
     dtype,
     weakType: false,
     backend: getBackend(device),
+    committed: device != undefined,
   });
 }
 
@@ -1367,6 +1375,7 @@ export function linspace(
     dtype,
     weakType: false,
     backend: getBackend(device),
+    committed: device != undefined,
   });
 }
 

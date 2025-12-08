@@ -492,7 +492,6 @@ export function evalJaxpr(jaxpr: Jaxpr, args: Tracer[]): Tracer[] {
 
   const remainingRefs = new Map<Var, number>();
 
-  // TODO: Use correct backend when constructing array() here.
   const read = (x: Atom) => {
     if (x instanceof Var) {
       remainingRefs.set(x, (remainingRefs.get(x) ?? 0) - 1);
@@ -908,6 +907,7 @@ function joinIdx(n: number, a: any[], b: any[], argnums: Set<number>): any[] {
 /** @inline */
 export type JitOpts = {
   staticArgnums?: number[];
+  // XXX
   device?: Device; // TODO: Use backend properly
 };
 

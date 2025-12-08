@@ -16,7 +16,7 @@ import {
   toposort,
   unzip2,
 } from "../utils";
-import { array, eye, pureArray, zeros } from "./array";
+import { array, eye, onesLike, pureArray, zeros } from "./array";
 import {
   AbstractValue,
   add,
@@ -580,7 +580,7 @@ function evalJaxprTransposed(
     // values. Tricky!
     const primalsIn = eqn.inputs.map((v) =>
       v instanceof Lit
-        ? array(v.value, { dtype: v.dtype }) // TODO: Use correct backend
+        ? array(v.value, { dtype: v.dtype })
         : knownPrimals.has(v)
           ? knownPrimals.get(v)!.ref
           : new UndefPrimal(v.aval),
@@ -918,7 +918,6 @@ function vjpFlat(
   const { primalsOut, jaxpr, consts } = linearizeFlatUtil(f, primalsIn);
   // Pullback cotangents to the UndefPrimal transpose inputs.
   const fVjp = (...cotangents: Tracer[]) => {
-    // TODO: Figure out when to free `consts`.
     const transposeInputs = [
       ...consts.map((c) => c.ref),
       // Explcitly list which arguments should be transposed.
@@ -983,8 +982,7 @@ export function valueAndGrad(f: (...primals: any) => Tracer) {
     if (!isFloatDtype(y.dtype)) {
       throw new TypeError("grad only supports floating-point dtypes");
     }
-    // TODO: Use correct device
-    const [ct, ...rest] = fVjp(array(1, { dtype: y.dtype }));
+    const [ct, ...rest] = fVjp(onesLike(y.ref)); // backprop from scalar 1
     for (const r of rest) treeDispose(r);
     fVjp.dispose();
     return [y, ct] as [any, any];
@@ -1005,7 +1003,6 @@ export function jacrev(f: any) {
       fVjp.dispose();
       return ret;
     };
-    // TODO: Use correct device
     return vmap(pullback, [1])(eye(size, undefined, { dtype: x.dtype }));
   };
 }

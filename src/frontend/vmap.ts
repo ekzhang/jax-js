@@ -434,7 +434,6 @@ export function jacfwd(f: any) {
     }
     const [size] = x.shape;
     const pushfwd = (v: Tracer) => jvp(f, [x], [v])[1];
-    // TODO: Use correct device
     return vmap(pushfwd, [0])(eye(size, undefined, { dtype: x.dtype }));
   };
 }
