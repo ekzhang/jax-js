@@ -439,23 +439,36 @@ function reshapeViews(
 // JIT handler for a broadcasted operation on at least 1 input.
 function broadcastedJit<P extends Primitive>(
   fn: (exps: AluExp[], params: PrimitiveParams<P>) => AluExp,
+  opts?: { skipCastIdx?: number[] },
 ): JitRule<P> {
   return (nargs, exps, avals, params) => {
-    const newShape = avals.map((aval) => aval.shape).reduce(generalBroadcast);
+    let { shape: newShape, dtype: newDtype } = avals.reduce(promoteAvals);
+
+    const skipCastIdx = opts?.skipCastIdx ?? [];
+    if (skipCastIdx.length) {
+      // Skip casting some indices to a shared dtype.
+      newDtype = avals
+        .filter((_, i) => !skipCastIdx.includes(i))
+        .reduce(promoteAvals).dtype;
+    }
 
     // Perform a broadcast on each of the input expressions.
     //
     // Only GlobalView is affected. GlobalIndex is not used here, and neither is
     // AluVar.idx, since those are realized before jit().
-    exps = exps.map((exp) =>
-      reshapeViews(exp, (st) => {
+    exps = exps.map((exp, i) => {
+      exp = reshapeViews(exp, (st) => {
         if (!deepEqual(st.shape, newShape))
           return st.broadcast(
             newShape,
             range(newShape.length - st.shape.length),
           );
-      }),
-    );
+      });
+      if (exp.dtype !== newDtype && !skipCastIdx.includes(i)) {
+        exp = AluExp.cast(newDtype, exp);
+      }
+      return exp;
+    });
 
     // Then, we can call the function to produce a new kernel.
     const exp = fn(exps, params);
@@ -575,7 +588,10 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
     return jitRules[Primitive.Dot](nargs, [a, b], [as, bs], {});
   },
   [Primitive.Compare]: broadcastedJit(([a, b], { op }) => aluCompare(a, b, op)),
-  [Primitive.Where]: broadcastedJit(([cond, a, b]) => AluExp.where(cond, a, b)),
+  [Primitive.Where]: broadcastedJit(
+    ([cond, a, b]) => AluExp.where(cond, a, b),
+    { skipCastIdx: [0] },
+  ),
   [Primitive.Transpose]: reshapeJit((st, { perm }) => st.permute(perm)),
   [Primitive.Broadcast]: reshapeJit((st, { shape, axis }) =>
     st.broadcast(shape, axis),
