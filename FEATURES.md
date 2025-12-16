@@ -34,7 +34,7 @@ In the tables below, we use a color legend to refer to functions in JAX:
 | `make_jaxpr`         | 🟢      |                                                 |
 | `eval_shape`         | 🟠      |                                                 |
 | `ShapeDtypeStruct`   | 🟠      |                                                 |
-| `device_put`         | 🔴      | should be added soon                            |
+| `device_put`         | 🟢      | async-only for performance                      |
 | `device_get`         | ⚪️      | no separate "host" device                       |
 | `default_backend`    | ⚪️      | XLA feature                                     |
 | `named_call`         | ⚪️      | XLA feature                                     |

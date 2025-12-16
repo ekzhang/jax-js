@@ -1,4 +1,4 @@
-import { defaultDevice, Device, devices, init } from "./backend";
+import { defaultDevice, Device, devices, getBackend, init } from "./backend";
 import * as jaxprModule from "./frontend/jaxpr";
 import { Jaxpr, OwnedFunction } from "./frontend/jaxpr";
 import * as jvpModule from "./frontend/jvp";
@@ -193,4 +193,31 @@ export async function blockUntilReady<T extends JsTree<any>>(x: T): Promise<T> {
   }
   await Promise.all(promises);
   return x;
+}
+
+/**
+ * Transfer `x` to `device`.
+ *
+ * `x` may be a nested container of arrays or scalars. The resulting structure
+ * is committed to the device.
+ *
+ * If `device` is not specified, this function behaves as identity if the input
+ * is already an `Array`, otherwise it places the scalar uncommitted on the
+ * default device.
+ */
+export async function devicePut<T extends JsTree<any>>(
+  x: T,
+  device?: Device,
+): Promise<MapJsTree<T, number | boolean, Array>> {
+  const [xflat, structure] = tree.flatten(x);
+  const yflat = await Promise.all(
+    xflat.map((leaf) => {
+      if (leaf instanceof Array) {
+        return device ? leaf._put(getBackend(device)) : Promise.resolve(leaf);
+      } else {
+        return Promise.resolve(numpy.array(leaf as any, { device }));
+      }
+    }),
+  );
+  return tree.unflatten(structure, yflat) as any;
 }

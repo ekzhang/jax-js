@@ -24,7 +24,7 @@ suite("jax.jvp()", () => {
 
   test("can take jvp of pytrees", () => {
     const result = jvp(
-      (x: { a: np.Array; b: np.Array }) => x.a.mul(x.a).add(x.b),
+      (x: { a: np.Array; b: np.Array }) => x.a.ref.mul(x.a).add(x.b),
       [{ a: 1, b: 2 }],
       [{ a: 1, b: 0 }],
     );

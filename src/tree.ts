@@ -21,11 +21,13 @@ type Same<X, Y> =
 
 type MappedJsTree<T, A, B> = T extends A
   ? B
-  : T extends globalThis.Array<infer U>
-    ? number extends T["length"]
-      ? MapJsTree<U, A, B>[] // plain array
-      : { [K in keyof T]: MapJsTree<T[K], A, B> } // tuple: map each slot, keep tuple shape
-    : { [K in keyof T]: MapJsTree<T[K], A, B> }; // object: map each slot, keep object shape
+  : T extends Array // Special case: Do not recurse into np.Array
+    ? T
+    : T extends globalThis.Array<infer U>
+      ? number extends T["length"]
+        ? MapJsTree<U, A, B>[] // plain array
+        : { [K in keyof T]: MapJsTree<T[K], A, B> } // tuple: map each slot, keep tuple shape
+      : { [K in keyof T]: MapJsTree<T[K], A, B> }; // object: map each slot, keep object shape
 
 /** @ignore Convert a subtype of JsTree<A> into a JsTree<B>, with the same structure. */
 export type MapJsTree<T, A, B> =

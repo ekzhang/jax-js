@@ -249,7 +249,7 @@ You can also place individual arrays on specific devices:
 import { devicePut, numpy as np } from "@jax-js/jax";
 
 const ar = np.array([1, 2, 3]); // Starts with device="wasm"
-devicePut(ar, "webgpu"); // Now device="webgpu"
+await devicePut(ar, "webgpu"); // Now device="webgpu"
 ```
 
 ### Helper libraries
@@ -354,11 +354,3 @@ Contributions are welcomed! Especially in:
   epilogue to reductions.
 - Adding WebGL runtime for older browsers that don't support WebGPU.
 - Making a fast transformer inference engine, comparing against onnxruntime-web.
-
-## Release checklist
-
-- [ ] Committed devices -
-      [ref](https://docs.jax.dev/en/latest/sharded-computation.html#sharded-data-placement)
-- [ ] Device switching with `device_put()` between webgpu/cpu/wasm
-- [ ] Finish CLIP inference demo and associated features (depthwise convolution, vmap of gather,
-      etc.)

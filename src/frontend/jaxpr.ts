@@ -1,5 +1,4 @@
 import { byteWidth, DType } from "../alu";
-import { type Device } from "../backend";
 import { ArrayLike } from "../numpy";
 import { PPrint } from "../pprint";
 import { type Pair } from "../shape";
@@ -907,8 +906,6 @@ function joinIdx(n: number, a: any[], b: any[], argnums: Set<number>): any[] {
 /** @inline */
 export type JitOpts = {
   staticArgnums?: number[];
-  // XXX
-  device?: Device; // TODO: Use backend properly
 };
 
 export function makeJaxpr(
