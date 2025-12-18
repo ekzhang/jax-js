@@ -339,7 +339,12 @@ suite.each(devices)("device:%s", (device) => {
     test("computes less", () => {
       const x = np.array([1, 2, 3, 4]);
       const y = np.array([4, 5, 3, 2]);
-      expect(np.lessEqual(x.ref, y.ref).js()).toEqual([true, true, true, false]);
+      expect(np.lessEqual(x.ref, y.ref).js()).toEqual([
+        true,
+        true,
+        true,
+        false,
+      ]);
     });
   });
 
@@ -347,7 +352,12 @@ suite.each(devices)("device:%s", (device) => {
     test("computes greater", () => {
       const x = np.array([1, 2, 3, 4]);
       const y = np.array([4, 5, 3, 2]);
-      expect(np.greater(x.ref, y.ref).js()).toEqual([false, false, false, true]);
+      expect(np.greater(x.ref, y.ref).js()).toEqual([
+        false,
+        false,
+        false,
+        true,
+      ]);
     });
   });
 
@@ -355,7 +365,12 @@ suite.each(devices)("device:%s", (device) => {
     test("computes greater", () => {
       const x = np.array([1, 2, 3, 4]);
       const y = np.array([4, 5, 3, 2]);
-      expect(np.greaterEqual(x.ref, y.ref).js()).toEqual([false, false, true, true]);
+      expect(np.greaterEqual(x.ref, y.ref).js()).toEqual([
+        false,
+        false,
+        true,
+        true,
+      ]);
     });
   });
 
