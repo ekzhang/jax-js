@@ -16,12 +16,15 @@ import { WasmBackend } from "./backend/wasm";
 export type Device = "cpu" | "wasm" | "webgpu";
 export const devices: Device[] = ["cpu", "wasm", "webgpu"];
 
-let defaultBackend: Device = "wasm";
 const initializedBackends = new Map<Device, Backend>();
 
 // Default backends, initialized at startup.
 initializedBackends.set("cpu", new CpuBackend());
-initializedBackends.set("wasm", new WasmBackend());
+if (typeof WebAssembly !== "undefined") {
+  initializedBackends.set("wasm", new WasmBackend());
+}
+
+let defaultBackend: Device = initializedBackends.has("wasm") ? "wasm" : "cpu";
 
 /** Configure the default device for arrays. */
 export function defaultDevice(device?: Device): Device {
@@ -68,6 +71,7 @@ async function createBackend(device: Device): Promise<Backend | null> {
   if (device === "cpu") {
     return new CpuBackend();
   } else if (device === "wasm") {
+    if (typeof WebAssembly === "undefined") return null; // WebAssembly is not available.
     return new WasmBackend();
   } else if (device === "webgpu") {
     if (!navigator.gpu) return null; // WebGPU is not available.
