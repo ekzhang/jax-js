@@ -112,7 +112,7 @@
     } else if (isGoodGpu) {
       gpuDim = isMobile ? 1024 : 2048;
     } else {
-      gpuDim = 512;
+      gpuDim = 1024;
     }
 
     return {
