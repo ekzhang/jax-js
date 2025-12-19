@@ -336,7 +336,7 @@ suite.each(devices)("device:%s", (device) => {
   });
 
   suite("jax.numpy.lessEqual()", () => {
-    test("computes less", () => {
+    test("computes lessEqual", () => {
       const x = np.array([1, 2, 3, 4]);
       const y = np.array([4, 5, 3, 2]);
       expect(np.lessEqual(x.ref, y.ref).js()).toEqual([
@@ -362,7 +362,7 @@ suite.each(devices)("device:%s", (device) => {
   });
 
   suite("jax.numpy.greaterEqual()", () => {
-    test("computes greater", () => {
+    test("computes greaterEqual", () => {
       const x = np.array([1, 2, 3, 4]);
       const y = np.array([4, 5, 3, 2]);
       expect(np.greaterEqual(x.ref, y.ref).js()).toEqual([
