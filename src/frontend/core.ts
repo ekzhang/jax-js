@@ -100,11 +100,9 @@ export type PrimitiveParams<T extends Primitive> =
     : Record<string, never>;
 
 export enum CompareOp {
-  Greater = "greater",
   Less = "less",
   Equal = "equal",
   NotEqual = "not_equal",
-  GreaterEqual = "greater_equal",
   LessEqual = "less_equal",
 }
 
@@ -244,7 +242,7 @@ export function compare(x: TracerValue, y: TracerValue, op: CompareOp) {
   return bind1(Primitive.Compare, [x, y], { op });
 }
 export function greater(x: TracerValue, y: TracerValue) {
-  return compare(x, y, CompareOp.Greater);
+  return compare(y, x, CompareOp.Less);
 }
 export function less(x: TracerValue, y: TracerValue) {
   return compare(x, y, CompareOp.Less);
@@ -256,7 +254,7 @@ export function notEqual(x: TracerValue, y: TracerValue) {
   return compare(x, y, CompareOp.NotEqual);
 }
 export function greaterEqual(x: TracerValue, y: TracerValue) {
-  return compare(x, y, CompareOp.GreaterEqual);
+  return compare(y, x, CompareOp.LessEqual);
 }
 export function lessEqual(x: TracerValue, y: TracerValue) {
   return compare(x, y, CompareOp.LessEqual);

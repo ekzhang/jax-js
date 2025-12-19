@@ -1461,21 +1461,15 @@ export function linspace(
 export function aluCompare(a: AluExp, b: AluExp, op: CompareOp): AluExp {
   // Translate a `CompareOp` into an `AluExp` on two sub-expressions.
   switch (op) {
-    case CompareOp.Greater:
-      // `x > y` is equivalent to `x != y && !(x < y)`
-      // TODO: handle NaN
-      return AluExp.mul(AluExp.cmpne(a, b), AluExp.cmplt(a, b).not());
     case CompareOp.Less:
       return AluExp.cmplt(a, b);
     case CompareOp.Equal:
+      // `x == y` is always equivalent to `!(x != y)`, including NaN
       return AluExp.cmpne(a, b).not();
     case CompareOp.NotEqual:
       return AluExp.cmpne(a, b);
-    case CompareOp.GreaterEqual:
-      // `x >= y` is equivalent to `!(x < y)`
-      // TODO: handle NaN
-      return AluExp.cmplt(a, b).not();
     case CompareOp.LessEqual:
+      // `x <= y` is equivalent to `x < y || x == y`
       return AluExp.add(AluExp.cmplt(a, b), AluExp.cmpne(a, b).not());
   }
 }
