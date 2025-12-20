@@ -15,8 +15,7 @@ export function onnxDtypeToJax(onnxType: TensorProto_DataType): DType {
       return np.float32;
     case TensorProto_DataType.INT32:
       return np.int32;
-    case TensorProto_DataType.INT64:
-      // jax-js doesn't support int64, downcast to int32
+    case TensorProto_DataType.INT64: // int64 is used in shapes, we map to int32
       return np.int32;
     case TensorProto_DataType.FLOAT16:
       return np.float16;
@@ -30,8 +29,7 @@ export function onnxDtypeToJax(onnxType: TensorProto_DataType): DType {
     case TensorProto_DataType.INT8:
     case TensorProto_DataType.UINT16:
     case TensorProto_DataType.INT16:
-      // Convert small integer types to int32
-      return np.int32;
+    case TensorProto_DataType.UINT64:
     default:
       throw new Error(`Unsupported ONNX dtype: ${onnxType}`);
   }

@@ -13,17 +13,12 @@ import {
   type TensorProto,
 } from "onnx-buf";
 
-import { type Attrs, onnxOps } from "./ops.js";
-import { tensorToArray } from "./tensor.js";
+import * as onnxOps from "./ops";
+import { tensorToArray } from "./tensor";
 
-export { tensorToArray, onnxDtypeToJax } from "./tensor.js";
-export { onnxOps } from "./ops.js";
-
-/**
- * Parse attributes from an ONNX node into a plain object.
- */
-function parseAttributes(node: NodeProto): Attrs {
-  const attrs: Attrs = {};
+/** Parse attributes from an ONNX node into a plain object. */
+function parseAttributes(node: NodeProto): Record<string, any> {
+  const attrs: Record<string, any> = {};
   for (const attr of node.attribute) {
     switch (attr.type) {
       case AttributeProto_AttributeType.FLOAT:
@@ -67,34 +62,26 @@ function parseInitializers(initializers: TensorProto[]): Map<string, np.Array> {
 /**
  * Execute a single ONNX node.
  */
-function executeNode(
-  node: NodeProto,
-  values: Map<string, np.Array>,
-): np.Array[] {
+function executeNode(node: NodeProto, vars: Map<string, np.Array>): np.Array[] {
   const opType = node.opType;
-  const handler = onnxOps[opType];
+  const handler = (onnxOps as Record<string, any>)[opType];
+  if (!handler) throw new Error(`Unsupported ONNX operation: ${opType}`);
 
-  if (!handler) {
-    throw new Error(`Unsupported ONNX operation: ${opType}`);
-  }
-
-  // Gather input arrays (filter out empty string inputs which are optional)
-  const inputs: np.Array[] = [];
+  const inputs: (np.Array | undefined)[] = [];
   for (const name of node.input) {
-    if (name === "") continue; // Optional input not provided
-    const arr = values.get(name);
+    if (name === "") {
+      inputs.push(undefined); // Optional input not provided
+      continue;
+    }
+    const arr = vars.get(name);
     if (!arr) {
       throw new Error(
         `Missing input '${name}' for node '${node.name}' (op: ${opType})`,
       );
     }
-    inputs.push(arr);
+    inputs.push(arr.ref);
   }
-
-  // Parse attributes
   const attrs = parseAttributes(node);
-
-  // Execute the operation
   return handler(inputs, attrs);
 }
 
@@ -123,79 +110,58 @@ function executeNode(
 export function modelAsJaxFunction(
   modelBytes: Uint8Array,
 ): (inputs: Record<string, np.Array>) => Record<string, np.Array> {
-  // Parse the ONNX model
   const model = fromBinary(ModelProtoSchema, modelBytes);
   const graph = model.graph;
-
   if (!graph) {
     throw new Error("ONNX model has no graph");
   }
 
-  // Extract initializers (weights/biases) as jax arrays
-  // These are cached and reused across calls
+  // Extract initializers (weights/biases) as jax arrays.
+  // These are cached and reused across calls.
   const initializers = parseInitializers(graph.initializer);
 
-  // Build list of actual input names (excluding initializers)
   const inputNames: string[] = [];
   for (const input of graph.input) {
     if (!initializers.has(input.name)) {
       inputNames.push(input.name);
     }
   }
-
-  // Build list of output names
   const outputNames = graph.output.map((o) => o.name);
 
-  // Return the execution function
   return function (inputs: Record<string, np.Array>): Record<string, np.Array> {
     if (Object.keys(inputs).length !== inputNames.length) {
       throw new Error(
-        `Expected ${inputNames.length} inputs, but got ${
-          Object.keys(inputs).length
-        }`,
+        `Expected ${inputNames.length} inputs, but got ${Object.keys(inputs).length}`,
       );
     }
     for (const name of inputNames) {
-      if (!(name in inputs)) {
+      if (!Object.hasOwn(inputs, name))
         throw new Error(`Missing input '${name}'`);
+    }
+
+    const vars = new Map<string, np.Array>();
+
+    try {
+      for (const [name, arr] of initializers) vars.set(name, arr.ref);
+      for (const name of inputNames) vars.set(name, inputs[name]);
+
+      for (const node of graph.node) {
+        const results = executeNode(node, vars);
+        for (const [i, name] of node.output.entries())
+          vars.set(name, results[i]);
       }
-    }
 
-    // Map to hold all intermediate values
-    const values = new Map<string, np.Array>();
-
-    // Add initializers (with ref since they're reused)
-    for (const [name, arr] of initializers) {
-      values.set(name, arr.ref);
-    }
-
-    // Add user inputs (consumed, no ref)
-    for (const inputName of inputNames) {
-      values.set(inputName, inputs[inputName]);
-    }
-
-    // Execute nodes in topological order (ONNX guarantees this order)
-    for (const node of graph.node) {
-      const results = executeNode(node, values);
-
-      // Store outputs
-      for (let i = 0; i < node.output.length; i++) {
-        const outputName = node.output[i];
-        if (outputName !== "" && results[i]) {
-          values.set(outputName, results[i]);
-        }
+      const outputs: Record<string, np.Array> = {};
+      for (const name of outputNames) {
+        const arr = vars.get(name);
+        if (!arr) throw new Error(`Missing output '${name}'`);
+        outputs[name] = arr;
       }
+      for (const name of outputNames) vars.delete(name); // Prevent disposing outputs
+      return outputs;
+    } finally {
+      // Clean up, dispose of all values that weren't returned.
+      for (const ar of vars.values()) ar.dispose();
     }
-
-    // Gather outputs
-    const outputs: Record<string, np.Array> = {};
-    for (const name of outputNames) {
-      const arr = values.get(name);
-      if (!arr) {
-        throw new Error(`Missing output '${name}'`);
-      }
-      outputs[name] = arr;
-    }
-    return outputs;
   };
 }
