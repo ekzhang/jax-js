@@ -165,6 +165,7 @@ export class CodeGenerator {
   local: Local;
   i32: I32;
   f32: F32;
+  f64: F64;
   v128: V128;
   i32x4: I32x4;
   f32x4: F32x4;
@@ -183,6 +184,7 @@ export class CodeGenerator {
     this.local = new Local(this);
     this.i32 = new I32(this);
     this.f32 = new F32(this);
+    this.f64 = new F64(this);
     this.v128 = new V128(this);
     this.i32x4 = new I32x4(this);
     this.f32x4 = new F32x4(this);
@@ -567,7 +569,7 @@ class Local {
   }
 }
 
-type TypeSpec = "i32" | "f32";
+type TypeSpec = "i32" | "f32" | "f64";
 
 function UNARY_OP(
   op: string,
@@ -696,6 +698,8 @@ class I32 implements Type {
   ne = BINARY_OP("ne", 0x47, "i32", "i32", "i32");
   trunc_f32_s = UNARY_OP("trunc_f32_s", 0xa8, "f32", "i32");
   trunc_f32_u = UNARY_OP("trunc_f32_u", 0xa9, "f32", "i32");
+  trunc_f64_s = UNARY_OP("trunc_f64_s", 0xaa, "f64", "i32");
+  trunc_f64_u = UNARY_OP("trunc_f64_u", 0xab, "f64", "i32");
   load = LOAD_OP("load", 0x28, "i32");
   load8_s = LOAD_OP("load8_s", 0x2c, "i32");
   load8_u = LOAD_OP("load8_u", 0x2d, "i32");
@@ -708,6 +712,8 @@ class I32 implements Type {
 
   trunc_sat_f32_s = UNARY_OP("trunc_sat_f32_s", [0xfc, 0x00], "f32", "i32");
   trunc_sat_f32_u = UNARY_OP("trunc_sat_f32_u", [0xfc, 0x01], "f32", "i32");
+  trunc_sat_f64_s = UNARY_OP("trunc_sat_f64_s", [0xfc, 0x02], "f64", "i32");
+  trunc_sat_f64_u = UNARY_OP("trunc_sat_f64_u", [0xfc, 0x03], "f64", "i32");
 }
 
 ////////////////////////////////////////
@@ -734,6 +740,8 @@ class F32 implements Type {
     this.cg._push(this);
   }
 
+  load = LOAD_OP("load", 0x2a, "f32");
+  store = STORE_OP("store", 0x38, "f32");
   eq = BINARY_OP("eq", 0x5b, "f32", "f32", "i32");
   ne = BINARY_OP("ne", 0x5c, "f32", "f32", "i32");
   lt = BINARY_OP("lt", 0x5d, "f32", "f32", "i32");
@@ -756,9 +764,59 @@ class F32 implements Type {
   copysign = BINARY_OP("copysign", 0x98, "f32", "f32", "f32");
   convert_i32_s = UNARY_OP("convert_i32_s", 0xb2, "i32", "f32");
   convert_i32_u = UNARY_OP("convert_i32_u", 0xb3, "i32", "f32");
-  load = LOAD_OP("load", 0x2a, "f32");
-  store = STORE_OP("store", 0x38, "f32");
+  demote_f64 = UNARY_OP("demote_f64", 0xb6, "f64", "f32");
   reinterpret_i32 = UNARY_OP("reinterpret_i32", 0xbe, "i32", "f32");
+}
+
+////////////////////////////////////////
+// F64 class
+////////////////////////////////////////
+
+class F64 implements Type {
+  constructor(readonly cg: CodeGenerator) {}
+  get typeId(): number {
+    return 0x7c;
+  }
+  get name(): string {
+    return "f64";
+  }
+
+  const(f: number) {
+    this.cg._emit(0x44);
+    const buffer = new ArrayBuffer(8);
+    new DataView(buffer).setFloat64(0, f, true);
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < 8; i++) {
+      this.cg._emit(bytes[i]);
+    }
+    this.cg._push(this);
+  }
+
+  load = LOAD_OP("load", 0x2b, "f64");
+  store = STORE_OP("store", 0x39, "f64");
+  eq = BINARY_OP("eq", 0x61, "f64", "f64", "i32");
+  ne = BINARY_OP("ne", 0x62, "f64", "f64", "i32");
+  lt = BINARY_OP("lt", 0x63, "f64", "f64", "i32");
+  gt = BINARY_OP("gt", 0x64, "f64", "f64", "i32");
+  le = BINARY_OP("le", 0x65, "f64", "f64", "i32");
+  ge = BINARY_OP("ge", 0x66, "f64", "f64", "i32");
+  abs = UNARY_OP("abs", 0x99, "f64", "f64");
+  neg = UNARY_OP("neg", 0x9a, "f64", "f64");
+  ceil = UNARY_OP("ceil", 0x9b, "f64", "f64");
+  floor = UNARY_OP("floor", 0x9c, "f64", "f64");
+  trunc = UNARY_OP("trunc", 0x9d, "f64", "f64");
+  nearest = UNARY_OP("nearest", 0x9e, "f64", "f64");
+  sqrt = UNARY_OP("sqrt", 0x9f, "f64", "f64");
+  add = BINARY_OP("add", 0xa0, "f64", "f64", "f64");
+  sub = BINARY_OP("sub", 0xa1, "f64", "f64", "f64");
+  mul = BINARY_OP("mul", 0xa2, "f64", "f64", "f64");
+  div = BINARY_OP("div", 0xa3, "f64", "f64", "f64");
+  min = BINARY_OP("min", 0xa4, "f64", "f64", "f64");
+  max = BINARY_OP("max", 0xa5, "f64", "f64", "f64");
+  copysign = BINARY_OP("copysign", 0xa6, "f64", "f64", "f64");
+  convert_i32_s = UNARY_OP("convert_i32_s", 0xb7, "i32", "f64");
+  convert_i32_u = UNARY_OP("convert_i32_u", 0xb8, "i32", "f64");
+  promote_f32 = UNARY_OP("promote_f32", 0xbb, "f32", "f64");
 }
 
 ////////////////////////////////////////

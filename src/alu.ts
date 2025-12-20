@@ -9,6 +9,7 @@ export enum DType {
   Uint32 = "uint32",
   Bool = "bool",
   Float16 = "float16",
+  Float64 = "float64",
 }
 
 /** @inline */
@@ -16,7 +17,8 @@ export type DataArray =
   | Float32Array<ArrayBuffer>
   | Int32Array<ArrayBuffer>
   | Uint32Array<ArrayBuffer>
-  | Float16Array<ArrayBuffer>;
+  | Float16Array<ArrayBuffer>
+  | Float64Array<ArrayBuffer>;
 
 export const byteWidth = (dtype: DType): number => {
   switch (dtype) {
@@ -27,13 +29,17 @@ export const byteWidth = (dtype: DType): number => {
       return 4;
     case DType.Float16:
       return 2;
+    case DType.Float64:
+      return 8;
     default:
       throw new TypeError(`Unknown dtype: ${dtype}`);
   }
 };
 
-export const isFloatDtype = (dtype: DType) =>
-  dtype === DType.Float32 || dtype === DType.Float16;
+export const isFloatDtype = (
+  dtype: DType,
+): dtype is DType.Float32 | DType.Float16 | DType.Float64 =>
+  dtype === DType.Float32 || dtype === DType.Float16 || dtype === DType.Float64;
 
 /**
  * Promote two dtypes to their join according to the type lattice.
@@ -44,7 +50,7 @@ export const isFloatDtype = (dtype: DType) =>
  *
  * **Type lattice:**
  * ```text
- * bool -> uint32 -> int32 -> float16 -> float32
+ * bool -> uint32 -> int32 -> float16 -> float32 -> float64
  *  weakType --^
  * ```
  *
@@ -69,6 +75,7 @@ export function promoteTypes(dtype1: DType, dtype2: DType): DType {
     [DType.Int32]: 2,
     [DType.Float16]: 3,
     [DType.Float32]: 4,
+    [DType.Float64]: 5,
   };
 
   // Take the type that appears later in the chain
@@ -91,6 +98,8 @@ export function dtypedArray(
       return new Uint32Array(buffer, byteOffset, length);
     case DType.Float16:
       return new Float16Array(buffer, byteOffset, length);
+    case DType.Float64:
+      return new Float64Array(buffer, byteOffset, length);
     default:
       throw new Error(`Unimplemented dtype: ${dtype}`);
   }
@@ -107,6 +116,8 @@ export function dtypedJsArray(dtype: DType, data: number[]): DataArray {
       return new Uint32Array(data);
     case DType.Float16:
       return new Float16Array(data);
+    case DType.Float64:
+      return new Float64Array(data);
     default:
       throw new Error(`Unimplemented dtype: ${dtype}`);
   }
@@ -275,6 +286,9 @@ export class AluExp implements FpHashable {
   }
   static f16(value: number): AluExp {
     return AluExp.const(DType.Float16, value);
+  }
+  static f64(value: number): AluExp {
+    return AluExp.const(DType.Float64, value);
   }
 
   not(): AluExp {
@@ -1047,6 +1061,7 @@ export class AluExp implements FpHashable {
           else if (fromType === DType.Int32) view.setInt32(0, x, true);
           else if (fromType === DType.Uint32) view.setUint32(0, x, true);
           else if (fromType === DType.Float16) view.setFloat16(0, x, true);
+          else if (fromType === DType.Float64) view.setFloat64(0, x, true);
           else throw new Error(`Unsupported bitcast from ${fromType}`);
           // Read the data in the target dtype.
           if (this.dtype === DType.Float32) return view.getFloat32(0, true);
@@ -1054,6 +1069,8 @@ export class AluExp implements FpHashable {
           else if (this.dtype === DType.Uint32) return view.getUint32(0, true);
           else if (this.dtype === DType.Float16)
             return view.getFloat16(0, true);
+          else if (this.dtype === DType.Float64)
+            return view.getFloat64(0, true);
           else throw new Error(`Unsupported bitcast to ${this.dtype}`);
         }
         default:

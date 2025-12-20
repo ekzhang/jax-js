@@ -21,6 +21,26 @@ suite("CodeGenerator", () => {
     expect(add(3.5, 4.6)).toBeCloseTo(8.1, 5);
   });
 
+  test("assembles f64 add function", async () => {
+    const cg = new CodeGenerator();
+
+    const addFunc = cg.function([cg.f64, cg.f64], [cg.f64], () => {
+      cg.local.get(0);
+      cg.local.get(1);
+      cg.f64.add();
+    });
+    cg.export(addFunc, "add");
+
+    const wasmBytes = cg.finish();
+    const { instance } = await WebAssembly.instantiate(wasmBytes);
+    const { add } = instance.exports as { add(a: number, b: number): number };
+
+    expect(add(1, 2)).toBe(3);
+    expect(add(3.5, 4.6)).toBeCloseTo(8.1, 10);
+    // Test f64 precision beyond f32 range
+    expect(add(1e-15, 2e-15)).toBeCloseTo(3e-15, 25);
+  });
+
   test("assembles recursive factorial", async () => {
     const cg = new CodeGenerator();
 

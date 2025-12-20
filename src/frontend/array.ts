@@ -1063,14 +1063,7 @@ export class Array extends Tracer {
 
 /** Constructor for creating a new array from data. */
 export function array(
-  values:
-    | Array
-    | Float16Array<ArrayBuffer>
-    | Float32Array<ArrayBuffer>
-    | Int32Array<ArrayBuffer>
-    | Uint32Array<ArrayBuffer>
-    | RecursiveArray<number>
-    | RecursiveArray<boolean>,
+  values: Array | DataArray | RecursiveArray<number> | RecursiveArray<boolean>,
   { shape, dtype, device }: { shape?: number[] } & DTypeAndDevice = {},
 ): Array {
   if (values instanceof Tracer) {
@@ -1140,6 +1133,10 @@ function arrayFromData(
     if (dtype && dtype !== DType.Float16)
       throw new Error("Float16Array must have float16 type");
     dtype ??= DType.Float16;
+  } else if (data instanceof Float64Array) {
+    if (dtype && dtype !== DType.Float64)
+      throw new Error("Float64Array must have float64 type");
+    dtype ??= DType.Float64;
   } else {
     throw new Error(
       "Unsupported data array type: " + (data as any).constructor.name,

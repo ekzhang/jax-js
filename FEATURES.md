@@ -102,7 +102,7 @@ supported.
 | `np.bfloat16` | 🔴          | 🔴   | 🔴     | lacks support      |
 | `np.float16`  | 🟢          | 🔴   | 🟢     | no wasm support    |
 | `np.float32`  | 🟢          | 🟢   | 🟢     |                    |
-| `np.float64`  | 🟠          | 🟠   | 🔴     | no webgpu support  |
+| `np.float64`  | 🟢          | 🟢   | 🔴     | no webgpu support  |
 
 Most operations behave the same way as they do in JAX.
 [API docs](https://jax-js.com/docs/modules/_jax-js_jax.numpy.html).

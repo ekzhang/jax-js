@@ -50,6 +50,7 @@ export const int32 = DType.Int32;
 export const uint32 = DType.Uint32;
 export const bool = DType.Bool;
 export const float16 = DType.Float16;
+export const float64 = DType.Float64;
 
 // Constants section
 
