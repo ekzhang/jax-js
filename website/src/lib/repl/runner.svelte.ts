@@ -24,6 +24,7 @@ export class ReplRunner {
   running = $state(false);
   finished = $state(false);
   consoleLines: ConsoleLine[] = $state([]);
+  runDurationMs = $state<number | null>(null);
   consoleTimers = new Map<string, number>();
   mockConsole: Console;
 
@@ -48,16 +49,17 @@ export class ReplRunner {
     if (this.running) return;
     this.running = true;
     this.finished = false;
-    const startTime = Date.now();
+    this.runDurationMs = null;
+    const startTime = performance.now();
     try {
       await _runProgram(source, device, this);
     } finally {
-      const endTime = Date.now();
-      if (endTime - startTime < 100) {
+      const endTime = performance.now();
+      const duration = endTime - startTime;
+      this.runDurationMs = duration;
+      if (duration < 100) {
         // Take at least 100ms, otherwise it's unclear it actually ran.
-        await new Promise((resolve) =>
-          setTimeout(resolve, 100 - (endTime - startTime)),
-        );
+        await new Promise((resolve) => setTimeout(resolve, 100 - duration));
       }
       this.running = false;
       this.finished = true;

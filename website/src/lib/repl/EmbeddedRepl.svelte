@@ -33,13 +33,10 @@
   let device = $state<Device>("webgpu");
 
   let expanded = $state(false);
-  let runDurationMs = $state<number | null>(null);
+  let runDurationMs = $derived(runner.runDurationMs);
 
   async function handleRun() {
-    const startMs = performance.now();
-    runDurationMs = null;
     await runner.runProgram(editor.getText(), device);
-    runDurationMs = performance.now() - startMs;
   }
 </script>
 

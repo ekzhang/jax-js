@@ -71,7 +71,7 @@
 
   let consoleLines = $derived(replRunner.consoleLines);
   let mockConsole = replRunner.mockConsole;
-  let runDurationMs = $state<number | null>(null);
+  let runDurationMs = $derived(replRunner.runDurationMs);
 
   afterNavigate(({ type }) => {
     if (type === "enter") return; // Already handled on load
@@ -126,10 +126,7 @@
   }
 
   async function handleRun() {
-    const startMs = performance.now();
-    runDurationMs = null;
     await replRunner.runProgram(replEditor.getText(), device);
-    runDurationMs = performance.now() - startMs;
   }
 </script>
 
