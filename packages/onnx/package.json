@@ -1,0 +1,47 @@
+{
+  "name": "@jax-js/onnx",
+  "version": "0.0.0",
+  "description": "Load ONNX models and run inference natively with jax-js.",
+  "keywords": [
+    "machine learning",
+    "jax",
+    "numpy",
+    "numerical computing"
+  ],
+  "author": {
+    "name": "Eric Zhang",
+    "email": "ekzhang1@gmail.com",
+    "url": "https://www.ekzhang.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ekzhang/jax-js.git"
+  },
+  "type": "module",
+  "files": [
+    "/dist/*.{js,cjs,d.ts,d.cts}"
+  ],
+  "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./dist/index.d.ts": {
+      "import": "./dist/index.d.ts",
+      "require": "./dist/index.d.cts"
+    }
+  },
+  "types": "dist/index.d.ts",
+  "module": "dist/index.js",
+  "license": "MIT",
+  "scripts": {
+    "prepublishOnly": "pnpm -C ../.. build",
+    "postpublish": "git tag onnx/v$npm_package_version && git push --tags"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.10.2",
+    "@jax-js/jax": "workspace:^",
+    "onnx-buf": "^1.20.0-0"
+  }
+}
