@@ -74,8 +74,8 @@ importers:
         specifier: ^2.10.2
         version: 2.10.2
       '@jax-js/jax':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: workspace:^
+        version: link:../..
       onnx-buf:
         specifier: ^1.20.0-0
         version: 1.20.0-0
@@ -557,10 +557,6 @@ packages:
   '@isaacs/fs-minipass@4.0.1':
     resolution: {integrity: sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w==}
     engines: {node: '>=18.0.0'}
-
-  '@jax-js/jax@0.1.1':
-    resolution: {integrity: sha512-sanbRkU++bbidGk7ewcm/qsY9bmS9qqhaIDxszRq/BisKT8GZ9j610ryHP3u8u51F/OycjKybn4N4gMDigNWPQ==}
-    engines: {pnpm: '>=10.0.0'}
 
   '@jridgewell/gen-mapping@0.3.12':
     resolution: {integrity: sha512-OuLGC46TjB5BbN1dH8JULVVZY4WTdkF7tV9Ys6wLL1rubZnCMstOhNHueU5bLCrnRuDhKPDM4g6sw4Bel5Gzqg==}
@@ -3490,8 +3486,6 @@ snapshots:
   '@isaacs/fs-minipass@4.0.1':
     dependencies:
       minipass: 7.1.2
-
-  '@jax-js/jax@0.1.1': {}
 
   '@jridgewell/gen-mapping@0.3.12':
     dependencies:
