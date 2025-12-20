@@ -139,10 +139,10 @@
                   size={14}
                   class="inline-block animate-spin ml-1 mb-0.5"
                 />
-              {:else}
-                {#if runDurationMs !== null}
-                  <span class="ml-1 text-gray-400">({Math.round(runDurationMs)} ms)</span>
-                {/if}
+              {:else if runDurationMs !== null}
+                <span class="ml-1 text-gray-400"
+                  >({Math.round(runDurationMs)} ms)</span
+                >
               {/if}
             </p>
             <div class="flex-1 py-0.5 font-mono overflow-y-auto">
