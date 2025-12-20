@@ -226,7 +226,7 @@ function dtypeToWgsl(dtype: DType, storage: boolean = false): string {
     case DType.Float16:
       return "f16";
     default:
-      throw new Error(`Unsupported dtype: ${dtype}`);
+      throw new Error(`Unsupported dtype for WebGPU: ${dtype}`);
   }
 }
 
