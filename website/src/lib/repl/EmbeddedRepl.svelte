@@ -33,9 +33,13 @@
   let device = $state<Device>("webgpu");
 
   let expanded = $state(false);
+  let runDurationMs = $state<number | null>(null);
 
   async function handleRun() {
+    const startMs = performance.now();
+    runDurationMs = null;
     await runner.runProgram(editor.getText(), device);
+    runDurationMs = performance.now() - startMs;
   }
 </script>
 
@@ -135,6 +139,10 @@
                   size={14}
                   class="inline-block animate-spin ml-1 mb-0.5"
                 />
+              {:else}
+                {#if runDurationMs !== null}
+                  <span class="ml-1 text-gray-400">({Math.round(runDurationMs)} ms)</span>
+                {/if}
               {/if}
             </p>
             <div class="flex-1 py-0.5 font-mono overflow-y-auto">

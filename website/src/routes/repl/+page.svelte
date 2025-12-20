@@ -71,6 +71,7 @@
 
   let consoleLines = $derived(replRunner.consoleLines);
   let mockConsole = replRunner.mockConsole;
+  let runDurationMs = $state<number | null>(null);
 
   afterNavigate(({ type }) => {
     if (type === "enter") return; // Already handled on load
@@ -125,7 +126,10 @@
   }
 
   async function handleRun() {
+    const startMs = performance.now();
+    runDurationMs = null;
     await replRunner.runProgram(replEditor.getText(), device);
+    runDurationMs = performance.now() - startMs;
   }
 </script>
 
@@ -250,8 +254,13 @@
                   size={16}
                   class="inline-block animate-spin ml-1 mb-[3px]"
                 />
-              {:else if consoleLines.length === 0}
-                <span>(empty)</span>
+              {:else}
+                {#if runDurationMs !== null}
+                  <span class="ml-1 text-gray-400">({Math.round(runDurationMs)} ms)</span>
+                {/if}
+                {#if consoleLines.length === 0}
+                  <span>(empty)</span>
+                {/if}
               {/if}
             </p>
             <div
