@@ -1,13 +1,8 @@
 // Movement operations, changing shape and indexing.
 //
-// TODO: Transpose
-// TODO: Squeeze, Unsqueeze
-// TODO: Flatten
 // TODO: Concat
 // TODO: Split (vision_encoder)
-// TODO: Gather
 // TODO: Slice
-// TODO: Expand
 // TODO: Tile
 
 import { numpy as np } from "@jax-js/jax";
@@ -18,64 +13,75 @@ export function Reshape([data, shape]: np.Array[]): np.Array[] {
   return [data.reshape(shape.js())];
 }
 
+export function Transpose(
+  [x]: np.Array[],
+  { perm }: { perm?: number[] },
+): np.Array[] {
+  return [np.transpose(x, perm)];
+}
+
+export function Flatten(
+  [x]: np.Array[],
+  { axis = 1 }: { axis?: number },
+): np.Array[] {
+  // Make a 2D matrix with x[:axis] and x[axis:] flattened.
+  if (axis <= 0) axis += x.ndim;
+  const batchSize = x.shape.slice(0, axis).reduce((a, b) => a * b, 1);
+  return [x.reshape([batchSize, -1])];
+}
+
+export function Expand([x, shape]: np.Array[]): np.Array[] {
+  const finalShape = np.broadcastShapes(x.shape, shape.js());
+  return [np.broadcastTo(x, finalShape)];
+}
+
+export function Squeeze(
+  [data, axes]: np.Array[],
+  { axes: axesBeforeOpset13 }: { axes?: number[] },
+): np.Array[] {
+  const axis: number[] | undefined = axes
+    ? axes.js()
+    : (axesBeforeOpset13 ?? undefined);
+  if (axis === undefined) {
+    // Remove all size 1 dimensions
+    return [data.reshape(data.shape.filter((d) => d !== 1))];
+  }
+  const axisSet = new Set(axis.map((i) => (i < 0 ? data.ndim + i : i)));
+  const newShape = data.shape.filter((size, i) => {
+    if (size !== 1) throw new Error("Cannot squeeze dimension with size != 1");
+    return !axisSet.has(i);
+  });
+  return [data.reshape(newShape)];
+}
+
+export function Unsqueeze(
+  [data, axes]: np.Array[],
+  { axes: axesBeforeOpset13 }: { axes?: number[] },
+): np.Array[] {
+  const axis: number[] = axes ? axes.js() : axesBeforeOpset13!;
+  if (!axis) {
+    throw new Error("Unsqueeze requires axes");
+  }
+  const outputRank = data.ndim + axis.length;
+  const axisSet = new Set(axis.map((i) => (i < 0 ? outputRank + i : i)));
+  const newShape = [...data.shape];
+  for (const j of [...axisSet].sort()) {
+    newShape.splice(j, 0, 1);
+  }
+  return [data.reshape(newShape)];
+}
+
+export function Gather(
+  [data, indices]: np.Array[],
+  { axis = 0 }: { axis?: number },
+): np.Array[] {
+  if (axis < 0) axis += data.ndim;
+  const sliceArgs: (np.Array | [])[] = new Array(data.ndim).fill([]);
+  sliceArgs[axis] = indices;
+  return [data.slice(...sliceArgs)];
+}
+
 /*
-  Transpose: ([x], { perm }) => {
-    if (perm) {
-      return [x.transpose(perm)];
-    }
-    // Default: reverse all axes
-    return [x.transpose()];
-  },
-
-  Squeeze: ([x, axes], attrs) => {
-    // ONNX opset 13+: axes is an input tensor
-    // ONNX opset <13: axes is an attribute
-    let axesArr: number[] | undefined;
-    if (axes) {
-      axesArr = axes.js().flat().map(Number);
-    } else if (attrs.axes) {
-      axesArr = attrs.axes;
-    }
-
-    if (axesArr && axesArr.length > 0) {
-      // Remove specified axes (must be size 1)
-      const newShape = x.shape.filter((_, i) => !axesArr!.includes(i));
-      return [x.reshape(newShape)];
-    } else {
-      // Remove all axes of size 1
-      const newShape = x.shape.filter((d) => d !== 1);
-      return [x.reshape(newShape)];
-    }
-  },
-
-  Unsqueeze: ([x, axes], attrs) => {
-    // ONNX opset 13+: axes is an input tensor
-    // ONNX opset <13: axes is an attribute
-    let axesArr: number[];
-    if (axes) {
-      axesArr = axes.js().flat().map(Number);
-    } else if (attrs.axes) {
-      axesArr = attrs.axes;
-    } else {
-      throw new Error("Unsqueeze requires axes");
-    }
-
-    // Normalize negative axes and sort
-    const ndim = x.ndim + axesArr.length;
-    axesArr = axesArr.map((a) => (a < 0 ? ndim + a : a)).sort((a, b) => a - b);
-
-    const shape = [...x.shape];
-    for (const axis of axesArr) {
-      shape.splice(axis, 0, 1);
-    }
-    return [x.reshape(shape)];
-  },
-
-  Flatten: ([x], { axis = 1 }) => {
-    const pre = x.shape.slice(0, axis).reduce((a, b) => a * b, 1);
-    const post = x.shape.slice(axis).reduce((a, b) => a * b, 1);
-    return [x.reshape([pre, post])];
-  },
 
   Concat: (inputs, { axis }) => {
     return [np.concatenate(inputs, axis)];
@@ -119,45 +125,6 @@ export function Reshape([data, shape]: np.Array[]): np.Array[] {
   // ============================================================
   // Gather and indexing operations
   // ============================================================
-
-  Gather: ([data, indices], { axis = 0 }) => {
-    // Normalize axis
-    const normalizedAxis = axis < 0 ? data.ndim + axis : axis;
-
-    // Get indices as flat array
-    const indicesArr = indices.js().flat().map(Number);
-
-    // For now, implement simple case: gather along one axis
-    // This is common for embedding lookups
-    if (indices.ndim === 1 || indices.ndim === 0) {
-      const gathered = indicesArr.map((idx: number) => {
-        // Build slice args: [] for full dimension, [start, end] for slice
-        const sliceArgs: ([] | [number, number])[] = data.ref.shape.map(
-          (d: number, i: number): [] | [number, number] =>
-            i === normalizedAxis ? [idx, idx + 1] : [],
-        );
-        return data.ref.slice(...sliceArgs);
-      });
-      data.dispose();
-
-      if (gathered.length === 1) {
-        // Squeeze the gathered axis if single index
-        const result = gathered[0];
-        if (indices.ndim === 0) {
-          const newShape = result.shape.filter(
-            (_: number, i: number) => i !== normalizedAxis,
-          );
-          return [result.reshape(newShape)];
-        }
-        return [result];
-      }
-      return [np.concatenate(gathered, normalizedAxis)];
-    }
-
-    throw new Error(
-      `Gather with ${indices.ndim}D indices not yet fully supported`,
-    );
-  },
 
   Slice: ([data, starts, ends, axes, steps]) => {
     const startsArr = starts.js().flat().map(Number);
