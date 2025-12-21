@@ -21,6 +21,8 @@ export const Exp = wrapFn(np.exp);
 export const Log = wrapFn(np.log);
 export const Pow = wrapFn(np.pow);
 export const Reciprocal = wrapFn(np.reciprocal);
+export const Floor = wrapFn(np.floor);
+export const Ceil = wrapFn(np.ceil);
 export const Identity = wrapFn((x) => x);
 
 export const Equal = wrapFn(np.equal);
@@ -31,15 +33,6 @@ export const GreaterOrEqual = wrapFn(np.greaterEqual);
 
 export const Where = wrapFn(np.where);
 export const Clip = wrapFn(np.clip);
-
-export function Floor([x]: np.Array[]): np.Array[] {
-  // TODO: Support actual floor operation in jax-js
-  return [np.sign(x.ref).mul(np.trunc(np.abs(x)))];
-}
-export function Ceil([x]: np.Array[]): np.Array[] {
-  // TODO: Support actual ceil operation in jax-js
-  return [np.negative(np.sign(x.ref)).mul(np.trunc(np.negative(np.abs(x))))];
-}
 
 export function Not([x]: np.Array[]): np.Array[] {
   return [np.notEqual(x, true)];
@@ -68,10 +61,16 @@ export const Relu = wrapFn(nn.relu);
 export const Sigmoid = wrapFn(nn.sigmoid);
 export const Elu = wrapFn(nn.elu);
 export const Celu = wrapFn(nn.celu);
-export const Gelu = wrapFn((x) => nn.gelu(x, { approximate: false }));
 export const Softplus = wrapFn(nn.softplus);
 export const Softsign = wrapFn(nn.softSign);
 export const Mish = wrapFn(nn.mish);
+
+export function Gelu(
+  [x]: np.Array[],
+  { approximate = "none" }: { approximate?: "none" | "tanh" },
+) {
+  return [nn.gelu(x, { approximate: approximate === "tanh" })];
+}
 
 export function LeakyRelu(
   [x]: np.Array[],

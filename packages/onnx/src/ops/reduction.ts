@@ -2,7 +2,6 @@
 //
 // TODO: ReduceMean
 // TODO: ReduceSum, ReduceMax, ReduceMin, ReduceProd
-// TODO: CumSum (image_encoder)
 
 import { nn, numpy as np } from "@jax-js/jax";
 
