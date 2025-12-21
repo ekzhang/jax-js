@@ -13,9 +13,9 @@ import {
   TypeProtoSchema,
   ValueInfoProtoSchema,
 } from "onnx-buf";
-import { expect, test } from "vitest";
+import { expect, onTestFinished, test } from "vitest";
 
-import { modelAsJaxFunction } from "./index.js";
+import { ONNXModel } from "./index";
 
 /**
  * Helper to create a dimension proto.
@@ -77,12 +77,12 @@ test("should evaluate a simple Add operation", async () => {
     }),
   });
 
-  const modelBytes = toBinary(ModelProtoSchema, model);
-  const fn = modelAsJaxFunction(modelBytes);
+  const onnxModel = new ONNXModel(toBinary(ModelProtoSchema, model));
+  onTestFinished(() => onnxModel.dispose());
 
   const a = np.array([1, 2, 3, 4, 5, 6]).reshape([2, 3]);
   const b = np.array([10, 20, 30, 40, 50, 60]).reshape([2, 3]);
-  const result = fn({ A: a, B: b });
+  const result = onnxModel.run({ A: a, B: b });
 
   expect(await result.C.data()).toEqual(
     new Float32Array([11, 22, 33, 44, 55, 66]),
@@ -117,13 +117,13 @@ test("should evaluate Add followed by Mul", async () => {
     }),
   });
 
-  const modelBytes = toBinary(ModelProtoSchema, model);
-  const fn = modelAsJaxFunction(modelBytes);
+  const onnxModel = new ONNXModel(toBinary(ModelProtoSchema, model));
+  onTestFinished(() => onnxModel.dispose());
 
   const a = np.array([1, 2, 3, 4]).reshape([2, 2]);
   const b = np.array([10, 20, 30, 40]).reshape([2, 2]);
   const c = np.array([2, 2, 2, 2]).reshape([2, 2]);
-  const result = fn({ A: a, B: b, C: c });
+  const result = onnxModel.run({ A: a, B: b, C: c });
 
   // (1+10)*2=22, (2+20)*2=44, (3+30)*2=66, (4+40)*2=88
   expect(await result.D.data()).toEqual(new Float32Array([22, 44, 66, 88]));
@@ -152,12 +152,12 @@ test("should handle initializers (constant weights)", async () => {
     }),
   });
 
-  const modelBytes = toBinary(ModelProtoSchema, model);
-  const fn = modelAsJaxFunction(modelBytes);
+  const onnxModel = new ONNXModel(toBinary(ModelProtoSchema, model));
+  onTestFinished(() => onnxModel.dispose());
 
   // Only need to provide A since B is an initializer
   const a = np.array([1, 2, 3]);
-  const result = fn({ A: a });
+  const result = onnxModel.run({ A: a });
 
   expect(await result.C.data()).toEqual(new Float32Array([101, 202, 303]));
 });
@@ -181,14 +181,14 @@ test("should evaluate MatMul", async () => {
     }),
   });
 
-  const modelBytes = toBinary(ModelProtoSchema, model);
-  const fn = modelAsJaxFunction(modelBytes);
+  const onnxModel = new ONNXModel(toBinary(ModelProtoSchema, model));
+  onTestFinished(() => onnxModel.dispose());
 
   // A = [[1, 2, 3], [4, 5, 6]]
   // B = [[1, 2], [3, 4], [5, 6]]
   const a = np.array([1, 2, 3, 4, 5, 6]).reshape([2, 3]);
   const b = np.array([1, 2, 3, 4, 5, 6]).reshape([3, 2]);
-  const result = fn({ A: a, B: b });
+  const result = onnxModel.run({ A: a, B: b });
 
   // C = [[1*1+2*3+3*5, 1*2+2*4+3*6], [4*1+5*3+6*5, 4*2+5*4+6*6]]
   //   = [[22, 28], [49, 64]]
@@ -213,11 +213,11 @@ test("should evaluate Relu", async () => {
     }),
   });
 
-  const modelBytes = toBinary(ModelProtoSchema, model);
-  const fn = modelAsJaxFunction(modelBytes);
+  const onnxModel = new ONNXModel(toBinary(ModelProtoSchema, model));
+  onTestFinished(() => onnxModel.dispose());
 
   const x = np.array([-3, -1, 0, 1, 2, 3]);
-  const result = fn({ X: x });
+  const result = onnxModel.run({ X: x });
 
   expect(await result.Y.data()).toEqual(new Float32Array([0, 0, 0, 1, 2, 3]));
 });
@@ -248,11 +248,11 @@ test("should evaluate Reshape", async () => {
     }),
   });
 
-  const modelBytes = toBinary(ModelProtoSchema, model);
-  const fn = modelAsJaxFunction(modelBytes);
+  const onnxModel = new ONNXModel(toBinary(ModelProtoSchema, model));
+  onTestFinished(() => onnxModel.dispose());
 
   const x = np.array([1, 2, 3, 4, 5, 6]).reshape([2, 3]);
-  const result = fn({ X: x });
+  const result = onnxModel.run({ X: x });
 
   expect(result.Y.shape).toEqual([3, 2]);
   expect(await result.Y.data()).toEqual(new Float32Array([1, 2, 3, 4, 5, 6]));
@@ -291,8 +291,8 @@ test("should evaluate a chain: Add -> Relu -> MatMul", async () => {
     }),
   });
 
-  const modelBytes = toBinary(ModelProtoSchema, model);
-  const fn = modelAsJaxFunction(modelBytes);
+  const onnxModel = new ONNXModel(toBinary(ModelProtoSchema, model));
+  onTestFinished(() => onnxModel.dispose());
 
   // A + B has some negative values that Relu will zero out
   const a = np.array([-5, 2, 3, 4, -1, 6]).reshape([2, 3]);
@@ -302,7 +302,7 @@ test("should evaluate a chain: Add -> Relu -> MatMul", async () => {
   const c = np.array([1, 1, 1]).reshape([3, 1]);
   // Y = [[0+0+4], [0+1+0]] = [[4], [1]]
 
-  const result = fn({ A: a, B: b, C: c });
+  const result = onnxModel.run({ A: a, B: b, C: c });
 
   expect(result.Y.shape).toEqual([2, 1]);
   expect(await result.Y.data()).toEqual(new Float32Array([4, 1]));

@@ -257,36 +257,12 @@ await devicePut(ar, "webgpu"); // Now device="webgpu"
 There are other libraries in the `@jax-js` namespace that can work with jax-js, or be used in a
 self-contained way in other projects.
 
-**`@jax-js/optax`** provides implementations of optimizers like Adam and SGD.
-
-```ts
-import { adam } from "@jax-js/optax";
-
-let params = np.array([1.0, 2.0, 3.0]);
-
-const solver = adam(1e-3);
-let optState = solver.init(params.ref);
-let updates: np.Array;
-
-const f = (x: np.Array) => squaredError(x, np.ones([3])).sum();
-
-for (let i = 0; i < 100; i++) {
-  const paramsGrad = grad(f)(params.ref);
-  [updates, optState] = solver.update(paramsGrad, optState);
-  params = applyUpdates(params, updates);
-}
-```
-
-**`@jax-js/loaders`** can load tensors from various formats like Safetensors, includes a fast and
-compliant implementation of BPE, and caches HTTP requests for large assets like model weights in
-OPFS.
-
-```ts
-import { tokenizers } from "@jax-js/loaders";
-
-const enc = await tokenizers.getBpe("clip");
-const tokens = enc.encode("Hello, world!"); // => [ 49406, 3306, 267, 1002, ... ]
-```
+- [**`@jax-js/loaders`**](packages/loaders) can load tensors from various formats like Safetensors,
+  includes a fast and compliant implementation of BPE, and caches HTTP requests for large assets
+  like model weights in OPFS.
+- [**`@jax-js/onnx`**](packages/onnx) is a model loader from the [ONNX](https://onnx.ai/) format
+  into native jax-js functions.
+- [**`@jax-js/optax`**](packages/optax) provides implementations of optimizers like Adam and SGD.
 
 ### Performance
 

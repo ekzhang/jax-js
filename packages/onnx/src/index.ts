@@ -1,13 +1,12 @@
-/**
- * ONNX model loader for jax-js.
- *
- * Parse ONNX models and convert them to jax-js functions.
- */
+// ONNX model loader for jax-js.
+//
+// Parse ONNX models and convert them to jax-js functions.
 
 import { fromBinary } from "@bufbuild/protobuf";
 import { numpy as np } from "@jax-js/jax";
 import {
   AttributeProto_AttributeType,
+  ModelProto,
   ModelProtoSchema,
   type NodeProto,
   type TensorProto,
@@ -15,6 +14,66 @@ import {
 
 import * as onnxOps from "./ops";
 import { tensorToArray } from "./tensor";
+
+/**
+ * Loads an ONNX model (`.onnx` file) and provides a jax-js function that
+ * evaluates it.
+ *
+ * The returned function takes input tensors and returns output tensors.
+ * Input tensors are consumed (their reference count decremented).
+ * Initializers (model weights, data) are cached and reused across calls.
+ *
+ * @example
+ * ```ts
+ * import { ONNXModel } from "@jax-js/onnx";
+ * import { numpy as np } from "@jax-js/jax";
+ *
+ * const modelBytes = await fetch("./model.onnx").then((r) => r.bytes());
+ * const model = new ONNXModel(modelBytes);
+ *
+ * const input = np.ones([1, 3, 224, 224]);
+ * const { output } = model.run({ input });
+ * ```
+ */
+export class ONNXModel {
+  /** The parsed model as a Protobuf object. */
+  readonly model: ModelProto;
+
+  /**
+   * @function
+   * Run a forward pass on the model. This function is bound to `this`, so you
+   * don't need to create a separate closure to pass it to transformations such
+   * as `jit()` and `grad()`.
+   */
+  readonly run: (inputs: Record<string, np.Array>) => Record<string, np.Array>;
+
+  /** Cache of initializers (data / weights), needed for `run()` calls. */
+  #initializers: Map<string, np.Array>;
+
+  /** Load a new model from binary contents of an `.onnx` file. */
+  constructor(modelBytes: Uint8Array<ArrayBuffer>) {
+    this.model = fromBinary(ModelProtoSchema, modelBytes);
+    if (!this.model.graph) {
+      throw new Error("ONNX model has no graph");
+    }
+    // Extract initializers (weights/biases) as jax arrays.
+    // These are cached and reused across calls.
+    this.#initializers = parseInitializers(this.model.graph.initializer);
+    this.run = modelAsJaxFunction(this.model, this.#initializers);
+  }
+
+  /**
+   * Dispose of this model and free model weights.
+   *
+   * After disposing, `run()` should not be called anymore, it will not be able
+   * to find the missing variables.
+   */
+  dispose(): void {
+    if (!this.#initializers) return;
+    for (const arr of this.#initializers.values()) arr.dispose();
+    this.#initializers.clear();
+  }
+}
 
 /** Parse attributes from an ONNX node into a plain object. */
 function parseAttributes(node: NodeProto): Record<string, any> {
@@ -48,9 +107,7 @@ function parseAttributes(node: NodeProto): Record<string, any> {
   return attrs;
 }
 
-/**
- * Parse all initializers (constant weights) from an ONNX graph.
- */
+/** Parse all initializers (constant weights) from an ONNX graph. */
 function parseInitializers(initializers: TensorProto[]): Map<string, np.Array> {
   const map = new Map<string, np.Array>();
   for (const tensor of initializers) {
@@ -59,9 +116,7 @@ function parseInitializers(initializers: TensorProto[]): Map<string, np.Array> {
   return map;
 }
 
-/**
- * Execute a single ONNX node.
- */
+/** Execute a single ONNX node. */
 function executeNode(node: NodeProto, vars: Map<string, np.Array>): np.Array[] {
   const opType = node.opType;
   const handler = (onnxOps as Record<string, any>)[opType];
@@ -85,62 +140,41 @@ function executeNode(node: NodeProto, vars: Map<string, np.Array>): np.Array[] {
   return handler(inputs, attrs);
 }
 
-/**
- * Parse an ONNX model and return a jax-js function that evaluates it.
- *
- * The returned function takes input tensors and returns output tensors.
- * Input tensors are consumed (their reference count decremented).
- * Initializers (model weights) are cached and reused across calls.
- *
- * @param modelBytes - The raw bytes of the ONNX model file
- * @returns A function that executes the model
- *
- * @example
- * ```ts
- * import { modelAsJaxFunction } from "@jax-js/onnx";
- * import { numpy as np } from "@jax-js/jax";
- *
- * const modelBytes = await fetch("model.onnx").then(r => r.arrayBuffer());
- * const model = modelAsJaxFunction(new Uint8Array(modelBytes));
- *
- * const input = np.ones([1, 3, 224, 224]);
- * const output = model(input);
- * ```
- */
-export function modelAsJaxFunction(
-  modelBytes: Uint8Array,
+function modelAsJaxFunction(
+  model: ModelProto,
+  initializers: Map<string, np.Array> = new Map(),
 ): (inputs: Record<string, np.Array>) => Record<string, np.Array> {
-  const model = fromBinary(ModelProtoSchema, modelBytes);
   const graph = model.graph;
   if (!graph) {
     throw new Error("ONNX model has no graph");
   }
 
-  // Extract initializers (weights/biases) as jax arrays.
-  // These are cached and reused across calls.
-  const initializers = parseInitializers(graph.initializer);
-
   const inputNames: string[] = [];
   for (const input of graph.input) {
     if (!initializers.has(input.name)) {
+      if (inputNames.includes(input.name)) {
+        throw new Error(`ONNX model has duplicate input '${input.name}'`);
+      }
       inputNames.push(input.name);
     }
   }
   const outputNames = graph.output.map((o) => o.name);
+  const numInitializers = initializers.size;
 
   return function (inputs: Record<string, np.Array>): Record<string, np.Array> {
-    if (Object.keys(inputs).length !== inputNames.length) {
-      throw new Error(
-        `Expected ${inputNames.length} inputs, but got ${Object.keys(inputs).length}`,
-      );
-    }
     for (const name of inputNames) {
       if (!Object.hasOwn(inputs, name))
         throw new Error(`Missing input '${name}'`);
     }
+    if (Object.keys(inputs).length !== inputNames.length) {
+      throw new Error(
+        `Expected inputs ${JSON.stringify(inputNames)}, but got extra inputs ${JSON.stringify(Object.keys(inputs))}`,
+      );
+    }
+    if (initializers.size !== numInitializers)
+      throw new Error("Model has already been disposed");
 
     const vars = new Map<string, np.Array>();
-
     try {
       for (const [name, arr] of initializers) vars.set(name, arr.ref);
       for (const name of inputNames) vars.set(name, inputs[name]);
