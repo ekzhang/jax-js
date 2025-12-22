@@ -2,25 +2,41 @@ import { range } from "../../utils";
 
 const bprod = (...xs: bigint[]) => xs.reduce((acc, x) => acc * x, 1n);
 const bmax = (...xs: bigint[]) => xs.reduce((max, x) => (x > max ? x : max));
+const uniq = <T>(arr: T[]): T[] => Array.from(new Set(arr));
 
-const EINSUM_INDEX_RE = /\p{ID_Start}/gu;
+const EINSUM_COMPONENT_RE = /\p{ID_Start}|\.\.\./gu;
 
-// (shape, lhsIndices, shape, lhsIndices, rhsIndex)
-// (x, (0,), y, (0,), ())
+/**
+ * Explicit form of an input to `einsum()`.
+ *
+ * This is stored as an object. For example, if the arguments are such as
+ * `np.einsum(x, [0, 1], y, [1], [0])`, then the corresponding input is:
+ *
+ * ```
+ * {
+ *   shapes: [x.shape, y.shape],
+ *   lhsIndices: [[0, 1], [1]],
+ *   rhsIndex: [0],
+ * }
+ * ```
+ */
 export interface EinsumInput {
   shapes: bigint[][];
   lhsIndices: number[][];
   rhsIndex: number[];
 }
 
+/** Parse an Einstein notation string into a runnable `EinsumInput`. */
 export function parseEinsumExpression(
   expr: string,
-): Pick<EinsumInput, "lhsIndices" | "rhsIndex"> {
+  shapes: bigint[][],
+): EinsumInput {
   const idents = [
     ...expr
       .split("->")[0]
-      .matchAll(EINSUM_INDEX_RE)
-      .map((m) => m[0]),
+      .matchAll(EINSUM_COMPONENT_RE)
+      .map((m) => m[0])
+      .filter((c) => c !== "..."),
   ];
   if (!expr.includes("->")) {
     // Implicit-form einsum expression. Identifiers used exactly once are the
@@ -32,27 +48,54 @@ export function parseEinsumExpression(
     const outputIndices = Array.from(counts.entries())
       .filter(([, count]) => count === 1)
       .map(([char]) => char)
-      .sort((a, b) => a.codePointAt(0)! - b.codePointAt(0)!);
+      .sort();
+    if (expr.includes("...")) outputIndices.splice(0, 0, "...");
     expr += "->" + outputIndices.join("");
   }
 
   const identToIndex = new Map<string, number>(
-    [...new Set(idents)].sort().map((c, i) => [c, i]),
+    uniq(idents)
+      .sort()
+      .map((c, i) => [c, i]),
   );
+  const componentsToIndices = (components: string[]) =>
+    components.flatMap((c) =>
+      c === "..."
+        ? range(identToIndex.size, identToIndex.size + ellipsisRank!)
+        : identToIndex.get(c)!,
+    );
+
+  let ellipsisRank: number | null = null; // Number of dimensions that "..." represents
 
   const [lhs, rhs] = expr.split("->");
-  const lhsParts = lhs.split(",");
-  const lhsIndices = lhsParts.map((part) =>
-    [...part.matchAll(EINSUM_INDEX_RE)].map((m) => identToIndex.get(m[0])!),
+  const lhsIndices: number[][] = [];
+  for (const [i, part] of lhs.split(",").entries()) {
+    const shape = shapes[i];
+    const components = [...part.matchAll(EINSUM_COMPONENT_RE)].map((m) => m[0]);
+    const ellipsisIndex = components.indexOf("...");
+    if (ellipsisIndex !== -1) {
+      if (components.lastIndexOf("...") !== ellipsisIndex)
+        throw new Error(
+          "Multiple ellipses in one einsum operand is not allowed",
+        );
+      const numExplicit = components.length - 1;
+      if (shape.length < numExplicit)
+        throw new Error(
+          `Einsum operand ${i} has shape ${JSON.stringify(shape)} but indexed with "${part}"`,
+        );
+      const thisEllipsisRank = shape.length - numExplicit;
+      if (ellipsisRank === null) ellipsisRank = thisEllipsisRank;
+      else if (ellipsisRank !== thisEllipsisRank)
+        throw new Error(
+          `Einsum operand ${i} has shape ${JSON.stringify(shape)} but indexed with "${part}", inconsistent with previous ellipsis of rank ${ellipsisRank}`,
+        );
+    }
+    lhsIndices.push(componentsToIndices(components));
+  }
+  const rhsIndex = componentsToIndices(
+    [...rhs.matchAll(EINSUM_COMPONENT_RE)].map((m) => m[0]),
   );
-  const rhsIndex = [...rhs.matchAll(EINSUM_INDEX_RE)].map((m) => {
-    const idx = identToIndex.get(m[0]);
-    if (idx === undefined)
-      throw new Error(`Output index ${m[0]} not present in inputs`);
-    return idx;
-  });
-
-  return { lhsIndices, rhsIndex };
+  return { shapes, lhsIndices, rhsIndex };
 }
 
 export class EinsumPath {
@@ -107,15 +150,9 @@ export class EinsumPath {
     if (this.path.length == 0) {
       // Special case: 0-length path returned if there's only one input tensor.
       // This is the case if we take the trace or transpose.
-      if (this.input.shapes.length !== 1)
-        throw new Error("internal: invariant, empty path for multiple tensors");
-      return bprod(...this.outputShape.map(BigInt));
+      const [indices] = this.input.lhsIndices;
+      return bprod(...uniq(indices).map((i) => this.sizeMap.get(i)!));
     }
-    let totalFlops = 0n;
-
-    // Will include indices and shapes of intermediate tensors.
-    const indices = [...this.input.lhsIndices];
-
     const indexUsageCounts = new Map<number, number>();
     for (const idx of [
       ...this.input.lhsIndices.flat(),
@@ -123,7 +160,8 @@ export class EinsumPath {
     ]) {
       indexUsageCounts.set(idx, (indexUsageCounts.get(idx) ?? 0) + 1);
     }
-
+    const indices = [...this.input.lhsIndices];
+    let totalFlops = 0n;
     for (const tensorGroup of this.path) {
       const indexReduced: number[] = [];
       const indexGroup: number[] = [];
@@ -160,14 +198,12 @@ function approximateCountFlops(
   sizeMap: Map<number, bigint>,
 ): bigint {
   const elements = bprod(...indexGroup.map((i) => sizeMap.get(i)!));
-
   const flopsPerLoopIteration =
     BigInt(numTerms) - 1n + (hasReduction ? 1n : 0n);
-
   return bmax(elements * flopsPerLoopIteration, 1n);
 }
 
-/** Compute size for each index in the einsum expression. */
+/** Compute size for each index in the einsum expression, also validates input. */
 function computeSizeMap({
   shapes,
   lhsIndices,
@@ -236,27 +272,31 @@ function computeSizeMap({
 }
 
 /** @inline */
-export type ComputePathMethod = "naive" | "optimal";
+export type ComputePathMethod = "naive";
 
 export function computePath(
   input: EinsumInput,
   method: ComputePathMethod = "naive",
 ): EinsumPath {
+  const sizeMap = computeSizeMap(input);
   switch (method) {
     case "naive":
-      return computeNaivePath(input);
-    case "optimal":
-      return computeOptimalPath(input);
+      return computePathNaive(input, sizeMap);
   }
 }
 
-function computeNaivePath(input: EinsumInput) {
-  // Validate input and compute size map.
-  const sizeMap = computeSizeMap(input);
-
-  return new EinsumPath(input, [range(input.shapes.length)], [], sizeMap);
+function computePathNaive(input: EinsumInput, sizeMap: Map<number, bigint>) {
+  const n = input.shapes.length;
+  const path: [number, number][] = [];
+  let lastTensorIndex = 0;
+  for (let i = 1; i < n; i++) {
+    path.push([lastTensorIndex, i]);
+    lastTensorIndex = n + i - 1;
+  }
+  return new EinsumPath(input, path, sizeMap);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function* permutations(arr: number[]) {
   const c = Array(arr.length).fill(0);
   yield [...arr];
@@ -275,20 +315,3 @@ function* permutations(arr: number[]) {
     }
   }
 }
-
-function computeOptimalPath(input: EinsumInput) {
-  // Validate input and compute size map.
-  const sizeMap = computeSizeMap(input);
-
-  const indices = range(0, input.shapes.length);
-  for (const indicesPermutation of permutations(indices)) {
-    // ... make every one of these einsum paths
-  }
-
-  // TODO: try every combination and pick the best one.
-
-  return new EinsumPath(input, [range(input.shapes.length)], [], sizeMap);
-}
-
-// if an index appears in exactly one input, and it is not in the output,
-// you can sum it inside that tensor immediately.
