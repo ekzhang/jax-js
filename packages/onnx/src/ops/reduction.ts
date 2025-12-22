@@ -35,6 +35,15 @@ export function Gemm(
   return [result];
 }
 
+export function Einsum(
+  inputs: np.Array[],
+  { equation }: { equation: string },
+): np.Array[] {
+  if (typeof equation !== "string")
+    throw new Error("Einsum ONNX operand requires equation string");
+  return [np.einsum(equation, ...inputs)];
+}
+
 export function Softmax(
   [x]: np.Array[],
   { axis = -1 }: { axis?: number },

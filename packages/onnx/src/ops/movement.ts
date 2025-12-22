@@ -42,16 +42,7 @@ export function Squeeze(
   const axis: number[] | undefined = axes
     ? axes.js()
     : (axesBeforeOpset13 ?? undefined);
-  if (axis === undefined) {
-    // Remove all size 1 dimensions
-    return [data.reshape(data.shape.filter((d) => d !== 1))];
-  }
-  const axisSet = new Set(axis.map((i) => (i < 0 ? data.ndim + i : i)));
-  const newShape = data.shape.filter((size, i) => {
-    if (size !== 1) throw new Error("Cannot squeeze dimension with size != 1");
-    return !axisSet.has(i);
-  });
-  return [data.reshape(newShape)];
+  return [np.squeeze(data, axis)];
 }
 
 export function Unsqueeze(
