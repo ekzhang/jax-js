@@ -77,8 +77,8 @@ importers:
         specifier: workspace:^
         version: link:../..
       onnx-buf:
-        specifier: ^1.20.0-0
-        version: 1.20.0-0
+        specifier: ^1.20.0-1
+        version: 1.20.0-1
 
   packages/optax:
     dependencies:

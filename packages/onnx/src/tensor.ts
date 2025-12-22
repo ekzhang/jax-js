@@ -1,14 +1,10 @@
-/**
- * Tensor conversion utilities for ONNX to jax-js.
- */
+// Tensor conversion utilities for ONNX to jax-js.
 
 import { DType, numpy as np } from "@jax-js/jax";
 import type { TensorProto } from "onnx-buf";
 import { TensorProto_DataType } from "onnx-buf";
 
-/**
- * Convert an ONNX data type to a jax-js DType.
- */
+/** Convert an ONNX data type to a jax-js DType. */
 export function onnxDtypeToJax(onnxType: TensorProto_DataType): DType {
   switch (onnxType) {
     case TensorProto_DataType.FLOAT:
@@ -35,22 +31,19 @@ export function onnxDtypeToJax(onnxType: TensorProto_DataType): DType {
   }
 }
 
-/**
- * Parse raw tensor data based on ONNX data type.
- */
+/** Parse raw tensor data based on ONNX data type. */
 function parseRawData(
-  rawData: Uint8Array,
+  rawData: Uint8Array<ArrayBuffer>,
   dataType: TensorProto_DataType,
 ):
   | Float32Array<ArrayBuffer>
   | Int32Array<ArrayBuffer>
   | Uint32Array<ArrayBuffer>
   | Float64Array<ArrayBuffer> {
-  // Ensure we get an ArrayBuffer (not SharedArrayBuffer)
   const buffer = rawData.buffer.slice(
     rawData.byteOffset,
     rawData.byteOffset + rawData.byteLength,
-  ) as ArrayBuffer;
+  );
 
   switch (dataType) {
     case TensorProto_DataType.FLOAT:
@@ -105,7 +98,7 @@ function parseRawData(
  * Convert an ONNX TensorProto to a jax-js Array.
  */
 export function tensorToArray(tensor: TensorProto): np.Array {
-  const shape = tensor.dims.map((d) => Number(d));
+  const shape = tensor.dims.map(Number);
   const dtype = onnxDtypeToJax(tensor.dataType);
 
   // Determine data source and convert
@@ -122,11 +115,11 @@ export function tensorToArray(tensor: TensorProto): np.Array {
     data = Float32Array.from(tensor.floatData);
   } else if (tensor.int32Data.length > 0) {
     data = Int32Array.from(tensor.int32Data);
-  } else if (tensor.int64Data.length > 0) {
-    // Convert bigint array to number array
-    data = Int32Array.from(tensor.int64Data.map(Number));
   } else if (tensor.doubleData.length > 0) {
     data = Float64Array.from(tensor.doubleData);
+  } else if (tensor.int64Data.length > 0) {
+    // We don't support int64 or uint64 natively, convert to int32/uint32.
+    data = Int32Array.from(tensor.int64Data.map(Number));
   } else if (tensor.uint64Data.length > 0) {
     data = Uint32Array.from(tensor.uint64Data.map(Number));
   } else {

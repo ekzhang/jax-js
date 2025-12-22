@@ -42,6 +42,6 @@
   "dependencies": {
     "@bufbuild/protobuf": "^2.10.2",
     "@jax-js/jax": "workspace:^",
-    "onnx-buf": "^1.20.0-0"
+    "onnx-buf": "^1.20.0-1"
   }
 }
