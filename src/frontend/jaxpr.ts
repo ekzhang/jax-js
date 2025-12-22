@@ -963,12 +963,11 @@ export function jit<F extends (...args: any[]) => any>(
     const avalsIn = treeUnflatten(inTree, avalsInFlat) as any[];
 
     const jaxprArgs = joinIdx(args.length, staticArgs, avalsIn, staticArgnums);
-    const cacheKey = JSON.stringify(jaxprArgs);
     const {
       jaxpr,
       consts,
       treedef: outTree,
-    } = runWithCache(cache, cacheKey, () => makeJaxpr(f, opts)(...jaxprArgs));
+    } = runWithCache(cache, jaxprArgs, () => makeJaxpr(f, opts)(...jaxprArgs));
 
     const outs = bind(
       Primitive.JitCall,

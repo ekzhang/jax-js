@@ -403,16 +403,17 @@ export class FpHash {
 }
 
 /** Run a function while caching it inline inside a `Map`. */
-export function runWithCache<K, V>(
-  cache: Map<K, V>,
-  key: K,
+export function runWithCache<V>(
+  cache: Map<string, V>,
+  key: unknown,
   thunk: () => V,
 ): V {
-  if (cache.has(key)) {
-    return cache.get(key)!;
+  const keyStr = JSON.stringify(key);
+  if (cache.has(keyStr)) {
+    return cache.get(keyStr)!;
   } else {
     const value = thunk();
-    cache.set(key, value);
+    cache.set(keyStr, value);
     return value;
   }
 }

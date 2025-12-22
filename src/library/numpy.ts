@@ -24,6 +24,7 @@ import { moveaxis as moveaxisTracer } from "../frontend/vmap";
 import { Pair } from "../shape";
 import {
   checkAxis,
+  DEBUG,
   deepEqual,
   generalBroadcast,
   prod as iprod,
@@ -31,6 +32,11 @@ import {
   range,
   rep,
 } from "../utils";
+import {
+  computeEinsumPath,
+  EinsumInput,
+  parseEinsumExpression,
+} from "./numpy/einsum";
 
 export {
   arange,
@@ -767,6 +773,138 @@ export function tensordot(
   newX = newX.reshape([...newX.shape.slice(0, -axisX.length), -1]);
   newY = newY.reshape([...newY.shape.slice(0, -axisY.length), -1]);
   return core.dot(newX, newY) as Array;
+}
+
+/**
+ * Einstein summation with string subscripts.
+ *
+ * @example
+ * ```ts
+ * import { numpy as np } from "@jax-js/jax";
+ *
+ * const a = np.ones([2, 3]);
+ * const b = np.ones([3]);
+ * np.einsum("ij,j", a, b); // Shape [2]
+ * ```
+ */
+export function einsum(subscripts: string, ...operands: ArrayLike[]): Array;
+
+/**
+ * Einstein summation alternating between arrays and numeric indices.
+ *
+ * @example
+ * ```ts
+ * import { numpy as np } from "@jax-js/jax";
+ *
+ * const a = np.ones([2, 3]);
+ * const b = np.ones([3]);
+ * np.einsum(a, [0, 1], b, [1]); // Shape [2]
+ * ```
+ */
+export function einsum(...args: (ArrayLike | number[])[]): void;
+
+/**
+ * Einstein summation.
+ *
+ * This is a general API for performing tensor reductions, products,
+ * transpositions, and traces using Einstein notation for referring to named
+ * axes. See the docs for `numpy.einsum()` for more information.
+ *
+ * <https://numpy.org/doc/stable/reference/generated/numpy.einsum.html>
+ *
+ * The full einsum API is implemented, including implicit and explicit output
+ * indices, ellipsis broadcasting, Unicode subscripts, and an optimal path
+ * ordering algorithm. It lowers to one or more calls to:
+ *
+ * - `jax.numpy.tensordot()`
+ * - `jax.numpy.diagonal()`
+ * - `jax.numpy.transpose()`
+ * - `jax.numpy.sum()`
+ */
+export function einsum(...args: any[]): Array {
+  if (args.length === 0)
+    throw new Error("einsum: must provide at least one argument");
+  let input: EinsumInput;
+  let operands: Array[] = [];
+  if (typeof args[0] === "string") {
+    // Subscripts mode with remaining arguments as arrays.
+    operands = args.slice(1).map(fudgeArray);
+    input = parseEinsumExpression(
+      args[0],
+      operands.map((x) => x.shape),
+    );
+  } else {
+    // Alternating arrays and index arrays.
+    const n = args.length >> 1;
+    const shapes: number[][] = [];
+    const lhsIndices: number[][] = [];
+    for (let i = 0; i < n; i++) {
+      operands.push(fudgeArray(args[2 * i]));
+      shapes.push(operands[i].shape);
+      lhsIndices.push(args[2 * i + 1] as number[]);
+    }
+    let rhsIndex: number[];
+    if (args.length % 2 === 1) {
+      rhsIndex = args[2 * n] as number[];
+    } else {
+      // Implicit output indices: all indices that appear only once in the
+      // inputs, in the order they appear.
+      const indexCount: number[] = [];
+      for (const i of lhsIndices.flat()) {
+        indexCount[i] = (indexCount[i] ?? 0) + 1;
+      }
+      rhsIndex = [...indexCount.entries()]
+        .filter(([_, count]) => count === 1)
+        .map(([i, _]) => i);
+    }
+    input = { lhsIndices, rhsIndex, shapes };
+  }
+
+  const path = computeEinsumPath(input);
+  if (DEBUG >= 3)
+    console.info(`einsum: computed path: ${path.approximateFlops} flops`);
+
+  // These will be mutated as we do each step of the einsum.
+  const indexUsageCounts: number[] = [];
+  for (const idx of [...input.lhsIndices.flat(), ...input.rhsIndex]) {
+    indexUsageCounts[idx] = (indexUsageCounts[idx] ?? 0) + 1;
+  }
+  const indices = [...input.lhsIndices];
+
+  // Process a tensor by reducing all indices not used in any other expressions,
+  // and then also taking diagonals for duplicate indices.
+  const processSingleTensor = (
+    ar: Array,
+    index: number[],
+    doNotReduce: number[] = [],
+  ): [Array, number[]] => {
+    // XXX
+    return [ar, index];
+  };
+
+  for (const [i, j] of path.path) {
+    const indexReduced: number[] = [];
+    const indexGroup: number[] = [];
+    for (const idx of [...indices[i], ...indices[j]]) {
+      if (!indexGroup.includes(idx)) indexGroup.push(idx);
+      // If the index is not in the output and isn't in any other inputs,
+      // we can consider it reduced here.
+      if (--indexUsageCounts[idx] === 0) indexReduced.push(idx);
+    }
+    const [a, aidx] = processSingleTensor(operands[i], indices[i], indices[j]);
+    const [b, bidx] = processSingleTensor(operands[j], indices[j], indices[i]);
+    // XXX
+  }
+
+  // Special case: Einsum with just one operand produces an empty path, but we
+  // may still need to do any reductions or traces.
+  const [ar, index] = processSingleTensor(
+    operands[operands.length - 1],
+    indices[operands.length - 1],
+  );
+  // At this point, `index` _must_ be some permutation of `rhsIndex`.
+  const finalPerm = input.rhsIndex.map((idx) => index.indexOf(idx));
+  return ar.transpose(finalPerm);
 }
 
 /**

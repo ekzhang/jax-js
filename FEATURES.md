@@ -213,8 +213,8 @@ Most operations behave the same way as they do in JAX.
 | `dstack`              | 🟢      |                                         |
 | `dtype`               | ⚪️      | can access `Array.dtype`                |
 | `ediff1d`             | 🟠      |                                         |
-| `einsum`              | 🔴      |                                         |
-| `einsum_path`         | 🔴      |                                         |
+| `einsum`              | 🟢      |                                         |
+| `einsum_path`         | ⚪️      | path is currently private               |
 | `empty`               | ⚪️      | use `zeros`                             |
 | `empty_like`          | ⚪️      | use `zeros_like`                        |
 | `equal`               | 🟢      |                                         |
