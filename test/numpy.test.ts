@@ -590,6 +590,111 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.einsum()", () => {
+    test("basic einsum matmul", () => {
+      const a = np.arange(6).reshape([2, 3]);
+      const b = np.ones([3, 4]);
+      const c = np.einsum("ik,kj->ij", a, b);
+      expect(c.js()).toEqual([
+        [3, 3, 3, 3],
+        [12, 12, 12, 12],
+      ]);
+    });
+
+    test("einsum one-array sums", () => {
+      const a = np.arange(6).reshape([2, 3]);
+      let c = np.einsum("ij->", a.ref);
+      expect(c.js()).toEqual(15);
+
+      c = np.einsum(a.ref, [0, 1], []);
+      expect(c.js()).toEqual(15);
+
+      c = np.einsum(a.ref, [0, 1], []);
+      expect(c.js()).toEqual(15);
+
+      c = np.einsum("ij->j", a.ref);
+      expect(c.js()).toEqual([3, 5, 7]);
+
+      c = np.einsum("ji->j", a.ref);
+      expect(c.js()).toEqual([3, 12]);
+
+      c = np.einsum("ii->", a.slice([0, 2], [1, 3]));
+      expect(c.js()).toEqual(6);
+    });
+
+    test("einsum transposition", () => {
+      const a = np.arange(6).reshape([2, 3]);
+      const b = np.einsum("ji", a);
+      expect(b.js()).toEqual([
+        [0, 3],
+        [1, 4],
+        [2, 5],
+      ]);
+    });
+
+    test("shape tests", () => {
+      const checkEinsumShapes = async (expr: string, ...shapes: number[][]) => {
+        const result = np.einsum(
+          expr,
+          ...shapes.slice(0, -1).map((shape) => np.zeros(shape)),
+        );
+        expect(result.shape).toEqual(shapes[shapes.length - 1]);
+        result.dispose();
+      };
+
+      // Tests without ellipsis
+      checkEinsumShapes("", [], []);
+      checkEinsumShapes("i,i->", [3], [3], []);
+      checkEinsumShapes("ijj->i", [2, 3, 3], [2]);
+      checkEinsumShapes("i,i->i", [3], [3], [3]);
+      checkEinsumShapes("ij,j->i", [2, 3], [3], [2]);
+      checkEinsumShapes("ij,ji", [3, 4], [4, 3], []);
+      checkEinsumShapes("ij,jk", [2, 3], [3, 4], [2, 4]);
+      checkEinsumShapes("ij,jk->ki", [2, 3], [3, 4], [4, 2]);
+      checkEinsumShapes("abc,cde->abde", [2, 3, 4], [4, 5, 6], [2, 3, 5, 6]);
+      checkEinsumShapes(
+        "abcd,cdef->abef",
+        [2, 3, 4, 5],
+        [4, 5, 6, 7],
+        [2, 3, 6, 7],
+      );
+      checkEinsumShapes(
+        "abcd,efcd->abef",
+        [2, 3, 4, 5],
+        [6, 7, 4, 5],
+        [2, 3, 6, 7],
+      );
+      checkEinsumShapes(
+        "abc,bcd,efa,fab",
+        [2, 3, 4],
+        [3, 4, 5],
+        [10, 6, 2],
+        [6, 2, 3],
+        [5, 10],
+      );
+
+      // Tests with ellipsis (can be in middle of indices)
+      checkEinsumShapes("...", [5, 1], [5, 1]);
+      checkEinsumShapes("i...", [5, 1], [1, 5]);
+      checkEinsumShapes("...,...->...", [2, 3, 4], [3, 4], [2, 3, 4]);
+      checkEinsumShapes("...i,i->...", [2, 3, 4], [4], [2, 3]);
+      checkEinsumShapes("i,...i->...", [4], [2, 3, 4], [2, 3]);
+      checkEinsumShapes("...ij,jk->...ik", [5, 2, 3], [3, 4], [5, 2, 4]);
+      checkEinsumShapes(
+        "...ij,...jk->...ik",
+        [6, 5, 2, 3],
+        [5, 3, 4],
+        [6, 5, 2, 4],
+      );
+      checkEinsumShapes(
+        "ab...cd,cd...ef->ab...ef",
+        [2, 3, 4, 5, 6, 7],
+        [6, 7, 8, 9],
+        [2, 3, 4, 5, 8, 9],
+      );
+    });
+  });
+
   suite("jax.numpy.meshgrid()", () => {
     test("creates xy meshgrid", () => {
       const x = np.array([1, 2, 3]);

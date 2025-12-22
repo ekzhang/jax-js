@@ -5,9 +5,116 @@
 
 import { Array, ArrayLike } from "../frontend/array";
 import * as core from "../frontend/core";
-import { bind1, conv as convPrimitive, Primitive } from "../frontend/core";
+import { bind1, Primitive } from "../frontend/core";
 import { vmap } from "../frontend/vmap";
-import { rep, zipn } from "../utils";
+import { checkAxis, deepEqual, prod, range, rep, zipn } from "../utils";
+
+/**
+ * Dimension numbers for general `dot()` primitive.
+ *
+ * Contracting dimensions act as a tensor contraction (reduction) along the
+ * given axis. They must be the same size in both operands. Batch dimensions
+ * are treated as vectorized, leading batch dimensions.
+ *
+ * The return value has a shape where the first dimensions are shared batch
+ * dimensions, followed by `lhs` non-contracting dimensions, followed by
+ * `rhs` non-contracting dimensions.
+ */
+export type DotDimensionNumbers = {
+  lhsContractingDims?: number[];
+  rhsContractingDims?: number[];
+  lhsBatchDims?: number[];
+  rhsBatchDims?: number[];
+};
+
+/**
+ * General dot product/contraction operator.
+ *
+ * Prefer higher-level functions like `jax.numpy.dot()`, `jax.numpy.matmul()`,
+ * `jax.numpy.tensordot(), and `jax.numpy.einsum()` where possible.
+ */
+export function dot(
+  lhs: Array,
+  rhs: Array,
+  {
+    lhsContractingDims: lc = [],
+    rhsContractingDims: rc = [],
+    lhsBatchDims: lb = [],
+    rhsBatchDims: rb = [],
+  }: DotDimensionNumbers = {},
+): Array {
+  // First do input validation, helps with debugging.
+  if (lc.length !== rc.length) {
+    throw new Error(
+      `dot: contracting dims lengths mismatch, got ${JSON.stringify(lc)} and ${JSON.stringify(rc)}`,
+    );
+  } else if (lb.length !== rb.length) {
+    throw new Error(
+      `dot: batch dims lengths mismatch, got ${JSON.stringify(lb)} and ${JSON.stringify(rb)}`,
+    );
+  }
+  lc = lc.map((a) => checkAxis(a, lhs.ndim));
+  rc = rc.map((a) => checkAxis(a, rhs.ndim));
+  lb = lb.map((a) => checkAxis(a, lhs.ndim));
+  rb = rb.map((a) => checkAxis(a, rhs.ndim));
+  if (lc.some((a) => lb.includes(a))) {
+    throw new Error(
+      `dot: lhs contracting dims ${JSON.stringify(lc)} ` +
+        `overlap with batch dims ${JSON.stringify(lb)}`,
+    );
+  } else if (rc.some((a) => rb.includes(a))) {
+    throw new Error(
+      `dot: rhs contracting dims ${JSON.stringify(rc)} ` +
+        `overlap with batch dims ${JSON.stringify(rb)}`,
+    );
+  }
+
+  // Compute "free" dimensions: output shape is [...{lb/rb}, ...lf, ...rf].
+  const lf = range(lhs.ndim).filter((a) => !lc.includes(a) && !lb.includes(a));
+  const rf = range(rhs.ndim).filter((a) => !rc.includes(a) && !rb.includes(a));
+  const lhs2 = lhs.transpose([...lb, ...lf, ...lc]);
+  const rhs2 = rhs.transpose([...rb, ...rf, ...rc]);
+
+  if (lc.length === 0) {
+    // There is no contraction to perform, just do a product (not `dot`).
+    return core.mul(
+      lhs2.reshape([
+        ...lb.map((a) => lhs.shape[a]),
+        ...lf.map((a) => lhs.shape[a]),
+        ...rep(rf.length, 1),
+      ]),
+      rhs2.reshape([
+        ...rb.map((a) => rhs.shape[a]),
+        ...rep(lf.length, 1),
+        ...rf.map((a) => rhs.shape[a]),
+      ]),
+    ) as Array;
+  }
+
+  // Otherwise, we need to do a `dot` contraction.
+  const dotShapeX = lc.map((a) => lhs.shape[a]);
+  const dotShapeY = rc.map((a) => rhs.shape[a]);
+  if (!deepEqual(dotShapeX, dotShapeY)) {
+    throw new Error(
+      `dot: shapes not aligned along contracting dims:` +
+        ` ${JSON.stringify(dotShapeX)} != ${JSON.stringify(dotShapeY)}`,
+    );
+  }
+  return core.dot(
+    lhs2.reshape([
+      ...lb.map((a) => lhs.shape[a]),
+      ...lf.map((a) => lhs.shape[a]),
+      ...rep(rf.length, 1),
+      prod(dotShapeX),
+    ]),
+    rhs2.reshape([
+      ...rb.map((a) => rhs.shape[a]),
+      ...rep(lf.length, 1),
+      ...rf.map((a) => rhs.shape[a]),
+      prod(dotShapeY),
+    ]),
+  ) as Array;
+}
 
 export type PaddingType = "VALID" | "SAME" | "SAME_LOWER" | [number, number][];
 
@@ -82,7 +189,7 @@ export function convGeneralDilated(
       padding,
     );
   }
-  return convPrimitive(lhs, rhs, {
+  return core.conv(lhs, rhs, {
     strides: windowStrides,
     padding,
     lhsDilation,

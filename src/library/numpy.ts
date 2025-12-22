@@ -32,6 +32,7 @@ import {
   range,
   rep,
 } from "../utils";
+import * as lax from "./lax";
 import {
   computeEinsumPath,
   EinsumInput,
@@ -690,16 +691,13 @@ export function matmul(x: ArrayLike, y: ArrayLike) {
   }
 
   // Otherwise, we multiply x: [..., N, K] and y: [..., K, M]
-  x = x.reshape(x.shape.toSpliced(-1, 0, 1)); // [..., N, 1, K]
-  y = y
-    .reshape(y.shape.toSpliced(-2, 0, 1))
-    .transpose([
-      ...range(y.shape.length - 1),
-      y.shape.length,
-      y.shape.length - 1,
-    ]); // [..., 1, M, K]
-
-  return core.dot(x, y) as Array;
+  const numBatchDims = Math.min(Math.max(x.ndim, 2), y.ndim) - 2;
+  return lax.dot(x, y, {
+    lhsContractingDims: [-1],
+    rhsContractingDims: [-2],
+    lhsBatchDims: range(-2 - numBatchDims, -2),
+    rhsBatchDims: range(-2 - numBatchDims, -2),
+  });
 }
 
 /** Dot product of two arrays. */
@@ -717,14 +715,10 @@ export function dot(x: ArrayLike, y: ArrayLike): Array {
   // second-to-last axis of y. (y.ndim >= 2)
   //
   // dot(x, y)[i,j,k,m] = sum(x[i,j,:] * y[k,:,m])
-  x = x.reshape(x.shape.toSpliced(-1, 0, ...rep(y.ndim - 1, 1))); // [..., N, 1, 1, ..., 1, K]
-  y = y.transpose([
-    ...range(y.shape.length - 2),
-    y.shape.length - 1,
-    y.shape.length - 2,
-  ]); // [..., M, K]
-
-  return core.dot(x, y) as Array;
+  return lax.dot(x, y, {
+    lhsContractingDims: [-1],
+    rhsContractingDims: [-2],
+  });
 }
 
 /**
@@ -742,37 +736,10 @@ export function tensordot(
   x = fudgeArray(x);
   y = fudgeArray(y);
   if (typeof axes === "number") axes = [range(-axes, 0), range(axes)];
-  const axisX = axes[0].map((a) => checkAxis(a, x.ndim));
-  const axisY = axes[1].map((a) => checkAxis(a, y.ndim));
-  if (axisX.length !== axisY.length) {
-    throw new Error(
-      `tensordot: axes lengths must match, got ${axisX.length} and ${axisY.length}`,
-    );
-  } else if (axisX.length === 0) {
-    // There is no reduction to perform, just do an outer product.
-    return x.reshape([...x.shape, ...rep(y.ndim, 1)]).mul(y);
-  }
-  const axisShapeX = axisX.map((a) => x.shape[a]);
-  const axisShapeY = axisY.map((a) => y.shape[a]);
-  if (!deepEqual(axisShapeX, axisShapeY)) {
-    throw new Error(
-      `tensordot: shapes not aligned along axes ${JSON.stringify(axes)}:` +
-        ` ${JSON.stringify(axisShapeX)} != ${JSON.stringify(axisShapeY)}`,
-    );
-  }
-  // Move the axes to the end of X and the end of Y.
-  const freeX = range(x.ndim).filter((a) => !axisX.includes(a));
-  const freeY = range(y.ndim).filter((a) => !axisY.includes(a));
-  let newX = x.transpose([...freeX, ...axisX]);
-  let newY = y.transpose([...freeY, ...axisY]);
-  // Broadcast X over the free axes of Y.
-  newX = newX.reshape(
-    newX.shape.toSpliced(freeX.length, 0, ...rep(freeY.length, 1)),
-  );
-  // Reshape both X and Y so that the reduction dims are flattened to axis -1.
-  newX = newX.reshape([...newX.shape.slice(0, -axisX.length), -1]);
-  newY = newY.reshape([...newY.shape.slice(0, -axisY.length), -1]);
-  return core.dot(newX, newY) as Array;
+  return lax.dot(x, y, {
+    lhsContractingDims: axes[0],
+    rhsContractingDims: axes[1],
+  });
 }
 
 /**
@@ -801,7 +768,7 @@ export function einsum(subscripts: string, ...operands: ArrayLike[]): Array;
  * np.einsum(a, [0, 1], b, [1]); // Shape [2]
  * ```
  */
-export function einsum(...args: (ArrayLike | number[])[]): void;
+export function einsum(...args: (ArrayLike | number[])[]): Array;
 
 /**
  * Einstein summation.
@@ -816,10 +783,10 @@ export function einsum(...args: (ArrayLike | number[])[]): void;
  * indices, ellipsis broadcasting, Unicode subscripts, and an optimal path
  * ordering algorithm. It lowers to one or more calls to:
  *
- * - `jax.numpy.tensordot()`
+ * - `jax.lax.dot()`
  * - `jax.numpy.diagonal()`
- * - `jax.numpy.transpose()`
  * - `jax.numpy.sum()`
+ * - `jax.numpy.transpose()`
  */
 export function einsum(...args: any[]): Array {
   if (args.length === 0)
@@ -872,18 +839,41 @@ export function einsum(...args: any[]): Array {
   const indices = [...input.lhsIndices];
 
   // Process a tensor by reducing all indices not used in any other expressions,
-  // and then also taking diagonals for duplicate indices.
+  // and also taking diagonals for duplicate indices.
   const processSingleTensor = (
     ar: Array,
     index: number[],
     doNotReduce: number[] = [],
   ): [Array, number[]] => {
-    // XXX
+    index = index.slice();
+    // 1. Take diagonal to remove all duplicated indices.
+    diag: while (true) {
+      for (let i = 0; i < index.length; i++) {
+        const idx = index[i];
+        const j = index.indexOf(idx, i + 1);
+        if (j !== -1) {
+          ar = diagonal(ar, 0, i, j);
+          index.splice(j, 1);
+          index.splice(i, 1);
+          index.push(idx);
+          continue diag;
+        }
+      }
+      break;
+    }
+    // 2. Reduce all indices that are not in `doNotReduce` and have zero usage.
+    for (let i = index.length - 1; i >= 0; i--) {
+      const idx = index[i];
+      if (indexUsageCounts[idx] === 0 && !doNotReduce.includes(idx)) {
+        ar = sum(ar, i);
+        index.splice(i, 1);
+      }
+    }
     return [ar, index];
   };
 
   for (const [i, j] of path.path) {
-    const indexReduced: number[] = [];
+    let indexReduced: number[] = [];
     const indexGroup: number[] = [];
     for (const idx of [...indices[i], ...indices[j]]) {
       if (!indexGroup.includes(idx)) indexGroup.push(idx);
@@ -893,15 +883,35 @@ export function einsum(...args: any[]): Array {
     }
     const [a, aidx] = processSingleTensor(operands[i], indices[i], indices[j]);
     const [b, bidx] = processSingleTensor(operands[j], indices[j], indices[i]);
-    // XXX
+    // At this point, aidx and bidx are both unique index sets that need to be
+    // in the output. We can use dot to combine them along reduction dims.
+    indexReduced = indexReduced.filter((idx) => aidx.includes(idx));
+    const indexBatch = aidx.filter(
+      (idx) => bidx.includes(idx) && !indexReduced.includes(idx),
+    );
+    const result = lax.dot(a, b, {
+      lhsContractingDims: indexReduced.map((idx) => aidx.indexOf(idx)),
+      rhsContractingDims: indexReduced.map((idx) => bidx.indexOf(idx)),
+      lhsBatchDims: indexBatch.map((idx) => aidx.indexOf(idx)),
+      rhsBatchDims: indexBatch.map((idx) => bidx.indexOf(idx)),
+    });
+    operands.push(result);
+    indices.push([
+      ...indexBatch,
+      ...aidx.filter((idx) => !bidx.includes(idx)),
+      ...bidx.filter((idx) => !aidx.includes(idx)),
+    ]);
+    for (const idx of indices[indices.length - 1]) ++indexUsageCounts[idx];
   }
 
   // Special case: Einsum with just one operand produces an empty path, but we
-  // may still need to do any reductions or traces.
+  // may still need to do any reductions or traces. Process one more time.
+  for (const idx of indices[operands.length - 1]) --indexUsageCounts[idx];
   const [ar, index] = processSingleTensor(
     operands[operands.length - 1],
     indices[operands.length - 1],
   );
+
   // At this point, `index` _must_ be some permutation of `rhsIndex`.
   const finalPerm = input.rhsIndex.map((idx) => index.indexOf(idx));
   return ar.transpose(finalPerm);
@@ -916,8 +926,10 @@ export function einsum(...args: any[]): Array {
  * Returned array has shape `[...x.shape[:-1], ...y.shape[:-1]]`.
  */
 export function inner(x: ArrayLike, y: ArrayLike): Array {
-  x = reshape(x, shape(x).toSpliced(-1, 0, ...rep(ndim(y) - 1, 1)));
-  return core.dot(x, y) as Array;
+  return lax.dot(fudgeArray(x), fudgeArray(y), {
+    lhsContractingDims: [-1],
+    rhsContractingDims: [-1],
+  });
 }
 
 /**
