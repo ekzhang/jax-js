@@ -99,8 +99,11 @@ export function parseEinsumExpression(
 }
 
 export class EinsumPath {
-  /** Shape of each original tensor input for the einsum. */
+  /** Parsed and normalized input for the einsum. */
   readonly input: EinsumInput;
+
+  /** Mapping of each index number to its size in the shape array. */
+  readonly sizeMap: Map<number, bigint>;
 
   /**
    * A list of tensor contractions.
@@ -127,17 +130,14 @@ export class EinsumPath {
    */
   readonly path: [number, number][];
 
-  /** Mapping of each index number to its size in the shape array. */
-  readonly sizeMap: Map<number, bigint>;
-
   constructor(
     input: EinsumInput,
-    path: [number, number][],
     sizeMap: Map<number, bigint>,
+    path: [number, number][],
   ) {
     this.input = input;
-    this.path = path;
     this.sizeMap = sizeMap;
+    this.path = path;
   }
 
   /** Shape of the final output tensor. */
@@ -147,48 +147,47 @@ export class EinsumPath {
 
   /** Estimate the number of FLOPs to execute this einsum path. */
   get approximateFlops(): bigint {
-    if (this.path.length == 0) {
-      // Special case: 0-length path returned if there's only one input tensor.
-      // This is the case if we take the trace or transpose.
-      const [indices] = this.input.lhsIndices;
-      return bprod(...uniq(indices).map((i) => this.sizeMap.get(i)!));
-    }
-    const indexUsageCounts = new Map<number, number>();
-    for (const idx of [
-      ...this.input.lhsIndices.flat(),
-      ...this.input.rhsIndex,
-    ]) {
-      indexUsageCounts.set(idx, (indexUsageCounts.get(idx) ?? 0) + 1);
-    }
-    const indices = [...this.input.lhsIndices];
-    let totalFlops = 0n;
-    for (const tensorGroup of this.path) {
-      const indexReduced: number[] = [];
-      const indexGroup: number[] = [];
-      for (const tensorIdx of tensorGroup) {
-        for (const idx of indices[tensorIdx]) {
-          if (!indexGroup.includes(idx)) {
-            indexGroup.push(idx);
-          }
-          // If the index is not in the output and isn't in any other inputs,
-          // we can consider it reduced here.
-          const otherUsages = indexUsageCounts.get(idx)! - 1;
-          indexUsageCounts.set(idx, otherUsages);
-          if (otherUsages === 0) {
-            indexReduced.push(idx);
-          }
-        }
-      }
-      totalFlops += approximateCountFlops(
-        indexGroup,
-        indexReduced.length > 0,
-        tensorGroup.length,
-        this.sizeMap,
-      );
-      indices.push(indexGroup.filter((x) => !indexReduced.includes(x)).sort());
-    }
-    return totalFlops;
+    return approximatePathFlops(this.input, this.sizeMap, this.path);
   }
+}
+
+function approximatePathFlops(
+  input: EinsumInput,
+  sizeMap: Map<number, bigint>,
+  path: [number, number][],
+): bigint {
+  if (path.length == 0) {
+    // Special case: 0-length path returned if there's only one input tensor.
+    // This is the case if we take the trace or transpose.
+    const [indices] = input.lhsIndices;
+    return bprod(...uniq(indices).map((i) => sizeMap.get(i)!));
+  }
+  const indexUsageCounts: number[] = [];
+  for (const idx of [...input.lhsIndices.flat(), ...input.rhsIndex]) {
+    indexUsageCounts[idx] = (indexUsageCounts[idx] ?? 0) + 1;
+  }
+  const indices = [...input.lhsIndices];
+  let totalFlops = 0n;
+  for (const tensorGroup of path) {
+    const indexReduced: number[] = [];
+    const indexGroup: number[] = [];
+    for (const tensorIdx of tensorGroup) {
+      for (const idx of indices[tensorIdx]) {
+        if (!indexGroup.includes(idx)) indexGroup.push(idx);
+        // If the index is not in the output and isn't in any other inputs,
+        // we can consider it reduced here.
+        if (--indexUsageCounts[idx] === 0) indexReduced.push(idx);
+      }
+    }
+    totalFlops += approximateCountFlops(
+      indexGroup,
+      indexReduced.length > 0,
+      tensorGroup.length,
+      sizeMap,
+    );
+    indices.push(indexGroup.filter((x) => !indexReduced.includes(x)).sort());
+  }
+  return totalFlops;
 }
 
 function approximateCountFlops(
@@ -272,16 +271,27 @@ function computeSizeMap({
 }
 
 /** @inline */
-export type ComputePathMethod = "naive";
+export type ComputePathMethod = "naive" | "optimal";
 
 export function computePath(
   input: EinsumInput,
-  method: ComputePathMethod = "naive",
+  method?: ComputePathMethod,
 ): EinsumPath {
   const sizeMap = computeSizeMap(input);
+  if (input.shapes.length === 1) {
+    // Trivial case, just return the empty path.
+    return new EinsumPath(input, sizeMap, []);
+  }
+  if (!method) {
+    method = input.shapes.length <= 4 ? "optimal" : "naive";
+  }
   switch (method) {
     case "naive":
       return computePathNaive(input, sizeMap);
+    case "optimal":
+      return computePathOptimal(input, sizeMap);
+    default:
+      throw new Error(`Unknown computePath method: ${method}`);
   }
 }
 
@@ -293,25 +303,41 @@ function computePathNaive(input: EinsumInput, sizeMap: Map<number, bigint>) {
     path.push([lastTensorIndex, i]);
     lastTensorIndex = n + i - 1;
   }
-  return new EinsumPath(input, path, sizeMap);
+  return new EinsumPath(input, sizeMap, path);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function* permutations(arr: number[]) {
-  const c = Array(arr.length).fill(0);
-  yield [...arr];
+function computePathOptimal(input: EinsumInput, sizeMap: Map<number, bigint>) {
+  const n = input.shapes.length;
+  let bestPath: [number, number][] | null = null;
+  let bestFlops: bigint | null = null;
+  for (const path of allPaths(range(n), n)) {
+    const flops = approximatePathFlops(input, sizeMap, path);
+    if (bestFlops === null || flops < bestFlops) {
+      bestPath = path;
+      bestFlops = flops;
+    }
+  }
+  return new EinsumPath(input, sizeMap, bestPath!);
+}
 
-  let i = 0;
-  while (i < arr.length) {
-    if (c[i] < i) {
-      const swapIdx = i % 2 === 0 ? 0 : c[i];
-      [arr[i], arr[swapIdx]] = [arr[swapIdx], arr[i]];
-      yield [...arr];
-      c[i]++;
-      i = 0;
-    } else {
-      c[i] = 0;
-      i++;
+// Note: This is slow, I think it scales with O((n!)^2).
+function* allPaths(
+  tensors: number[],
+  next: number,
+): IterableIterator<[number, number][]> {
+  // Must be at least two tensors, base case.
+  if (tensors.length === 2) {
+    yield [[tensors[0], tensors[1]]];
+    return;
+  }
+  for (let i = 0; i < tensors.length; i++) {
+    for (let j = i + 1; j < tensors.length; j++) {
+      const pair: [number, number] = [tensors[i], tensors[j]];
+      const remaining = tensors.filter((t) => t !== pair[0] && t !== pair[1]);
+      const newTensors = [...remaining, next];
+      for (const subpath of allPaths(newTensors, next + 1)) {
+        yield [pair, ...subpath];
+      }
     }
   }
 }

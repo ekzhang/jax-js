@@ -112,4 +112,23 @@ suite("computePath()", () => {
     expect(path.outputShape).toEqual([]);
     expect(path.path).toEqual([[0, 1]]);
   });
+
+  test("optimal path for 3 tensors", () => {
+    const path = computePath(
+      parseEinsumExpression("ij,jk,kl->il", [
+        [10n, 20n],
+        [20n, 30n],
+        [30n, 40n],
+      ]),
+      "optimal",
+    );
+    // Optimal path is ((AB)C)
+    expect(path.path).toEqual([
+      [0, 1],
+      [2, 3],
+    ]);
+    expect(path.approximateFlops).toBe(
+      2n * (10n * 30n * 20n + 10n * 40n * 30n),
+    );
+  });
 });
