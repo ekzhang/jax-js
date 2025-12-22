@@ -7,7 +7,7 @@ import {
   numpy as np,
   vmap,
 } from "@jax-js/jax";
-import { beforeEach, expect, suite, test } from "vitest";
+import { beforeEach, expect, onTestFinished, suite, test } from "vitest";
 
 const devicesAvailable = await init();
 
@@ -630,6 +630,126 @@ suite.each(devices)("device:%s", (device) => {
         [1, 4],
         [2, 5],
       ]);
+    });
+
+    test("examples from jax docs", () => {
+      // https://docs.jax.dev/en/latest/_autosummary/jax.numpy.einsum.html
+      const M = np.arange(16).reshape([4, 4]);
+      const x = np.arange(4);
+      const y = np.array([5, 4, 3, 2]);
+      onTestFinished(() => {
+        M.dispose();
+        x.dispose();
+        y.dispose();
+      });
+
+      // Vector product
+      expect(np.einsum("i,i", x.ref, y.ref).js()).toEqual(16);
+      expect(np.einsum("i,i->", x.ref, y.ref).js()).toEqual(16);
+      expect(np.einsum(x.ref, [0], y.ref, [0]).js()).toEqual(16);
+      expect(np.einsum(x.ref, [0], y.ref, [0], []).js()).toEqual(16);
+
+      // Matrix product
+      expect(np.einsum("ij,j->i", M.ref, x.ref).js()).toEqual([14, 38, 62, 86]);
+      expect(np.einsum("ij,j", M.ref, x.ref).js()).toEqual([14, 38, 62, 86]);
+      expect(np.einsum(M.ref, [0, 1], x.ref, [1], [0]).js()).toEqual([
+        14, 38, 62, 86,
+      ]);
+      expect(np.einsum(M.ref, [0, 1], x.ref, [1]).js()).toEqual([
+        14, 38, 62, 86,
+      ]);
+
+      // Outer product
+      const outerExpected = [
+        [0, 0, 0, 0],
+        [5, 4, 3, 2],
+        [10, 8, 6, 4],
+        [15, 12, 9, 6],
+      ];
+      expect(np.einsum("i,j->ij", x.ref, y.ref).js()).toEqual(outerExpected);
+      expect(np.einsum("i,j", x.ref, y.ref).js()).toEqual(outerExpected);
+      expect(np.einsum(x.ref, [0], y.ref, [1], [0, 1]).js()).toEqual(
+        outerExpected,
+      );
+      expect(np.einsum(x.ref, [0], y.ref, [1]).js()).toEqual(outerExpected);
+
+      // 1D array sum
+      expect(np.einsum("i->", x.ref).js()).toEqual(6);
+      expect(np.einsum(x.ref, [0], []).js()).toEqual(6);
+
+      // Sum along an axis
+      expect(np.einsum("...j->...", M.ref).js()).toEqual([6, 22, 38, 54]);
+
+      // Matrix transpose
+      const y2 = np.array([
+        [1, 2, 3],
+        [4, 5, 6],
+      ]);
+      onTestFinished(() => y2.dispose());
+      const transposeExpected = [
+        [1, 4],
+        [2, 5],
+        [3, 6],
+      ];
+      expect(np.einsum("ij->ji", y2.ref).js()).toEqual(transposeExpected);
+      expect(np.einsum("ji", y2.ref).js()).toEqual(transposeExpected);
+      expect(np.einsum(y2.ref, [1, 0]).js()).toEqual(transposeExpected);
+      expect(np.einsum(y2.ref, [0, 1], [1, 0]).js()).toEqual(transposeExpected);
+
+      // Matrix diagonal
+      expect(np.einsum("ii->i", M.ref).js()).toEqual([0, 5, 10, 15]);
+
+      // Matrix trace
+      expect(np.einsum("ii", M.ref).js()).toEqual(30);
+
+      // Tensor products
+      const tx = np.arange(30).reshape([2, 3, 5]);
+      const ty = np.arange(60).reshape([3, 4, 5]);
+      onTestFinished(() => {
+        tx.dispose();
+        ty.dispose();
+      });
+      const tensorExpected = [
+        [3340, 3865, 4390, 4915],
+        [8290, 9940, 11590, 13240],
+      ];
+      expect(np.einsum("ijk,jlk->il", tx.ref, ty.ref).js()).toEqual(
+        tensorExpected,
+      );
+      expect(np.einsum("ijk,jlk", tx.ref, ty.ref).js()).toEqual(tensorExpected);
+      expect(
+        np.einsum(tx.ref, [0, 1, 2], ty.ref, [1, 3, 2], [0, 3]).js(),
+      ).toEqual(tensorExpected);
+      expect(np.einsum(tx.ref, [0, 1, 2], ty.ref, [1, 3, 2]).js()).toEqual(
+        tensorExpected,
+      );
+
+      // Chained dot products
+      const w = np.arange(5, 9).reshape([2, 2]);
+      const cx = np.arange(6).reshape([2, 3]);
+      const cy = np.arange(-2, 4).reshape([3, 2]);
+      const z = np.array([
+        [2, 4, 6],
+        [3, 5, 7],
+      ]);
+      onTestFinished(() => {
+        w.dispose();
+        cx.dispose();
+        cy.dispose();
+        z.dispose();
+      });
+      const chainedExpected = [
+        [481, 831, 1181],
+        [651, 1125, 1599],
+      ];
+      expect(
+        np.einsum("ij,jk,kl,lm->im", w.ref, cx.ref, cy.ref, z.ref).js(),
+      ).toEqual(chainedExpected);
+      expect(
+        np
+          .einsum(w.ref, [0, 1], cx.ref, [1, 2], cy.ref, [2, 3], z.ref, [3, 4])
+          .js(),
+      ).toEqual(chainedExpected);
     });
 
     test("shape tests", () => {
