@@ -16,6 +16,7 @@ import {
   reciprocal,
   sqrt,
   square,
+  squeeze,
   tanh,
   where,
   zerosLike,
@@ -25,6 +26,7 @@ import {
   type Axis,
   broadcast,
   erfc,
+  type ReduceOpts,
   shrink,
   stopGradient,
 } from "../frontend/core";
@@ -270,24 +272,32 @@ export function logSoftmax(x: ArrayLike, axis: Axis = -1): Array {
  *
  * Reference: https://en.wikipedia.org/wiki/LogSumExp
  */
-export function logsumexp(x: ArrayLike, axis: Axis = null): Array {
+export function logsumexp(
+  x: ArrayLike,
+  axis: Axis = null,
+  opts?: ReduceOpts,
+): Array {
   x = fudgeArray(x);
   axis = normalizeAxis(axis, x.ndim);
   if (axis.length === 0) return x;
 
-  const xMax = stopGradient(max(x.ref, axis)) as Array;
-  const xMaxDims = broadcast(xMax.ref, x.shape, axis); // keep dims
-  const shifted = x.sub(xMaxDims);
-  return xMax.add(log(exp(shifted).sum(axis)));
+  const xMax = stopGradient(max(x.ref, axis, { keepdims: true })) as Array;
+  const shifted = x.sub(xMax.ref);
+  const result = xMax.add(log(exp(shifted).sum(axis, { keepdims: true })));
+  return opts?.keepdims ? result : squeeze(result, axis);
 }
 
 /** Log-mean-exp reduction, like `jax.nn.logsumexp()` but subtracts `log(n)`. */
-export function logmeanexp(x: ArrayLike, axis: Axis = null): Array {
+export function logmeanexp(
+  x: ArrayLike,
+  axis: Axis = null,
+  opts?: ReduceOpts,
+): Array {
   x = fudgeArray(x);
   axis = normalizeAxis(axis, x.ndim);
   if (axis.length === 0) return x;
   const n = axis.reduce((acc, a) => acc * x.shape[a], 1);
-  return logsumexp(x, axis).sub(Math.log(n));
+  return logsumexp(x, axis, opts).sub(Math.log(n));
 }
 
 /**

@@ -1,9 +1,50 @@
 // Reductions and matrix multiplication.
-//
-// TODO: ReduceMean
-// TODO: ReduceSum, ReduceMax, ReduceMin, ReduceProd
 
 import { nn, numpy as np } from "@jax-js/jax";
+
+function wrapReduction(
+  fn: (
+    a: np.Array,
+    axis: number[] | null,
+    opts?: { keepdims?: boolean },
+  ) => np.Array,
+  {
+    prelude,
+    epilogue,
+  }: {
+    prelude?: (a: np.Array) => np.Array;
+    epilogue?: (a: np.Array) => np.Array;
+  } = {},
+) {
+  return (
+    [data, axes]: np.Array[],
+    {
+      keepdims = 1,
+      noop_with_empty_axes = 0,
+    }: { keepdims?: number; noop_with_empty_axes?: number },
+  ) => {
+    let axis: number[] | null = axes ? axes.js() : [];
+    if (axis?.length === 0 && !noop_with_empty_axes) axis = null;
+    let x = prelude ? prelude(data) : data;
+    x = fn(x, axis, { keepdims: Boolean(keepdims) });
+    if (epilogue) x = epilogue(x);
+    return [x];
+  };
+}
+
+export const ReduceL1 = wrapReduction(np.sum, { prelude: np.abs });
+export const ReduceL2 = wrapReduction(np.sum, {
+  prelude: np.square,
+  epilogue: np.sqrt,
+});
+export const ReduceLogSum = wrapReduction(np.sum, { epilogue: np.log });
+export const ReduceLogSumExp = wrapReduction(nn.logsumexp);
+export const ReduceMax = wrapReduction(np.max);
+export const ReduceMean = wrapReduction(np.mean);
+export const ReduceMin = wrapReduction(np.min);
+export const ReduceProd = wrapReduction(np.prod);
+export const ReduceSum = wrapReduction(np.sum);
+export const ReduceSumSquare = wrapReduction(np.sum, { prelude: np.square });
 
 export function MatMul([a, b]: np.Array[]): np.Array[] {
   return [np.matmul(a, b)];
@@ -57,28 +98,3 @@ export function LogSoftmax(
 ): np.Array[] {
   return [nn.logSoftmax(x, axis)];
 }
-
-/*
-
-  ReduceSum: ([x, axes], { keepdims = 1, noop_with_empty_axes = 0 }) => {
-    const axesArr = axes ? axes.js().flat().map(Number) : null;
-    if (axesArr?.length === 0 && noop_with_empty_axes) return [x];
-    return [np.sum(x, axesArr, { keepdims: !!keepdims })];
-  },
-  ReduceMean: ([x, axes], { keepdims = 1 }) => {
-    const axesArr = axes ? axes.js().flat().map(Number) : null;
-    return [np.mean(x, axesArr, { keepdims: !!keepdims })];
-  },
-  ReduceMax: ([x, axes], { keepdims = 1 }) => {
-    const axesArr = axes ? axes.js().flat().map(Number) : null;
-    return [np.max(x, axesArr, { keepdims: !!keepdims })];
-  },
-  ReduceMin: ([x, axes], { keepdims = 1 }) => {
-    const axesArr = axes ? axes.js().flat().map(Number) : null;
-    return [np.min(x, axesArr, { keepdims: !!keepdims })];
-  },
-  ReduceProd: ([x, axes], { keepdims = 1 }) => {
-    const axesArr = axes ? axes.js().flat().map(Number) : null;
-    return [np.prod(x, axesArr, { keepdims: !!keepdims })];
-  },
-*/

@@ -31,6 +31,12 @@ suite.each(devices)("device:%s", (device) => {
       expect(y.shape).toEqual([1, 3, 1]);
       expect(y.js()).toEqual([[[60], [92], [124]]]);
     });
+
+    test("is identity on empty axes", () => {
+      const x = np.arange(24).reshape([2, 3, 4]);
+      const y = x.ref.sum([]);
+      expect(x.js()).toEqual(y.js());
+    });
   });
 
   suite("jax.numpy.cumsum()", () => {
