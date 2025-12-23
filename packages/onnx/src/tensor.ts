@@ -13,6 +13,8 @@ export function onnxDtypeToJax(onnxType: TensorProto_DataType): DType {
       return np.int32;
     case TensorProto_DataType.INT64: // int64 is used in shapes, we map to int32
       return np.int32;
+    case TensorProto_DataType.UINT64: // uint64 may be used, we map to uint32
+      return np.uint32;
     case TensorProto_DataType.FLOAT16:
       return np.float16;
     case TensorProto_DataType.DOUBLE:
@@ -25,7 +27,6 @@ export function onnxDtypeToJax(onnxType: TensorProto_DataType): DType {
     case TensorProto_DataType.INT8:
     case TensorProto_DataType.UINT16:
     case TensorProto_DataType.INT16:
-    case TensorProto_DataType.UINT64:
     default:
       throw new Error(`Unsupported ONNX dtype: ${onnxType}`);
   }
@@ -39,7 +40,8 @@ function parseRawData(
   | Float32Array<ArrayBuffer>
   | Int32Array<ArrayBuffer>
   | Uint32Array<ArrayBuffer>
-  | Float64Array<ArrayBuffer> {
+  | Float64Array<ArrayBuffer>
+  | Float16Array<ArrayBuffer> {
   const buffer = rawData.buffer.slice(
     rawData.byteOffset,
     rawData.byteOffset + rawData.byteLength,
@@ -54,12 +56,8 @@ function parseRawData(
       return new Uint32Array(buffer);
     case TensorProto_DataType.DOUBLE:
       return new Float64Array(buffer);
-    case TensorProto_DataType.FLOAT16: {
-      // Float16 is stored as 2 bytes per element, return as Uint16 for now
-      // jax-js will handle the conversion
-      const u16 = new Uint16Array(buffer);
-      return new Float32Array(u16); // Pass through, jax handles float16
-    }
+    case TensorProto_DataType.FLOAT16:
+      return new Float16Array(buffer);
     case TensorProto_DataType.INT64: {
       // INT64 stored as 8 bytes per element, convert to Int32
       const i64 = new BigInt64Array(buffer);
@@ -106,7 +104,8 @@ export function tensorToArray(tensor: TensorProto): np.Array {
     | Float32Array<ArrayBuffer>
     | Int32Array<ArrayBuffer>
     | Uint32Array<ArrayBuffer>
-    | Float64Array<ArrayBuffer>;
+    | Float64Array<ArrayBuffer>
+    | Float16Array<ArrayBuffer>;
 
   if (tensor.rawData.length > 0) {
     // Most common: raw binary data

@@ -59,6 +59,15 @@ export class ONNXModel {
     // Extract initializers (weights/biases) as jax arrays.
     // These are cached and reused across calls.
     this.#initializers = parseInitializers(this.model.graph.initializer);
+    if (this.model.graph.sparseInitializer.length > 0) {
+      throw new Error("ONNX sparse initializers are not supported");
+    }
+    if (this.model.functions.length > 0) {
+      throw new Error(
+        "ONNX model custom functions are not supported: " +
+          this.model.functions.map((f) => f.name).join(", "),
+      );
+    }
     this.run = modelAsJaxFunction(this.model, this.#initializers);
   }
 
@@ -83,25 +92,37 @@ function parseAttributes(node: NodeProto): Record<string, any> {
       case AttributeProto_AttributeType.FLOAT:
         attrs[attr.name] = attr.f;
         break;
-      case AttributeProto_AttributeType.INT:
-        attrs[attr.name] = Number(attr.i);
-        break;
-      case AttributeProto_AttributeType.STRING:
-        attrs[attr.name] = new TextDecoder().decode(attr.s);
-        break;
-      case AttributeProto_AttributeType.TENSOR:
-        attrs[attr.name] = attr.t;
-        break;
       case AttributeProto_AttributeType.FLOATS:
         attrs[attr.name] = attr.floats;
+        break;
+      case AttributeProto_AttributeType.INT:
+        attrs[attr.name] = Number(attr.i);
         break;
       case AttributeProto_AttributeType.INTS:
         attrs[attr.name] = attr.ints.map(Number);
         break;
+      case AttributeProto_AttributeType.STRING:
+        attrs[attr.name] = new TextDecoder().decode(attr.s);
+        break;
       case AttributeProto_AttributeType.STRINGS:
         attrs[attr.name] = attr.strings.map((s) => new TextDecoder().decode(s));
         break;
-      // Skip unsupported attribute types (GRAPH, GRAPHS, TENSORS, etc.)
+      case AttributeProto_AttributeType.TENSOR:
+        attrs[attr.name] = attr.t;
+        break;
+      case AttributeProto_AttributeType.TENSORS:
+        attrs[attr.name] = attr.tensors;
+        break;
+      case AttributeProto_AttributeType.SPARSE_TENSOR:
+      case AttributeProto_AttributeType.SPARSE_TENSORS:
+        throw new Error("ONNX sparse tensor attributes are not supported");
+
+      // Skip other attribute types for now.
+      case AttributeProto_AttributeType.GRAPH:
+      case AttributeProto_AttributeType.GRAPHS:
+      case AttributeProto_AttributeType.TYPE_PROTO:
+      case AttributeProto_AttributeType.TYPE_PROTOS:
+      default:
     }
   }
   return attrs;
