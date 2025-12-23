@@ -24,7 +24,6 @@ import {
 import { eye, fudgeArray } from "../frontend/array";
 import {
   type Axis,
-  broadcast,
   erfc,
   type ReduceOpts,
   shrink,
