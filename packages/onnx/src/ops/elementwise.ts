@@ -34,6 +34,8 @@ export const GreaterOrEqual = wrapFn(np.greaterEqual);
 export const Where = wrapFn(np.where);
 export const Clip = wrapFn(np.clip);
 
+export const IsNaN = wrapFn(np.isnan);
+
 export function Not([x]: np.Array[]): np.Array[] {
   return [np.notEqual(x, true)];
 }
@@ -70,6 +72,13 @@ export function Gelu(
   { approximate = "none" }: { approximate?: "none" | "tanh" },
 ) {
   return [nn.gelu(x, { approximate: approximate === "tanh" })];
+}
+
+export function Swish([x]: np.Array[], { alpha = 1.0 }: { alpha?: number }) {
+  if (alpha === 1.0) {
+    return [nn.silu(x)];
+  }
+  return [x.ref.mul(nn.sigmoid(x.mul(alpha)))];
 }
 
 export function LeakyRelu(
