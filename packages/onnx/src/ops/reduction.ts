@@ -17,7 +17,7 @@ function wrapReduction(
   } = {},
 ) {
   return (
-    [data, axes]: np.Array[],
+    [x, axes]: np.Array[],
     {
       keepdims = 1,
       noop_with_empty_axes = 0,
@@ -25,7 +25,7 @@ function wrapReduction(
   ) => {
     let axis: number[] | null = axes ? axes.js() : [];
     if (axis?.length === 0 && !noop_with_empty_axes) axis = null;
-    let x = prelude ? prelude(data) : data;
+    if (prelude) x = prelude(x);
     x = fn(x, axis, { keepdims: Boolean(keepdims) });
     if (epilogue) x = epilogue(x);
     return [x];
