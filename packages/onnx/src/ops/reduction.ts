@@ -17,13 +17,15 @@ function wrapReduction(
   } = {},
 ) {
   return (
-    [x, axes]: np.Array[],
+    [x, axesInput]: np.Array[],
     {
       keepdims = 1,
       noop_with_empty_axes = 0,
-    }: { keepdims?: number; noop_with_empty_axes?: number },
+      axes: axesAttr,
+    }: { keepdims?: number; noop_with_empty_axes?: number; axes?: number[] },
   ) => {
-    let axis: number[] | null = axes ? axes.js() : [];
+    // axes can come from input tensor (opset 18+) or attribute (opset <18)
+    let axis: number[] | null = axesInput ? axesInput.js() : (axesAttr ?? []);
     if (axis?.length === 0 && !noop_with_empty_axes) axis = null;
     if (prelude) x = prelude(x);
     x = fn(x, axis, { keepdims: Boolean(keepdims) });
