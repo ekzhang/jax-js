@@ -1,7 +1,6 @@
 // Convolution operations.
 //
 // TODO: ConvTranspose (prompt_encoder_mask_decoder)
-// TODO: Resize (image_encoder, vision_encoder)
 // TODO: Pad (vision_encoder)
 
 import { lax, numpy as np } from "@jax-js/jax";
@@ -59,10 +58,7 @@ export function Conv(
 }
 
 // Pad a tensor with -Infinity along spatial dimensions (for max pooling).
-function padWithNegInf(
-  x: np.Array,
-  pads: [number, number][],
-): np.Array {
+function padWithNegInf(x: np.Array, pads: [number, number][]): np.Array {
   // pads is for spatial dims only, we need to add batch and channel dims
   for (let i = 0; i < pads.length; i++) {
     const [padBefore, padAfter] = pads[i];
@@ -133,7 +129,9 @@ export function MaxPool(
         ? padSizes.map((size) => [size >> 1, size - (size >> 1)])
         : padSizes.map((size) => [size - (size >> 1), size >> 1]);
   } else if (pads) {
-    explicitPads = pads.slice(0, n).map((p, i) => [p, pads[i + n]] as [number, number]);
+    explicitPads = pads
+      .slice(0, n)
+      .map((p, i) => [p, pads[i + n]] as [number, number]);
   } else {
     explicitPads = kernelShape.map(() => [0, 0] as [number, number]);
   }
@@ -149,4 +147,74 @@ export function MaxPool(
     strides ?? kernelShape.map(() => 1),
   );
   return [output];
+}
+
+export function Resize(
+  [x, _roi, scales, sizes]: np.Array[],
+  {
+    coordinate_transformation_mode: coordMode = "half_pixel",
+    mode = "nearest",
+    nearest_mode: nearestMode = "round_prefer_floor",
+  }: {
+    coordinate_transformation_mode?: string;
+    mode?: string;
+    nearest_mode?: string;
+    // Ignored: cubic_coeff_a, exclude_outside, extrapolation_value,
+    // keep_aspect_ratio_policy, axes
+  },
+): np.Array[] {
+  // Only support nearest + asymmetric + floor for now
+  if (mode !== "nearest") {
+    throw new Error(`Resize: mode '${mode}' is not supported, only 'nearest'`);
+  }
+  if (coordMode !== "asymmetric") {
+    throw new Error(
+      `Resize: coordinate_transformation_mode '${coordMode}' is not supported, only 'asymmetric'`,
+    );
+  }
+  if (nearestMode !== "floor") {
+    throw new Error(
+      `Resize: nearest_mode '${nearestMode}' is not supported, only 'floor'`,
+    );
+  }
+
+  // Determine output shape from scales or sizes
+  const inShape = x.shape;
+  let outShape: number[];
+  if (sizes && sizes.shape[0] > 0) {
+    outShape = sizes.js();
+  } else if (scales && scales.shape[0] > 0) {
+    const scalesArr: number[] = scales.js();
+    outShape = inShape.map((d, i) => Math.floor(d * scalesArr[i]));
+  } else {
+    throw new Error("Resize: either scales or sizes must be provided");
+  }
+
+  // For asymmetric + nearest + floor:
+  // input_coord = floor(output_coord * (input_size / output_size))
+  // This is equivalent to: input_coord = floor(output_coord / scale)
+  //
+  // We implement this by creating index arrays for each dimension and using
+  // advanced indexing.
+  let result = x;
+  for (let axis = 0; axis < inShape.length; axis++) {
+    const inSize = result.shape[axis];
+    const outSize = outShape[axis];
+    if (inSize === outSize) continue;
+
+    // Create indices: floor(i * inSize / outSize) for i in 0..outSize
+    const indices = np.array(
+      Array.from({ length: outSize }, (_, i) =>
+        Math.floor((i * inSize) / outSize),
+      ),
+      { dtype: np.int32 },
+    );
+
+    // Build slice args: [] for all dims except current axis
+    const sliceArgs: (np.Array | [])[] = result.shape.map(() => [] as []);
+    sliceArgs[axis] = indices;
+    result = result.slice(...sliceArgs);
+  }
+
+  return [result];
 }
