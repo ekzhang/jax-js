@@ -19,11 +19,29 @@ export const Abs = wrapFn(np.abs);
 export const Sqrt = wrapFn(np.sqrt);
 export const Exp = wrapFn(np.exp);
 export const Log = wrapFn(np.log);
-export const Pow = wrapFn(np.pow);
 export const Reciprocal = wrapFn(np.reciprocal);
 export const Floor = wrapFn(np.floor);
 export const Ceil = wrapFn(np.ceil);
 export const Identity = wrapFn((x) => x);
+
+export function Pow([x, y]: np.Array[]): np.Array[] {
+  // ONNX Pow needs to handle negative bases for integer exponents.
+  //
+  // np.pow uses exp(log(x)*y) which fails for negative x.
+  // For even integer exponents, we can use abs(x) since (-x)^2n = x^2n.
+  // For x^2 specifically, just use square.
+  if (y.ndim === 0) {
+    const exp = y.js();
+    if (exp === 2) {
+      return [np.square(x)];
+    }
+    if (Number.isInteger(exp) && exp > 0 && exp % 2 === 0) {
+      // Even integer exponent: |x|^exp
+      return [np.pow(np.abs(x), y)];
+    }
+  }
+  return [np.pow(x, y)];
+}
 
 export const Equal = wrapFn(np.equal);
 export const Less = wrapFn(np.less);

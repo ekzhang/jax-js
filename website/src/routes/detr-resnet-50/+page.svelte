@@ -21,9 +21,9 @@
     console.log("ONNX Model loaded:", onnxModel);
 
     // Create dummy inputs
-    // pixel_values: [batch, channels, height, width] - float16
+    // pixel_values: [batch, channels, height, width] - float32 (model casts to float16 internally)
     // pixel_mask: [batch, 64, 64] - int32
-    const pixelValues = np.ones([1, 3, 800, 800], { dtype: np.float16 });
+    const pixelValues = np.ones([1, 3, 800, 800], { dtype: np.float32 });
     const pixelMask = np.ones([1, 64, 64], { dtype: np.int32 });
 
     console.log("Running forward pass...");
