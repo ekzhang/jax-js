@@ -1,8 +1,6 @@
 // Movement operations, changing shape and indexing.
 //
 // TODO: Split (vision_encoder)
-// TODO: Slice
-// TODO: Tile
 
 import { numpy as np } from "@jax-js/jax";
 
@@ -75,87 +73,54 @@ export function Concat(inputs: np.Array[], { axis }: { axis: number }) {
   return [np.concatenate(inputs, axis)];
 }
 
-/*
+export function Tile([input, repeats]: np.Array[]): np.Array[] {
+  return [np.tile(input, repeats.js())];
+}
 
-  Split: ([x, split], { axis = 0, num_outputs }) => {
-    let splitSizes: number[];
-    if (split) {
-      splitSizes = split.js().flat().map(Number);
-    } else if (num_outputs) {
-      // Equal split
-      const dimSize = x.shape[axis];
-      const splitSize = Math.floor(dimSize / num_outputs);
-      splitSizes = Array(num_outputs).fill(splitSize);
-      // Handle remainder
-      const remainder = dimSize % num_outputs;
-      for (let i = 0; i < remainder; i++) {
-        splitSizes[i]++;
-      }
-    } else {
-      throw new Error("Split requires either split sizes or num_outputs");
+export function Slice([
+  data,
+  starts,
+  ends,
+  axes,
+  steps,
+]: np.Array[]): np.Array[] {
+  const startsArr: number[] = starts.js();
+  const endsArr: number[] = ends.js();
+  const axesArr: number[] | null = axes ? axes.js() : null;
+  const stepsArr: number[] | null = steps ? steps.js() : null;
+
+  // Build slice specification for all dimensions (default to full range)
+  const sliceRanges: [number, number][] = data.shape.map((d: number) => [0, d]);
+
+  const targetAxes = axesArr ?? startsArr.map((_, i) => i);
+  for (let i = 0; i < targetAxes.length; i++) {
+    let axis = targetAxes[i];
+    if (axis < 0) axis += data.ndim;
+
+    const step = stepsArr ? stepsArr[i] : 1;
+    if (step !== 1) {
+      throw new Error("Slice with step != 1 is not yet supported");
     }
 
-    const results: np.Array[] = [];
-    let offset = 0;
-    for (const size of splitSizes) {
-      // Build slice indices for all dimensions
-      // slice() takes variadic args, each being [] (full), [start, end], or number
-      const sliceArgs: ([] | [number, number])[] = x.shape.map(
-        (d: number, i: number): [] | [number, number] =>
-          i === axis ? [offset, offset + size] : [],
-      );
-      results.push(x.ref.slice(...sliceArgs));
-      offset += size;
-    }
-    x.dispose();
-    return results;
-  },
+    const dimSize = data.shape[axis];
+    let start = startsArr[i];
+    let end = endsArr[i];
 
+    // Handle negative indices
+    if (start < 0) start = dimSize + start;
+    if (end < 0) end = dimSize + end;
 
-  // ============================================================
-  // Gather and indexing operations
-  // ============================================================
+    // Clamp to valid range
+    start = Math.max(0, Math.min(start, dimSize));
+    end = Math.max(0, Math.min(end, dimSize));
 
-  Slice: ([data, starts, ends, axes, steps]) => {
-    const startsArr = starts.js().flat().map(Number);
-    const endsArr = ends.js().flat().map(Number);
-    const axesArr = axes ? axes.js().flat().map(Number) : null;
-    const stepsArr = steps ? steps.js().flat().map(Number) : null;
+    sliceRanges[axis] = [start, end];
+  }
 
-    // Build slice specification for all dimensions (default to full range)
-    const sliceRanges: [number, number][] = data.shape.map((d: number) => [
-      0,
-      d,
-    ]);
-
-    const targetAxes = axesArr || startsArr.map((_: number, i: number) => i);
-    for (let i = 0; i < targetAxes.length; i++) {
-      const axis =
-        targetAxes[i] < 0 ? data.ndim + targetAxes[i] : targetAxes[i];
-      let start = startsArr[i];
-      let end = endsArr[i];
-      const step = stepsArr ? stepsArr[i] : 1;
-
-      if (step !== 1) {
-        throw new Error("Slice with step != 1 not yet supported");
-      }
-
-      // Handle negative indices
-      const dimSize = data.shape[axis];
-      if (start < 0) start = Math.max(0, dimSize + start);
-      if (end < 0) end = dimSize + end;
-      // Clamp to valid range
-      start = Math.max(0, Math.min(start, dimSize));
-      end = Math.max(0, Math.min(end, dimSize));
-
-      sliceRanges[axis] = [start, end];
-    }
-
-    // Convert to slice args format: [] for full dim, [start, end] for range
-    const sliceArgs: ([] | [number, number])[] = sliceRanges.map(
-      ([start, end], i): [] | [number, number] =>
-        start === 0 && end === data.shape[i] ? [] : [start, end],
-    );
-    return [data.slice(...sliceArgs)];
-  },
-  */
+  // Convert to slice args format: [] for full dim, [start, end] for range
+  const sliceArgs: ([] | [number, number])[] = sliceRanges.map(
+    ([start, end], i): [] | [number, number] =>
+      start === 0 && end === data.shape[i] ? [] : [start, end],
+  );
+  return [data.slice(...sliceArgs)];
+}
