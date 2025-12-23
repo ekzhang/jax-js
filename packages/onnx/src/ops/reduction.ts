@@ -46,6 +46,21 @@ export const ReduceProd = wrapReduction(np.prod);
 export const ReduceSum = wrapReduction(np.sum);
 export const ReduceSumSquare = wrapReduction(np.sum, { prelude: np.square });
 
+export function CumSum(
+  [x, axisOnnx]: np.Array[],
+  { exclusive = 0, reverse = 0 }: { exclusive?: number; reverse?: number },
+) {
+  if (exclusive)
+    throw new Error("CumSum ONNX operand does not support exclusive=true");
+  if (axisOnnx.ndim !== 0)
+    throw new Error("CumSum ONNX axis operand must be a scalar");
+  const axis: number = axisOnnx.js();
+  if (reverse) x = np.flip(x, axis);
+  x = np.cumsum(x, axis);
+  if (reverse) x = np.flip(x, axis);
+  return [x];
+}
+
 export function MatMul([a, b]: np.Array[]): np.Array[] {
   return [np.matmul(a, b)];
 }
