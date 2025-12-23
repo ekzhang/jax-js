@@ -100,6 +100,9 @@ importers:
       '@jax-js/loaders':
         specifier: workspace:^
         version: link:../packages/loaders
+      '@jax-js/onnx':
+        specifier: workspace:^
+        version: link:../packages/onnx
       '@jax-js/optax':
         specifier: workspace:^
         version: link:../packages/optax

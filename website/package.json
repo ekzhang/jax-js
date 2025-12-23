@@ -41,6 +41,7 @@
     "@fontsource-variable/tiktok-sans": "^5.2.3",
     "@jax-js/jax": "workspace:^",
     "@jax-js/loaders": "workspace:^",
+    "@jax-js/onnx": "workspace:^",
     "@jax-js/optax": "workspace:^",
     "@lucide/svelte": "^0.556.0",
     "@observablehq/plot": "^0.6.17",
