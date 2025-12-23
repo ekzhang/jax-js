@@ -192,15 +192,19 @@ suite.each(devices)("device:%s", (device) => {
     // 2 groups, each doing independent 1d convolution
     // Group 1: channel 0 with kernel 0
     // Group 2: channel 1 with kernel 1
-    const x = np.array([
-      [[1, 2, 3, 4]], // channel 0
-      [[5, 6, 7, 8]], // channel 1
-    ]).reshape([1, 2, 4]); // [N=1, C_in=2, W=4]
+    const x = np
+      .array([
+        [[1, 2, 3, 4]], // channel 0
+        [[5, 6, 7, 8]], // channel 1
+      ])
+      .reshape([1, 2, 4]); // [N=1, C_in=2, W=4]
 
-    const y = np.array([
-      [[1, 0, -1]], // kernel for group 0 -> out channel 0
-      [[1, 1, 1]], // kernel for group 1 -> out channel 1
-    ]).reshape([2, 1, 3]); // [C_out=2, C_in/G=1, kW=3]
+    const y = np
+      .array([
+        [[1, 0, -1]], // kernel for group 0 -> out channel 0
+        [[1, 1, 1]], // kernel for group 1 -> out channel 1
+      ])
+      .reshape([2, 1, 3]); // [C_out=2, C_in/G=1, kW=3]
 
     const result = lax.convGeneralDilated(x, y, [1], "VALID", {
       featureGroupCount: 2,
@@ -208,7 +212,12 @@ suite.each(devices)("device:%s", (device) => {
     // Group 0: [1,2,3,4] conv [1,0,-1] = [1-3, 2-4] = [-2, -2]
     // Group 1: [5,6,7,8] conv [1,1,1] = [5+6+7, 6+7+8] = [18, 21]
     expect(result.shape).toEqual([1, 2, 2]);
-    expect(result.js()).toEqual([[[-2, -2], [18, 21]]]);
+    expect(result.js()).toEqual([
+      [
+        [-2, -2],
+        [18, 21],
+      ],
+    ]);
   });
 
   test("grad of depthwise conv1d", () => {
@@ -217,17 +226,21 @@ suite.each(devices)("device:%s", (device) => {
     const f = (x: np.Array, y: np.Array) =>
       lax.convGeneralDilated(x, y, [1], "VALID", { featureGroupCount: 3 });
 
-    const x = np.array([
-      [[1, 2, 3, 4, 5]], // channel 0
-      [[2, 3, 4, 5, 6]], // channel 1
-      [[3, 4, 5, 6, 7]], // channel 2
-    ]).reshape([1, 3, 5]); // [N=1, C=3, W=5]
+    const x = np
+      .array([
+        [[1, 2, 3, 4, 5]], // channel 0
+        [[2, 3, 4, 5, 6]], // channel 1
+        [[3, 4, 5, 6, 7]], // channel 2
+      ])
+      .reshape([1, 3, 5]); // [N=1, C=3, W=5]
 
-    const y = np.array([
-      [[1, -1]], // kernel for channel 0
-      [[1, 0]], // kernel for channel 1
-      [[0, 1]], // kernel for channel 2
-    ]).reshape([3, 1, 2]); // [C_out=3, C_in/G=1, kW=2]
+    const y = np
+      .array([
+        [[1, -1]], // kernel for channel 0
+        [[1, 0]], // kernel for channel 1
+        [[0, 1]], // kernel for channel 2
+      ])
+      .reshape([3, 1, 2]); // [C_out=3, C_in/G=1, kW=2]
 
     // Forward pass check
     const result = f(x.ref, y.ref);
@@ -235,7 +248,13 @@ suite.each(devices)("device:%s", (device) => {
     // Channel 0: [1-2, 2-3, 3-4, 4-5] = [-1, -1, -1, -1]
     // Channel 1: [2, 3, 4, 5]
     // Channel 2: [4, 5, 6, 7]
-    expect(result.js()).toEqual([[[-1, -1, -1, -1], [2, 3, 4, 5], [4, 5, 6, 7]]]);
+    expect(result.js()).toEqual([
+      [
+        [-1, -1, -1, -1],
+        [2, 3, 4, 5],
+        [4, 5, 6, 7],
+      ],
+    ]);
 
     // Gradient w.r.t. input
     const sumF = (x: np.Array, y: np.Array) => f(x, y).sum();
