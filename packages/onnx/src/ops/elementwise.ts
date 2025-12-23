@@ -31,6 +31,7 @@ export function Pow([x, y]: np.Array[]): np.Array[] {
   // For even integer exponents, we can use abs(x) since (-x)^2n = x^2n.
   // For x^2 specifically, just use square.
   if (y.ndim === 0) {
+    // TODO: This is a hack, please fix properly in `@jax-js/jax`.
     const exp = y.js();
     if (exp === 2) {
       return [np.square(x)];

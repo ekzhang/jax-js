@@ -4,9 +4,18 @@
 
 import { numpy as np } from "@jax-js/jax";
 
-export function Reshape([data, shape]: np.Array[]): np.Array[] {
-  // TODO: There's an "allowzero" attribute which seems a bit confusing. I think
-  // the default (allowzero=0) has ambiguous semantics, we don't implement it.
+export function Reshape(
+  [data, shapeArr]: np.Array[],
+  { allowzero = 0 }: { allowzero?: number },
+): np.Array[] {
+  const shape = shapeArr.js();
+  if (shape.includes(0) && !allowzero) {
+    // Semantics of allowzero=0 are confusing, will skip for now.
+    // https://onnx.ai/onnx/operators/onnx__Reshape.html
+    throw new Error(
+      "Reshape with 0 in shape is not supported unless allowzero=1",
+    );
+  }
   return [data.reshape(shape.js())];
 }
 
