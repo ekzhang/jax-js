@@ -1,6 +1,5 @@
 // Movement operations, changing shape and indexing.
 //
-// TODO: Concat
 // TODO: Split (vision_encoder)
 // TODO: Slice
 // TODO: Tile
@@ -72,11 +71,11 @@ export function Gather(
   return [data.slice(...sliceArgs)];
 }
 
-/*
+export function Concat(inputs: np.Array[], { axis }: { axis: number }) {
+  return [np.concatenate(inputs, axis)];
+}
 
-  Concat: (inputs, { axis }) => {
-    return [np.concatenate(inputs, axis)];
-  },
+/*
 
   Split: ([x, split], { axis = 0, num_outputs }) => {
     let splitSizes: number[];
