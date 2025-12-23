@@ -649,8 +649,10 @@ export abstract class Tracer {
     if (n === 0) {
       throw new Error("mean: cannot compute mean over zero-length axis");
     }
-    const result = reduce(this, AluOp.Add, axis, opts);
-    return result.mul(1 / n) as this;
+    const originalDtype = this.dtype;
+    const castDtype = promoteTypes(originalDtype, DType.Float32);
+    const result = reduce(this.astype(castDtype), AluOp.Add, axis, opts);
+    return result.mul(1 / n).astype(originalDtype) as this;
   }
 
   /** Permute the dimensions of an array. Defaults to reversing the axis order. */
