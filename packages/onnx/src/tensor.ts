@@ -60,13 +60,26 @@ function parseRawData(
       return new Float16Array(buffer);
     case TensorProto_DataType.INT64: {
       // INT64 stored as 8 bytes per element, convert to Int32
+      // Clamp to INT32 range to avoid overflow issues
       const i64 = new BigInt64Array(buffer);
-      return new Int32Array(Array.from(i64, (v) => Number(v)));
+      const INT32_MAX = BigInt(2147483647);
+      const INT32_MIN = BigInt(-2147483648);
+      return new Int32Array(
+        Array.from(i64, (v) => {
+          if (v > INT32_MAX) return Number(INT32_MAX);
+          if (v < INT32_MIN) return Number(INT32_MIN);
+          return Number(v);
+        }),
+      );
     }
     case TensorProto_DataType.UINT64: {
       // UINT64 stored as 8 bytes per element, convert to Uint32
+      // Clamp to UINT32 range to avoid overflow issues
       const u64 = new BigUint64Array(buffer);
-      return new Uint32Array(Array.from(u64, (v) => Number(v)));
+      const UINT32_MAX = BigInt(4294967295);
+      return new Uint32Array(
+        Array.from(u64, (v) => (v > UINT32_MAX ? Number(UINT32_MAX) : Number(v))),
+      );
     }
     case TensorProto_DataType.BOOL: {
       // Bool is stored as 1 byte per element
@@ -118,9 +131,22 @@ export function tensorToArray(tensor: TensorProto): np.Array {
     data = Float64Array.from(tensor.doubleData);
   } else if (tensor.int64Data.length > 0) {
     // We don't support int64 or uint64 natively, convert to int32/uint32.
-    data = Int32Array.from(tensor.int64Data.map(Number));
+    // Clamp to INT32 range to avoid overflow issues.
+    const INT32_MAX = BigInt(2147483647);
+    const INT32_MIN = BigInt(-2147483648);
+    data = Int32Array.from(
+      tensor.int64Data.map((v) => {
+        if (v > INT32_MAX) return Number(INT32_MAX);
+        if (v < INT32_MIN) return Number(INT32_MIN);
+        return Number(v);
+      }),
+    );
   } else if (tensor.uint64Data.length > 0) {
-    data = Uint32Array.from(tensor.uint64Data.map(Number));
+    // Clamp to UINT32 range to avoid overflow issues.
+    const UINT32_MAX = BigInt(4294967295);
+    data = Uint32Array.from(
+      tensor.uint64Data.map((v) => (v > UINT32_MAX ? Number(UINT32_MAX) : Number(v))),
+    );
   } else {
     // Empty tensor or scalar with no data
     if (shape.length === 0 || shape.reduce((a, b) => a * b, 1) === 0) {

@@ -90,7 +90,9 @@ export function Slice([
   const stepsArr: number[] | null = steps ? steps.js() : null;
 
   // Build slice specification for all dimensions (default to full range)
-  const sliceRanges: [number, number][] = data.shape.map((d: number) => [0, d]);
+  const sliceRanges: [number, number, number][] = data.shape.map(
+    (d: number) => [0, d, 1],
+  );
 
   const targetAxes = axesArr ?? startsArr.map((_, i) => i);
   for (let i = 0; i < targetAxes.length; i++) {
@@ -98,29 +100,65 @@ export function Slice([
     if (axis < 0) axis += data.ndim;
 
     const step = stepsArr ? stepsArr[i] : 1;
-    if (step !== 1) {
-      throw new Error("Slice with step != 1 is not yet supported");
+    if (step <= 0) {
+      throw new Error("Slice with step <= 0 is not supported");
     }
 
     const dimSize = data.shape[axis];
     let start = startsArr[i];
     let end = endsArr[i];
 
-    // Handle negative indices
-    if (start < 0) start = dimSize + start;
-    if (end < 0) end = dimSize + end;
+    // Handle negative indices (but not very large values used as "to the end")
+    // ONNX uses INT_MAX or very large values to mean "slice to end"
+    if (start < -dimSize) start = 0;
+    else if (start < 0) start = dimSize + start;
+
+    if (end < -dimSize) end = 0;
+    else if (end < 0) end = dimSize + end;
 
     // Clamp to valid range
     start = Math.max(0, Math.min(start, dimSize));
-    end = Math.max(0, Math.min(end, dimSize));
+    end = Math.max(start, Math.min(end, dimSize));
 
-    sliceRanges[axis] = [start, end];
+    sliceRanges[axis] = [start, end, step];
   }
 
-  // Convert to slice args format: [] for full dim, [start, end] for range
+  // First pass: do basic start:end slices
   const sliceArgs: ([] | [number, number])[] = sliceRanges.map(
     ([start, end], i): [] | [number, number] =>
       start === 0 && end === data.shape[i] ? [] : [start, end],
   );
-  return [data.slice(...sliceArgs)];
+  let result = data.slice(...sliceArgs);
+
+  // Second pass: handle steps != 1 using reshape + slice
+  for (let axis = 0; axis < sliceRanges.length; axis++) {
+    const [start, end, step] = sliceRanges[axis];
+    if (step === 1) continue;
+
+    const len = end - start;
+    const outLen = Math.ceil(len / step);
+    // Pad to make divisible by step, reshape to [outLen, step], take [:, 0]
+    const padded = outLen * step;
+    if (padded > len) {
+      // Need to pad with zeros
+      const padShape = [...result.shape];
+      padShape[axis] = padded - len;
+      const padding = np.zeros(padShape, { dtype: result.dtype });
+      result = np.concatenate([result, padding], axis);
+    }
+    // Reshape to split axis into [outLen, step]
+    const newShape = [
+      ...result.shape.slice(0, axis),
+      outLen,
+      step,
+      ...result.shape.slice(axis + 1),
+    ];
+    result = result.reshape(newShape);
+    // Take index 0 on the step dimension (axis + 1)
+    const selectArgs: ([] | number)[] = new Array(result.ndim).fill([]);
+    selectArgs[axis + 1] = 0;
+    result = result.slice(...selectArgs);
+  }
+
+  return [result];
 }
