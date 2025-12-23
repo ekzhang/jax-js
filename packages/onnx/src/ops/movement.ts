@@ -16,7 +16,7 @@ export function Reshape(
       "Reshape with 0 in shape is not supported unless allowzero=1",
     );
   }
-  return [data.reshape(shape.js())];
+  return [data.reshape(shape)];
 }
 
 export function Transpose(
