@@ -45,7 +45,10 @@ export class ONNXModel {
    * don't need to create a separate closure to pass it to transformations such
    * as `jit()` and `grad()`.
    */
-  readonly run: (inputs: Record<string, np.Array>) => Record<string, np.Array>;
+  readonly run: (
+    inputs: Record<string, np.Array>,
+    options?: ONNXRunOptions,
+  ) => Record<string, np.Array>;
 
   /** Cache of initializers (data / weights), needed for `run()` calls. */
   #initializers: Map<string, np.Array>;
@@ -161,10 +164,44 @@ function executeNode(node: NodeProto, vars: Map<string, np.Array>): np.Array[] {
   return handler(inputs, attrs);
 }
 
+/** Options for running an ONNX model. */
+export interface ONNXRunOptions {
+  /** Print out names, input and output shapes when running each operation. */
+  verbose?: boolean;
+
+  /**
+   * Tensors for which to log debug information during execution. When provided,
+   * logs statistics (min, max, mean, variance) for intermediate tensors
+   * matching these names.
+   *
+   * This is an unstable API and may be removed without notice.
+   */
+  debugStats?: string[];
+}
+
+function logDebugStats(name: string, arr: np.Array): void {
+  arr = arr.astype(np.float32);
+
+  const min = np.min(arr.ref).js() as number;
+  const max = np.max(arr.ref).js() as number;
+  const mean = np.mean(arr.ref).js() as number;
+  const variance = np.var_(arr.ref).js() as number;
+
+  const shortName = name.split("/").pop() || name;
+  console.log(`${shortName}
+  full: ${name}
+  shape: [${arr.shape.join(", ")}], dtype: ${arr.dtype}
+  min: ${min.toFixed(6)}, max: ${max.toFixed(6)}
+  mean: ${mean.toFixed(6)}, var: ${variance.toFixed(6)}`);
+  console.log();
+
+  arr.dispose();
+}
+
 function modelAsJaxFunction(
   model: ModelProto,
   initializers: Map<string, np.Array> = new Map(),
-): (inputs: Record<string, np.Array>) => Record<string, np.Array> {
+): typeof ONNXModel.prototype.run {
   const graph = model.graph;
   if (!graph) {
     throw new Error("ONNX model has no graph");
@@ -182,7 +219,10 @@ function modelAsJaxFunction(
   const outputNames = graph.output.map((o) => o.name);
   const numInitializers = initializers.size;
 
-  return function (inputs: Record<string, np.Array>): Record<string, np.Array> {
+  return function (
+    inputs: Record<string, np.Array>,
+    options?: ONNXRunOptions,
+  ): Record<string, np.Array> {
     for (const name of inputNames) {
       if (!Object.hasOwn(inputs, name))
         throw new Error(`Missing input '${name}'`);
@@ -195,6 +235,9 @@ function modelAsJaxFunction(
     if (initializers.size !== numInitializers)
       throw new Error("Model has already been disposed");
 
+    const debugStats = new Set(options?.debugStats ?? []);
+    const verbose = options?.verbose ?? false;
+
     const vars = new Map<string, np.Array>();
     try {
       for (const [name, arr] of initializers) vars.set(name, arr.ref);
@@ -202,8 +245,28 @@ function modelAsJaxFunction(
 
       for (const node of graph.node) {
         const results = executeNode(node, vars);
-        for (const [i, name] of node.output.entries())
+
+        if (verbose) {
+          const inputs = node.input.map((n) => {
+            if (!n) return "_";
+            const arr = vars.get(n)!;
+            return `${n} ${arr.aval}`;
+          });
+          const outputs = results.map(
+            (arr, i) => `${node.output[i]} ${arr.aval}`,
+          );
+          console.log(
+            `${node.opType} ${node.name}\n` +
+              `  ${inputs.join(", ")} -> ${outputs.join(", ")}`,
+          );
+        }
+
+        for (const [i, name] of node.output.entries()) {
+          if (debugStats.has(name)) {
+            logDebugStats(name, results[i].ref);
+          }
           vars.set(name, results[i]);
+        }
       }
 
       const outputs: Record<string, np.Array> = {};
