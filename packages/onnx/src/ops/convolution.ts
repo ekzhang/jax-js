@@ -42,9 +42,6 @@ export function Conv(
     );
   }
   const n = xSpatial.length;
-  if (group !== -1) {
-    throw new Error("Conv: grouped convolution not supported yet");
-  }
   const output = lax.convGeneralDilated(
     x,
     w,
@@ -52,7 +49,10 @@ export function Conv(
     padsMapping[autoPad] ??
       pads?.slice(0, n).map((p, i) => [p, pads[i + n]]) ??
       "VALID",
-    { rhsDilation: dilations },
+    {
+      rhsDilation: dilations,
+      featureGroupCount: group,
+    },
   );
   return [output];
 }
