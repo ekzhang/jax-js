@@ -78,7 +78,9 @@ function parseRawData(
       const u64 = new BigUint64Array(buffer);
       const UINT32_MAX = BigInt(4294967295);
       return new Uint32Array(
-        Array.from(u64, (v) => (v > UINT32_MAX ? Number(UINT32_MAX) : Number(v))),
+        Array.from(u64, (v) =>
+          v > UINT32_MAX ? Number(UINT32_MAX) : Number(v),
+        ),
       );
     }
     case TensorProto_DataType.BOOL: {
@@ -145,7 +147,9 @@ export function tensorToArray(tensor: TensorProto): np.Array {
     // Clamp to UINT32 range to avoid overflow issues.
     const UINT32_MAX = BigInt(4294967295);
     data = Uint32Array.from(
-      tensor.uint64Data.map((v) => (v > UINT32_MAX ? Number(UINT32_MAX) : Number(v))),
+      tensor.uint64Data.map((v) =>
+        v > UINT32_MAX ? Number(UINT32_MAX) : Number(v),
+      ),
     );
   } else {
     // Empty tensor or scalar with no data
