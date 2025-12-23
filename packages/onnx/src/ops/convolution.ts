@@ -12,7 +12,7 @@ const padsMapping: Record<string, lax.PaddingType> = {
 };
 
 export function Conv(
-  [x, w]: np.Array[],
+  [x, w, bias]: (np.Array | undefined)[],
   {
     auto_pad: autoPad = "NOTSET",
     dilations,
@@ -29,6 +29,7 @@ export function Conv(
     strides?: number[];
   },
 ) {
+  if (!x || !w) throw new Error("Conv: missing required inputs");
   const [_batchSize, channelsIn, ...xSpatial] = x.shape;
   const [_channelsOut, channelsInGrouped, ...wSpatial] = w.shape;
   if (channelsIn !== channelsInGrouped * group) {
@@ -42,7 +43,7 @@ export function Conv(
     );
   }
   const n = xSpatial.length;
-  const output = lax.convGeneralDilated(
+  let output = lax.convGeneralDilated(
     x,
     w,
     strides ?? wSpatial.map(() => 1),
@@ -54,6 +55,11 @@ export function Conv(
       featureGroupCount: group,
     },
   );
+  // Add bias if provided (reshape to [1, C, 1, 1, ...] for broadcasting)
+  if (bias) {
+    const biasShape = [bias.size, ...xSpatial.map(() => 1)];
+    output = output.add(bias.reshape(biasShape));
+  }
   return [output];
 }
 
