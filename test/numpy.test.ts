@@ -3,6 +3,7 @@ import {
   devices,
   grad,
   init,
+  jit,
   jvp,
   numpy as np,
   vmap,
@@ -1306,6 +1307,17 @@ suite.each(devices)("device:%s", (device) => {
       expect(grad((x: np.Array) => np.pad(x, 1).sum())(a).js()).toEqual([
         1, 1, 1,
       ]);
+    });
+
+    test("works with jit and a prior operation", () => {
+      // See comment about `needsCleanShapePrimitives` in JIT.
+      const f = jit((x: np.Array) => {
+        const y = x.add(2);
+        return np.pad(y, 1);
+      });
+      const a = np.array([1, 2, 3]);
+      const b = f(a);
+      expect(b.js()).toEqual([0, 3, 4, 5, 0]);
     });
   });
 

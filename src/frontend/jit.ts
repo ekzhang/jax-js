@@ -686,6 +686,7 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
   // - Reductions (intermediates cannot have reductions)
   // - Gather/RandomBits operations (violates rule that kernels must have
   //   homogeneous GlobalView indices)
+  // - Inputs to Pad operations, which need clean inputs
   //
   // Also, mark a node black if there are at least two black nodes that can be
   // reached from it, while only going through non-black nodes.
@@ -707,7 +708,19 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
     Primitive.Conv,
     Primitive.PoolTranspose,
   ];
-  const heterogeneousViewPrimitives = [Primitive.Gather, Primitive.RandomBits];
+  const heterogeneousViewPrimitives = [
+    // These primitives generate heterogeneous GlobalView outputs, there are
+    // multiple views in the expression with different indexing.
+    Primitive.Gather,
+    Primitive.RandomBits,
+  ];
+  const needsCleanShapePrimitives = [
+    // If Pad is applied to a non-clean input, the reshaped padding would apply
+    // to the view _inside_ of the expression. Imagine `GlobalView(...)+1`: if
+    // you reshape each view, it adds zeros into the inner expression, so the
+    // effect is to pad the intermediate with 1s instead of 0s!
+    Primitive.Pad,
+  ];
   for (let i = jaxpr.eqns.length - 1; i >= 0; i--) {
     const eqn = jaxpr.eqns[i];
     if (
@@ -722,24 +735,29 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
       continue;
     }
     const reach = new Set<Var>();
+    let needsCleanOutput = false;
     for (let j = i + 1; j < jaxpr.eqns.length; j++) {
       for (const v of jaxpr.eqns[j].inputs) {
         if (v instanceof Var && eqn.outBinders.includes(v)) {
+          if (needsCleanShapePrimitives.includes(jaxpr.eqns[j].primitive)) {
+            needsCleanOutput = true;
+          }
           for (const o of jaxpr.eqns[j].outBinders) {
             const u = p1NextBlack.get(o);
             if (u) reach.add(u);
           }
+          break;
         }
       }
     }
-    if (reach.size === 1) {
-      const b = reach.values().next().value!;
-      for (const v of eqn.outBinders) p1NextBlack.set(v, b);
-    } else if (reach.size > 1) {
+    if (reach.size > 1 || needsCleanOutput) {
       for (const v of eqn.outBinders) {
         blackNodes.add(v);
         p1NextBlack.set(v, v);
       }
+    } else if (reach.size === 1) {
+      const b = reach.values().next().value!;
+      for (const v of eqn.outBinders) p1NextBlack.set(v, b);
     }
   }
 
