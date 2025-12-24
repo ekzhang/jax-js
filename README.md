@@ -330,7 +330,6 @@ Contributions are welcomed! Especially in:
 - Adding support for `jax.profiling`, in particular the start and end trace functions. We should be
   able to generate `traceEvents` from backends (especially on GPU, with precise timestamp queries)
   to help with model performance debugging.
-- Helping the JIT compiler to fuse operations in more cases, like `tanh` branches and adding
-  epilogue to reductions.
+- Helping the JIT compiler to fuse operations in more cases, like `tanh` branches.
 - Adding WebGL runtime for older browsers that don't support WebGPU.
 - Making a fast transformer inference engine, comparing against onnxruntime-web.

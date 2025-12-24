@@ -532,6 +532,31 @@ suite.each(devices)("device:%s", (device) => {
         ],
       ]);
     });
+
+    test("jit with fused bias and relu", () => {
+      const matmulWithBiasAndRelu = jit(
+        (x: np.Array, w: np.Array, b: np.Array) => {
+          const y = np.matmul(x, w).add(b);
+          return np.maximum(y, 0);
+        },
+      );
+
+      const x = np.array([
+        [1, -1],
+        [-1, 1],
+      ]);
+      const w = np.array([
+        [2, 3],
+        [4, 6],
+      ]);
+      const b = np.array([10, -10]);
+
+      const y = matmulWithBiasAndRelu(x, w, b);
+      expect(y.js()).toEqual([
+        [8, 0],
+        [12, 0],
+      ]);
+    });
   });
 
   suite("jax.numpy.dot()", () => {

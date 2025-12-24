@@ -76,14 +76,17 @@ export class CpuBackend implements Backend {
     inputs: Slot[],
     outputs: Slot[],
   ): void {
-    const { exp } = tuneNullopt(kernel);
+    const { exp, epilogue } = tuneNullopt(kernel);
     const inputBuffers = inputs.map((slot) => this.#getBuffer(slot));
     const outputBuffers = outputs.map((slot) => this.#getBuffer(slot));
 
     const usedArgs = new Map(
-      exp
-        .collect((exp) => exp.op === AluOp.GlobalIndex)
-        .map((exp) => [exp.arg[0] as number, exp.dtype]),
+      [
+        ...exp.collect((exp) => exp.op === AluOp.GlobalIndex),
+        ...(epilogue
+          ? epilogue.collect((exp) => exp.op === AluOp.GlobalIndex)
+          : []),
+      ].map((exp) => [exp.arg[0] as number, exp.dtype]),
     );
 
     const inputArrays = inputBuffers.map((buf, i) => {
@@ -111,7 +114,7 @@ export class CpuBackend implements Backend {
           const item = exp.evaluate({ gidx: i, ridx: j }, globals);
           acc = kernel.reduction.evaluate(acc, item);
         }
-        outputArray[i] = kernel.reduction.epilogue.evaluate({ acc });
+        outputArray[i] = epilogue!.evaluate({ acc, gidx: i }, globals);
       }
     }
   }

@@ -511,7 +511,7 @@ function partialEvalGraphToJaxpr(
 
   jaxpr = jaxpr.simplify();
   if (DEBUG >= 5) {
-    console.log("jaxpr from partial evaluation:\n" + jaxpr.toString());
+    console.info("jaxpr from partial evaluation:\n" + jaxpr.toString());
   }
 
   return { jaxpr, consts };

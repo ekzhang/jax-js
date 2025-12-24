@@ -345,18 +345,18 @@ export class AluExp implements FpHashable {
   }
 
   /** Reindex gid values in this expression as needed. */
-  reindexGids(gidMap: Map<number, number>): AluExp {
+  reindexGids(newGids: number[]): AluExp {
     return this.rewrite((exp) => {
       if (exp.op === AluOp.GlobalIndex) {
         const [gid, len] = exp.arg as [number, number];
-        const newGid = gidMap.get(gid);
-        if (newGid !== undefined && newGid !== gid) {
+        const newGid = newGids[gid];
+        if (newGid !== gid) {
           return AluExp.globalIndex(exp.dtype, newGid, len, exp.src[0]);
         }
       } else if (exp.op === AluOp.GlobalView) {
         const gid = exp.arg[0] as number;
-        const newGid = gidMap.get(gid);
-        if (newGid !== undefined && newGid !== gid) {
+        const newGid = newGids[gid];
+        if (newGid !== gid) {
           return AluExp.globalView(exp.dtype, newGid, exp.arg[1], exp.src);
         }
       }
@@ -1477,7 +1477,7 @@ export class Reduction implements FpHashable {
     /** Size of the reduction axis. */
     readonly size: number,
     /** Follow-up expression defined with the "acc" variable, defaults to identity. */
-    readonly epilogue: AluExp = AluVar.acc(dtype), // TODO: Currently not used except in tests.
+    readonly epilogue: AluExp = AluVar.acc(dtype),
   ) {
     if (!AluGroup.Reduce.has(op)) {
       throw new TypeError(`Unsupported reduction: ${op}`);

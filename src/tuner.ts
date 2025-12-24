@@ -30,6 +30,9 @@ export interface TuneResult {
   /** New expression with GlobalView ops and gidx/ridx lowered. */
   exp: AluExp;
 
+  /** New reduction epilogue expression, present when `kernel.reduction` is present. */
+  epilogue?: AluExp;
+
   /** Expression for indexing the result array, including upcast. */
   outputIdxExp: AluExp;
 
@@ -194,7 +197,11 @@ export function tuneNullopt(kernel: Kernel): TuneResult {
     vars.ridx = AluExp.special(DType.Int32, "ridx", kernel.reduction.size);
   return {
     exp: kernel.exp.substitute(vars).rewriteGlobalViews().simplify(),
-    outputIdxExp: AluExp.special(DType.Int32, "gidx", kernel.size),
+    epilogue: kernel.reduction?.epilogue
+      .substitute({ gidx: vars.gidx })
+      .rewriteGlobalViews()
+      .simplify(),
+    outputIdxExp: vars.gidx,
     threadCount: kernel.size,
     size: {
       reduce: kernel.reduction ? kernel.reduction.size : 0,
@@ -368,13 +375,26 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
 
   const outputGidx = dim.outputSt.shape.slice(0, dim.groups);
   const outputUpcast = dim.outputSt.shape.slice(dim.groups);
-  const [outputIdxExp, _] = dim.outputSt.toAluExp([
+  const outputIndices = [
     ...unravelAlu(
       outputGidx,
       AluExp.special(DType.Int32, "gidx", prod(outputGidx)),
     ),
     ...unravelAlu(outputUpcast, AluVar.upcast), // Needs later substitution.
-  ]);
+  ];
+  const [outputIdxExp, _] = dim.outputSt.toAluExp(outputIndices);
+  const newEpilogue = reduction.epilogue.rewrite((exp) => {
+    if (exp.op === AluOp.GlobalView) {
+      const gid: number = exp.arg[0];
+      const st: ShapeTracker = exp.arg[1];
+      return accessorGlobal(
+        exp.dtype,
+        gid,
+        st.compose(dim.outputSt),
+        outputIndices,
+      );
+    }
+  });
 
   // Sanity-check that reduction size looks correct.
   if (prod(dim.st.shape.slice(dim.groups, dim.upcast)) !== reduction.size) {
@@ -393,6 +413,7 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
 
   return {
     exp: newExp.simplify(),
+    epilogue: newEpilogue.simplify(),
     outputIdxExp: outputIdxExp.simplify(),
     threadCount: (kernel.size / size.upcast) * size.groups,
     size,

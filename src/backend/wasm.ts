@@ -157,7 +157,7 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
 
   const distinctOps = mapSetUnion(
     tune.exp.distinctOps(),
-    re?.epilogue.distinctOps(),
+    tune.epilogue?.distinctOps(),
   );
   const funcs: Record<string, number> = {};
   if (distinctOps.has(AluOp.Sin)) funcs.sin = wasm_sin(cg);
@@ -262,7 +262,7 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
         }
         cg.end();
 
-        translateExp(cg, funcs, kernel.reduction.epilogue, { acc });
+        translateExp(cg, funcs, tune.epilogue!, { acc, gidx });
       } else {
         // Translate tune.exp to expression and push onto stack.
         translateExp(cg, funcs, tune.exp, { gidx });

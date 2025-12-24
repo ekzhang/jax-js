@@ -238,7 +238,8 @@ class JitProgramBuilder {
 
 type JitValue =
   | { type: "imm"; arg: JitId } // Immediate
-  | { type: "exp"; exp: AluExp; args: JitId[] }; // Expression, lazily fused
+  | { type: "exp"; exp: AluExp; args: JitId[] } // Expression, lazily fused
+  | { type: "red"; exp: AluExp; reduction: Reduction; args: JitId[] }; // Reduction + epilogue
 
 const jitCompileCache = new Map<string, JitProgram>();
 
@@ -297,32 +298,43 @@ export function jitCompile(
     const inputExps: AluExp[] = []; // len(inputs)
     const inputAvals: ShapedArray[] = []; // len(inputs)
     const inputArgs: JitId[] = [];
+
+    let inputRed: (JitValue & { type: "red" }) | null = null;
+
+    // May need to reindex gids to match order, returns array of new gids.
+    const addArgs = (args: JitId[]): number[] => {
+      const newGids: number[] = [];
+      for (const jitId of args) {
+        let newGid = inputArgs.indexOf(jitId);
+        if (newGid === -1) {
+          newGid = inputArgs.length;
+          inputArgs.push(jitId);
+        }
+        newGids.push(newGid);
+      }
+      return newGids;
+    };
+
     for (const input of eqn.inputs) {
       if (input instanceof Var) {
-        const jitValue = ctx.get(input)!;
-        if (jitValue.type === "exp") {
-          // May need to reorder args, tracked by this map.
-          const gidMap = new Map<number, number>();
-          for (const [gid, jitId] of jitValue.args.entries()) {
-            let newGid = inputArgs.indexOf(jitId);
-            if (newGid === -1) {
-              newGid = inputArgs.length;
-              inputArgs.push(jitId);
-            }
-            gidMap.set(gid, newGid);
-          }
-          inputExps.push(jitValue.exp.reindexGids(gidMap));
-        } else if (jitValue.type === "imm") {
-          let gid = inputArgs.indexOf(jitValue.arg);
-          if (gid === -1) {
-            gid = inputArgs.length;
-            inputArgs.push(jitValue.arg);
-          }
+        const jv = ctx.get(input)!;
+        if (jv.type === "exp") {
+          const newGids = addArgs(jv.args);
+          inputExps.push(jv.exp.reindexGids(newGids));
+        } else if (jv.type === "imm") {
+          const [gid] = addArgs([jv.arg]);
           const st = ShapeTracker.fromShape(input.aval.shape); // "imm" is realized
           const indices = unravelAlu(st.shape, AluVar.gidx);
           inputExps.push(AluExp.globalView(input.aval.dtype, gid, st, indices));
+        } else if (jv.type === "red") {
+          // Special case: We are consuming a 'red' JitValue, so we must be in the
+          // fused epilogue of a reduction.
+          if (inputRed) throw new Error("jit: unexpected, multiple red inputs");
+          const newGids = addArgs(jv.args);
+          inputExps.push(jv.reduction.epilogue.reindexGids(newGids));
+          inputRed = jv;
         } else {
-          jitValue satisfies never; // static check
+          jv satisfies never; // static check
         }
         inputAvals.push(input.aval);
       } else if (input instanceof Lit) {
@@ -333,23 +345,52 @@ export function jitCompile(
       }
     }
 
-    // Produce a new kernel for the operation based on the jit() implementation
-    // of the primitive. This kernel may not be actually dispatched.
-    const nargs = inputArgs.length;
+    // Produce a new expression and/or reduction for the operation based on the
+    // jit() implementation of the primitive.
     const rule = jitRules[eqn.primitive];
     if (!rule)
       throw new TypeError(`JIT not implemented for primitive ${eqn.primitive}`);
-    const kernel = rule(nargs, inputExps, inputAvals, eqn.params as any);
+
+    let exp: AluExp;
+    let reduction: Reduction | undefined;
+
+    if (inputRed) {
+      // Special case: we are in the fused epilogue of a reduction.
+      const jv = inputRed;
+      const newEpilogue = rule(inputExps, inputAvals, eqn.params as any).exp;
+      exp = jv.exp.reindexGids(addArgs(jv.args));
+      reduction = new Reduction(
+        jv.reduction.dtype,
+        jv.reduction.op,
+        jv.reduction.size,
+        newEpilogue,
+      );
+    } else {
+      const ruleOutput = rule(inputExps, inputAvals, eqn.params as any);
+      exp = ruleOutput.exp;
+      reduction = ruleOutput.reduction;
+    }
 
     // Then dispatch the kernel, if it is a "black" node as determined from
     // dataflow analysis above.
     const outVar = eqn.outBinders[0];
-    if (kernel.reduction || blackNodes.has(outVar)) {
+    if (blackNodes.has(outVar)) {
+      const nargs = inputArgs.length;
+      const size = prod(outVar.aval.shape);
+      const kernel = new Kernel(nargs, size, exp, reduction);
       const outId = builder.pushKernel(kernel, inputArgs);
       ctx.set(outVar, { type: "imm", arg: outId });
+    } else if (reduction) {
+      // Reduction but not black, means it will have an epilogue.
+      ctx.set(outVar, {
+        type: "red",
+        exp: exp,
+        reduction: reduction,
+        args: inputArgs,
+      });
     } else {
       // Otherwise, fuse the kernel into the next expression.
-      ctx.set(outVar, { type: "exp", exp: kernel.exp, args: inputArgs });
+      ctx.set(outVar, { type: "exp", exp: exp, args: inputArgs });
     }
   }
 
@@ -396,22 +437,18 @@ export function jitCompile(
 /**
  * Rule for fusing the operation into a JIT expression to the backend.
  *
- * This takes in the expressions of the `src[]` inputs and produces a Kernel
- * object with a new expression, as well as a size and reduction. The expression
- * uses AluVar.gidx (output index) and AluVar.ridx (reduction index).
- *
- * Some ops trigger a dispatch, others can produce intermediates if:
- *
- * - No GlobalIndex expressions are present, and all GlobalView expressions take
- *   a plain AluVar.gidx unravelled as indices.
- * - No reductions are present. (may be changed to support epilogue)
+ * This takes in the expressions of the `src[]` inputs and produces a subsequent
+ * expression, as well as optionally a reduction. The expressions use
+ * AluVar.gidx (output index) and AluVar.ridx (reduction index).
  */
 type JitRule<P extends Primitive> = (
-  nargs: number,
   exps: AluExp[],
   avals: ShapedArray[],
   params: PrimitiveParams<P>,
-) => Kernel;
+) => {
+  exp: AluExp;
+  reduction?: Reduction;
+};
 
 function reshapeViews(
   exp: AluExp,
@@ -441,7 +478,7 @@ function broadcastedJit<P extends Primitive>(
   fn: (exps: AluExp[], params: PrimitiveParams<P>) => AluExp,
   opts?: { skipCastIdx?: number[] },
 ): JitRule<P> {
-  return (nargs, exps, avals, params) => {
+  return (exps, avals, params) => {
     let { shape: newShape, dtype: newDtype } = avals.reduce(promoteAvals);
 
     const skipCastIdx = opts?.skipCastIdx ?? [];
@@ -470,9 +507,8 @@ function broadcastedJit<P extends Primitive>(
       return exp;
     });
 
-    // Then, we can call the function to produce a new kernel.
-    const exp = fn(exps, params);
-    return new Kernel(nargs, prod(newShape), exp);
+    // Then, we can call the function to produce a new expression.
+    return { exp: fn(exps, params) };
   };
 }
 
@@ -480,18 +516,16 @@ function broadcastedJit<P extends Primitive>(
 function unopJit<P extends Primitive>(
   fn: (exp: AluExp, params: PrimitiveParams<P>) => AluExp,
 ): JitRule<P> {
-  return (nargs, [a], [as], params) => {
-    return new Kernel(nargs, prod(as.shape), fn(a, params));
+  return ([a], [_as], params) => {
+    return { exp: fn(a, params) };
   };
 }
 
 function reshapeJit<P extends Primitive>(
   fn: (st: ShapeTracker, params: PrimitiveParams<P>) => ShapeTracker,
 ): JitRule<P> {
-  return (nargs, [a], [as], params) => {
-    a = reshapeViews(a, (st) => fn(st, params));
-    const newShape = fn(ShapeTracker.fromShape(as.shape), params).shape;
-    return new Kernel(nargs, prod(newShape), a);
+  return ([a], [_as], params) => {
+    return { exp: reshapeViews(a, (st) => fn(st, params)) };
   };
 }
 
@@ -507,7 +541,7 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   [Primitive.StopGradient]: unopJit((a) => a), // No-op, just return the input.
   [Primitive.Cast]: unopJit((a, { dtype }) => AluExp.cast(dtype, a)),
   [Primitive.Bitcast]: unopJit((a, { dtype }) => AluExp.bitcast(dtype, a)),
-  [Primitive.RandomBits]: (nargs, keys, keyShapes, { shape, mode }) => {
+  [Primitive.RandomBits]: (keys, keyShapes, { shape, mode }) => {
     const mapping = (st: ShapeTracker): ShapeTracker | undefined => {
       if (!deepEqual(st.shape, shape))
         return st.broadcast(shape, range(shape.length - st.shape.length));
@@ -517,7 +551,7 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
     const c0 = AluExp.u32(0);
     const c1 = AluExp.cast(DType.Uint32, AluVar.gidx);
     const exp = AluExp.threefry2x32(k0, k1, c0, c1, mode);
-    return new Kernel(nargs, prod(shape), exp);
+    return { exp };
   },
   [Primitive.Sin]: unopJit(AluExp.sin),
   [Primitive.Cos]: unopJit(AluExp.cos),
@@ -530,7 +564,7 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   [Primitive.Sqrt]: unopJit(AluExp.sqrt),
   [Primitive.Min]: broadcastedJit(([a, b]) => AluExp.min(a, b)),
   [Primitive.Max]: broadcastedJit(([a, b]) => AluExp.max(a, b)),
-  [Primitive.Reduce](nargs, [a], [as], { op, axis }) {
+  [Primitive.Reduce]([a], [as], { op, axis }) {
     const keptAxes: number[] = [];
     const shiftedAxes: number[] = [];
     const newShape: number[] = [];
@@ -541,26 +575,24 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
         newShape.push(as.shape[i]);
       }
     }
-    const size = prod(newShape);
     const reductionSize = prod(shiftedAxes.map((ax) => as.shape[ax]));
     newShape.push(reductionSize);
 
     const perm = keptAxes.concat(shiftedAxes);
     a = reshapeViews(a, (st) => st.permute(perm).reshape(newShape), true);
     const reduction = new Reduction(a.dtype, op, reductionSize);
-    return new Kernel(nargs, size, a, reduction);
+    return { exp: a, reduction };
   },
   [Primitive.Pool]: reshapeJit((st, { window, strides }) =>
     pool(st, window, strides),
   ),
-  [Primitive.PoolTranspose](nargs, [a], [as], { inShape, window, strides }) {
+  [Primitive.PoolTranspose]([a], [as], { inShape, window, strides }) {
     let stX = poolTranspose(
       ShapeTracker.fromShape(as.shape),
       inShape,
       window,
       strides,
     );
-    const size = prod(inShape);
     stX = stX.reshape([...inShape, prod(stX.shape.slice(inShape.length))]); // Combine all reduce axes.
     a = reshapeViews(a, (st) => st.compose(stX), true);
     const reduction = new Reduction(
@@ -568,19 +600,19 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
       AluOp.Add,
       stX.shape[stX.shape.length - 1],
     );
-    return new Kernel(nargs, size, a, reduction);
+    return { exp: a, reduction };
   },
-  [Primitive.Dot](nargs, [a, b], [as, bs]) {
+  [Primitive.Dot]([a, b], [as, bs]) {
     // Dot is just Mul->Reduce in sequence.
-    const k1 = jitRules[Primitive.Mul](nargs, [a, b], [as, bs], {});
+    const k1 = jitRules[Primitive.Mul]([a, b], [as, bs], {});
     const c = k1.exp;
     const cs = promoteAvals(as, bs);
-    return jitRules[Primitive.Reduce](nargs, [c], [cs], {
+    return jitRules[Primitive.Reduce]([c], [cs], {
       op: AluOp.Add,
       axis: [cs.ndim - 1],
     });
   },
-  [Primitive.Conv](nargs, [a, b], [as, bs], params) {
+  [Primitive.Conv]([a, b], [as, bs], params) {
     const [stX, stY] = prepareConv(
       ShapeTracker.fromShape(as.shape),
       ShapeTracker.fromShape(bs.shape),
@@ -590,7 +622,7 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
     b = reshapeViews(b, (st) => st.compose(stY));
     as = new ShapedArray(stX.shape, as.dtype, as.weakType);
     bs = new ShapedArray(stY.shape, bs.dtype, bs.weakType);
-    return jitRules[Primitive.Dot](nargs, [a, b], [as, bs], {});
+    return jitRules[Primitive.Dot]([a, b], [as, bs], {});
   },
   [Primitive.Compare]: broadcastedJit(([a, b], { op }) => aluCompare(a, b, op)),
   [Primitive.Where]: broadcastedJit(
@@ -610,7 +642,6 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   [Primitive.Shrink]: reshapeJit((st, { slice }) => st.shrink(slice)),
   [Primitive.Pad]: reshapeJit((st, { width }) => st.pad(width)),
   [Primitive.Gather](
-    nargs,
     [x, ...indices],
     [xs, ...indicesShapes],
     { axis, outDim },
@@ -657,7 +688,7 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
     const [index, valid] = ShapeTracker.fromShape(xs.shape).toAluExp(src);
     if (!valid.resolve())
       throw new Error("internal: expected full validity mask in Gather");
-    return new Kernel(nargs, prod(finalShape), x.substitute({ gidx: index }));
+    return { exp: x.substitute({ gidx: index }) };
   },
   [Primitive.JitCall]() {
     throw new Error(
@@ -668,12 +699,99 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
 
 /** Determines how to split the Jaxpr into kernels via dataflow analysis. */
 function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
-  // Calculate the equation where each intermediate variable was defined.
-  const varToEqn = new Map<Var, number>();
+  const varToDefn = new Map<Var, number>(); // Var -> eqn index of definition
+  const varToUsages: Map<Var, number[]> = new Map(); // Var -> eqn indices of usages
   for (let i = 0; i < jaxpr.eqns.length; i++) {
     const eqn = jaxpr.eqns[i];
     for (const v of eqn.outBinders) {
-      if (v instanceof Var) varToEqn.set(v, i);
+      if (v instanceof Var) varToDefn.set(v, i);
+    }
+    for (const input of eqn.inputs) {
+      if (input instanceof Var) {
+        const usages = varToUsages.get(input);
+        if (usages) usages.push(i);
+        else varToUsages.set(input, [i]);
+      }
+    }
+  }
+
+  // Calculate reduction epilogues.
+  //
+  // A reduction can be fused with one or more operations that use its output,
+  // which are either 1) unary or 2) binary ops with a literal, or an array not
+  // larger than it.
+  //
+  // We also need to make sure we don't fuse two reductions together.
+  const reducePrimitives = [
+    Primitive.Reduce,
+    Primitive.Dot,
+    Primitive.Conv,
+    Primitive.PoolTranspose,
+  ];
+  const reductionEpilogueEqns = new Set<number>();
+  const reductionEndpointEqns = new Set<number>();
+  for (let i = 0; i < jaxpr.eqns.length; i++) {
+    const eqn = jaxpr.eqns[i];
+    if (reducePrimitives.includes(eqn.primitive)) {
+      let head = i;
+      while (true) {
+        reductionEpilogueEqns.add(head);
+
+        // Try moving outVar forward through the graph.
+        const outVar = jaxpr.eqns[head].outBinders[0];
+        const usages = varToUsages.get(outVar) ?? [];
+        if (jaxpr.outs.includes(outVar) || usages.length !== 1) break;
+
+        // Next is already fused into a reduction epilogue, can't fuse again.
+        if (reductionEpilogueEqns.has(usages[0])) break;
+
+        const nextEqn = jaxpr.eqns[usages[0]];
+        switch (nextEqn.primitive) {
+          // We can always fuse unary operations.
+          case Primitive.Neg:
+          case Primitive.Reciprocal:
+          case Primitive.Floor:
+          case Primitive.Ceil:
+          case Primitive.StopGradient:
+          case Primitive.Cast:
+          case Primitive.Bitcast:
+          case Primitive.Sin:
+          case Primitive.Cos:
+          case Primitive.Asin:
+          case Primitive.Atan:
+          case Primitive.Exp:
+          case Primitive.Log:
+          case Primitive.Erf:
+          case Primitive.Erfc:
+          case Primitive.Sqrt:
+            head = usages[0];
+            continue;
+
+          // We can fuse binary operations with a literal, or with an array such
+          // that the array doesn't lead to broadcasting thus recomputation.
+          case Primitive.Add:
+          case Primitive.Mul:
+          case Primitive.Idiv:
+          case Primitive.Mod:
+          case Primitive.Max:
+          case Primitive.Min: {
+            const otherInput = nextEqn.inputs.find((v) => v !== outVar)!;
+            if (
+              otherInput instanceof Lit ||
+              deepEqual(
+                generalBroadcast(otherInput.aval.shape, outVar.aval.shape),
+                outVar.aval.shape,
+              )
+            ) {
+              head = usages[0];
+              continue;
+            }
+            break;
+          }
+        }
+        break; // Can't move forward anymore.
+      }
+      reductionEndpointEqns.add(head);
     }
   }
 
@@ -683,7 +801,7 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
   // rather than producing intermediates. This includes:
   //
   // - Kernel outputs
-  // - Reductions (intermediates cannot have reductions)
+  // - Reductions, except when fused with epilogue
   // - Gather/RandomBits operations (violates rule that kernels must have
   //   homogeneous GlobalView indices)
   // - Inputs to Pad operations, which need clean inputs
@@ -692,8 +810,6 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
   // reached from it, while only going through non-black nodes.
   //
   // TODO: Don't do the above for 'simple' nodes: reshape, cast, etc.
-  //
-  // TODO: Reductions can have epilogues.
   const blackNodes = new Set<Var>();
   const p1NextBlack = new Map<Var, Var>();
   for (const v of jaxpr.outs) {
@@ -702,12 +818,6 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
       p1NextBlack.set(v, v);
     }
   }
-  const reducePrimitives = [
-    Primitive.Reduce,
-    Primitive.Dot,
-    Primitive.Conv,
-    Primitive.PoolTranspose,
-  ];
   const heterogeneousViewPrimitives = [
     // These primitives generate heterogeneous GlobalView outputs, there are
     // multiple views in the expression with different indexing.
@@ -724,7 +834,7 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
   for (let i = jaxpr.eqns.length - 1; i >= 0; i--) {
     const eqn = jaxpr.eqns[i];
     if (
-      reducePrimitives.includes(eqn.primitive) ||
+      reductionEndpointEqns.has(i) ||
       heterogeneousViewPrimitives.includes(eqn.primitive) ||
       eqn.outBinders.some((v) => blackNodes.has(v))
     ) {
@@ -797,7 +907,7 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
       let assocInput = -1;
       for (let i = 0; i < eqn.inputs.length; i++) {
         const input = eqn.inputs[i];
-        if (input instanceof Var && varToEqn.has(input)) {
+        if (input instanceof Var && varToDefn.has(input)) {
           let uniqueDeps = 0;
           for (const dep of deps[i]) {
             if (depCounter.get(dep) === 1) uniqueDeps++;
@@ -814,7 +924,7 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
         );
       }
       const assocVar = eqn.inputs[assocInput] as Var;
-      p2idx = varToEqn.get(assocVar)!; // backtrack to that equation
+      p2idx = varToDefn.get(assocVar)!; // backtrack to that equation
       for (const out of jaxpr.eqns[p2idx].outBinders) {
         blackNodes.add(out);
       }
