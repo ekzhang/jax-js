@@ -27,7 +27,9 @@ function wrapReduction(
     }: { keepdims?: number; noop_with_empty_axes?: number; axes?: number[] },
   ): Operand[] => {
     // axes can come from input tensor (opset 18+) or attribute (opset <18)
-    let axis: number[] | null = axesInput ? operandToJs(axesInput) : (axesAttr ?? []);
+    let axis: number[] | null = axesInput
+      ? operandToJs(axesInput)
+      : (axesAttr ?? []);
     if (axis?.length === 0 && !noop_with_empty_axes) axis = null;
     let arr = operandToJax(x);
     if (prelude) arr = prelude(arr);
