@@ -172,6 +172,12 @@ export class WebGPUBackend implements Backend {
     inputs: Slot[],
     outputs: Slot[],
   ): void {
+    if (inputs.length !== exe.kernel.nargs) {
+      throw new Error(
+        `webgpu: dispatch with ${inputs.length} inputs, expected ${exe.kernel.nargs}`,
+      );
+    }
+    if (exe.kernel.size === 0) return; // Nothing to do
     const inputBuffers = inputs.map((slot) => this.#getBuffer(slot).buffer);
     const outputBuffers = outputs.map((slot) => this.#getBuffer(slot).buffer);
     pipelineSubmit(this.device, exe.data, inputBuffers, outputBuffers);
@@ -363,10 +369,10 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
   const gensym = () => `alu${gensymCount++}`;
   const isGensym = (text: string) => text.match(/^alu[0-9]+$/);
 
-  // Insert phony assignments for inputs that are not in use.
+  // Insert phony assignments, in case some inputs are not in use.
   // https://github.com/gpuweb/gpuweb/discussions/4582#discussioncomment-9146686
-  for (let i = 0; i < args.length; i++) {
-    if (!usedArgs[i]) emit(`_ = &${args[i]};`);
+  if (args.length > 0) {
+    emit(args.map((arg) => `_ = &${arg};`).join(" "));
   }
 
   const references = new Map<AluExp, number>();
