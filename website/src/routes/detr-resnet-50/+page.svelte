@@ -3,6 +3,7 @@
     blockUntilReady,
     defaultDevice,
     init,
+    jit,
     nn,
     numpy as np,
   } from "@jax-js/jax";
@@ -15,6 +16,7 @@
   let canvasEl: HTMLCanvasElement;
   let downloadManager: DownloadManager;
   let onnxModel: ONNXModel;
+  let onnxModelRun: any;
 
   let runCount = 0;
 
@@ -126,6 +128,7 @@
         "https://huggingface.co/Xenova/detr-resnet-50/resolve/main/onnx/model_fp16.onnx";
       const modelBytes = await downloadManager.fetch("model weights", modelUrl);
       onnxModel = new ONNXModel(modelBytes);
+      onnxModelRun = jit(onnxModel.run, { staticArgnums: [1] });
       console.log("ONNX Model loaded:", onnxModel);
     }
 
@@ -151,7 +154,7 @@
     let probs: number[][] = [];
     let predBoxes: number[][] = [];
     const seconds = await runBenchmark("detr-resnet-50", async () => {
-      const outputs = onnxModel.run(
+      const outputs = onnxModelRun(
         {
           pixel_values: pixelValues,
           pixel_mask: pixelMask,
