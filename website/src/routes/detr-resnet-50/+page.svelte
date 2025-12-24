@@ -175,7 +175,7 @@
       // const modelUrl =
       // "https://huggingface.co/ekzhang/jax-js-models/resolve/main/detr-resnet-50-fp16.onnx";
       const modelUrl =
-        "https://huggingface.co/Xenova/detr-resnet-50/resolve/main/onnx/model.onnx";
+        "https://huggingface.co/Xenova/detr-resnet-50/resolve/main/onnx/model_fp16.onnx";
       const modelBytes = await downloadManager.fetch("model weights", modelUrl);
       onnxModel = new ONNXModel(modelBytes);
       onnxModelRun = jit(onnxModel.run, { staticArgnums: [1] });
@@ -230,7 +230,7 @@
 
     if (!ortSession) {
       const modelUrl =
-        "https://huggingface.co/Xenova/detr-resnet-50/resolve/main/onnx/model.onnx";
+        "https://huggingface.co/Xenova/detr-resnet-50/resolve/main/onnx/model_fp16.onnx";
       const modelBytes = await downloadManager.fetch(
         "model weights (ort)",
         modelUrl,

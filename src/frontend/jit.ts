@@ -299,7 +299,7 @@ export function jitCompile(
     const inputAvals: ShapedArray[] = []; // len(inputs)
     const inputArgs: JitId[] = [];
 
-    let inputRed: (JitValue & { type: "red" }) | null = null;
+    let inputReduction: (JitValue & { type: "red" }) | null = null;
 
     // May need to reindex gids to match order, returns array of new gids.
     const addArgs = (args: JitId[]): number[] => {
@@ -329,10 +329,11 @@ export function jitCompile(
         } else if (jv.type === "red") {
           // Special case: We are consuming a 'red' JitValue, so we must be in the
           // fused epilogue of a reduction.
-          if (inputRed) throw new Error("jit: unexpected, multiple red inputs");
+          if (inputReduction)
+            throw new Error("jit: unexpected, multiple red inputs");
           const newGids = addArgs(jv.args);
           inputExps.push(jv.reduction.epilogue.reindexGids(newGids));
-          inputRed = jv;
+          inputReduction = jv;
         } else {
           jv satisfies never; // static check
         }
@@ -354,9 +355,9 @@ export function jitCompile(
     let exp: AluExp;
     let reduction: Reduction | undefined;
 
-    if (inputRed) {
+    if (inputReduction) {
       // Special case: we are in the fused epilogue of a reduction.
-      const jv = inputRed;
+      const jv = inputReduction;
       const newEpilogue = rule(inputExps, inputAvals, eqn.params as any).exp;
       exp = jv.exp.reindexGids(addArgs(jv.args));
       reduction = new Reduction(

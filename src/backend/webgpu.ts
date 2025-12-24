@@ -318,6 +318,9 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
   tune.exp.fold((exp) => {
     if (exp.op === AluOp.GlobalIndex) usedArgs[exp.arg[0]] = exp.dtype;
   });
+  tune.epilogue?.fold((exp) => {
+    if (exp.op === AluOp.GlobalIndex) usedArgs[exp.arg[0]] = exp.dtype;
+  });
 
   for (let i = 0; i < nargs; i++) {
     // If not used, just assume float32, all that matters is size / alignment.
