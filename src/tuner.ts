@@ -253,7 +253,7 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
     const choices: number[][] = [];
     const composedSts = sts.map((st) => st.compose(dim.st));
     for (let axis = 0; axis < dim.groups; axis++) {
-      for (const amount of [3, 4]) {
+      for (const amount of [3, 4, 5]) {
         // Axis is not upcasted, divisible, and has a buffer with stride 0 on
         // that axis (mem coalescing) while not already a stride-0 upcast.
         if (
