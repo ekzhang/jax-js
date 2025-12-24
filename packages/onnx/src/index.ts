@@ -178,6 +178,9 @@ export interface ONNXRunOptions {
   /** Print out names, input and output shapes when running each operation. */
   verbose?: boolean;
 
+  /** Return intermediate tensors in addition to graph outputs. */
+  additionalOutputs?: string[];
+
   /**
    * Tensors for which to log debug information during execution. When provided,
    * logs statistics (min, max, mean, variance) for intermediate tensors
@@ -336,14 +339,19 @@ function modelAsJaxFunction(
         }
       }
 
+      const returnedOutputs = new Set(outputNames);
+      if (options?.additionalOutputs) {
+        for (const name of options.additionalOutputs) returnedOutputs.add(name);
+      }
+
       const outputs: Record<string, np.Array> = {};
-      for (const name of outputNames) {
+      for (const name of returnedOutputs) {
         const operand = vars.get(name);
         if (!operand) throw new Error(`Missing output '${name}'`);
         // Outputs must be np.Array, convert StaticArray if needed
         outputs[name] = operandToJax(operand);
       }
-      for (const name of outputNames) vars.delete(name); // Prevent disposing outputs
+      for (const name of returnedOutputs) vars.delete(name); // Prevent disposing outputs
       return outputs;
     } finally {
       // Clean up, dispose of all values that weren't returned.
