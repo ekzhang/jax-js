@@ -4,13 +4,18 @@
 
 import { numpy as np } from "@jax-js/jax";
 
-import { type Operand, operandToJax, operandToJs } from "../tensor";
+import {
+  type Operand,
+  operandToJax,
+  operandToJs,
+  StaticArray,
+} from "../tensor";
 
 export function Reshape(
   [data, shapeArr]: Operand[],
   { allowzero = 0 }: { allowzero?: number },
 ): Operand[] {
-  const shape = operandToJs(shapeArr);
+  const shape: number[] = operandToJs(shapeArr);
   if (shape.includes(0) && !allowzero) {
     // Semantics of allowzero=0 are confusing, will skip for now.
     // https://onnx.ai/onnx/operators/onnx__Reshape.html
@@ -18,7 +23,20 @@ export function Reshape(
       "Reshape with 0 in shape is not supported unless allowzero=1",
     );
   }
-  return [operandToJax(data).reshape(shape)];
+  if (data instanceof StaticArray) {
+    if (shape.includes(-1)) {
+      // Compute inferred dimension
+      const knownSize = shape
+        .filter((d) => d !== -1)
+        .reduce((a, b) => a * b, 1);
+      const inferredDim = data.data.length / knownSize;
+      const finalShape = shape.map((d) => (d === -1 ? inferredDim : d));
+      return [new StaticArray(data.data, finalShape, data.dtype)];
+    }
+    return [new StaticArray(data.data, shape, data.dtype)];
+  } else {
+    return [operandToJax(data).reshape(shape)];
+  }
 }
 
 export function Transpose(
@@ -57,27 +75,50 @@ export function Squeeze(
 }
 
 export function Unsqueeze(
-  [dataOp, axes]: Operand[],
+  [data, axes]: Operand[],
   { axes: axesBeforeOpset13 }: { axes?: number[] },
 ): Operand[] {
-  const axis: number[] = axes ? operandToJs(axes) : axesBeforeOpset13!;
+  const axis: number[] = axes ? operandToJs(axes) : axesBeforeOpset13;
   if (!axis) {
     throw new Error("Unsqueeze requires axes");
   }
-  const data = operandToJax(dataOp);
-  const outputRank = data.ndim + axis.length;
+  const outputRank = data.shape.length + axis.length;
   const axisSet = new Set(axis.map((i) => (i < 0 ? outputRank + i : i)));
   const newShape = [...data.shape];
   for (const j of [...axisSet].sort()) {
     newShape.splice(j, 0, 1);
   }
-  return [data.reshape(newShape)];
+  if (data instanceof StaticArray) {
+    return [new StaticArray(data.data, newShape, data.dtype)];
+  } else {
+    return [data.reshape(newShape)];
+  }
 }
 
 export function Gather(
   [dataOp, indicesOp]: Operand[],
   { axis = 0 }: { axis?: number },
 ): Operand[] {
+  // If both are StaticArray, gather on CPU
+  if (dataOp instanceof StaticArray && indicesOp instanceof StaticArray) {
+    const data = dataOp;
+    const indices = indicesOp;
+    if (axis < 0) axis += data.shape.length;
+
+    // For 1D data with scalar or 1D indices (common case for shape ops)
+    if (data.shape.length === 1) {
+      const result = new Int32Array(indices.data.length);
+      for (let i = 0; i < indices.data.length; i++) {
+        const idx =
+          indices.data[i] < 0
+            ? data.shape[0] + indices.data[i]
+            : indices.data[i];
+        result[i] = data.data[idx];
+      }
+      return [new StaticArray(result, indices.shape, data.dtype)];
+    }
+  }
+
   const data = operandToJax(dataOp);
   const indices = operandToJax(indicesOp);
   if (axis < 0) axis += data.ndim;
@@ -90,6 +131,28 @@ export function Concat(
   inputs: Operand[],
   { axis }: { axis: number },
 ): Operand[] {
+  // If all inputs are StaticArray, concatenate on CPU
+  if (inputs.every((op) => op instanceof StaticArray)) {
+    const arrays = inputs as StaticArray[];
+    if (axis < 0) axis += arrays[0].shape.length;
+
+    // Calculate output shape
+    const outShape = [...arrays[0].shape];
+    outShape[axis] = arrays.reduce((sum, arr) => sum + arr.shape[axis], 0);
+
+    // Concatenate data (only supports 1D arrays for simplicity - common for shapes)
+    if (arrays[0].shape.length === 1 && axis === 0) {
+      const totalLen = arrays.reduce((sum, arr) => sum + arr.data.length, 0);
+      const result = new Int32Array(totalLen);
+      let offset = 0;
+      for (const arr of arrays) {
+        result.set(arr.data, offset);
+        offset += arr.data.length;
+      }
+      return [new StaticArray(result, outShape, arrays[0].dtype)];
+    }
+  }
+
   const arrays = inputs.map(operandToJax);
   return [np.concatenate(arrays, axis)];
 }
@@ -98,35 +161,27 @@ export function Tile([input, repeats]: Operand[]): Operand[] {
   return [np.tile(operandToJax(input), operandToJs(repeats))];
 }
 
-export function Slice([
-  dataOp,
-  starts,
-  ends,
-  axes,
-  steps,
-]: Operand[]): Operand[] {
-  const data = operandToJax(dataOp);
-  const startsArr: number[] = operandToJs(starts);
-  const endsArr: number[] = operandToJs(ends);
-  const axesArr: number[] | null = axes ? operandToJs(axes) : null;
-  const stepsArr: number[] | null = steps ? operandToJs(steps) : null;
-
-  // Build slice specification for all dimensions (default to full range)
-  const sliceRanges: [number, number, number][] = data.shape.map(
-    (d: number) => [0, d, 1],
-  );
-
+/** Compute slice ranges from ONNX Slice parameters. */
+function computeSliceRanges(
+  shape: number[],
+  startsArr: number[],
+  endsArr: number[],
+  axesArr: number[] | null,
+  stepsArr: number[] | null,
+): [number, number, number][] {
+  const sliceRanges: [number, number, number][] = shape.map((d) => [0, d, 1]);
   const targetAxes = axesArr ?? startsArr.map((_, i) => i);
+
   for (let i = 0; i < targetAxes.length; i++) {
     let axis = targetAxes[i];
-    if (axis < 0) axis += data.ndim;
+    if (axis < 0) axis += shape.length;
 
     const step = stepsArr ? stepsArr[i] : 1;
     if (step <= 0) {
       throw new Error("Slice with step <= 0 is not supported");
     }
 
-    const dimSize = data.shape[axis];
+    const dimSize = shape[axis];
     let start = startsArr[i];
     let end = endsArr[i];
 
@@ -144,6 +199,46 @@ export function Slice([
 
     sliceRanges[axis] = [start, end, step];
   }
+  return sliceRanges;
+}
+
+export function Slice([
+  dataOp,
+  starts,
+  ends,
+  axes,
+  steps,
+]: Operand[]): Operand[] {
+  const startsArr: number[] = operandToJs(starts);
+  const endsArr: number[] = operandToJs(ends);
+  const axesArr: number[] | null = axes ? operandToJs(axes) : null;
+  const stepsArr: number[] | null = steps ? operandToJs(steps) : null;
+
+  const sliceRanges = computeSliceRanges(
+    dataOp.shape,
+    startsArr,
+    endsArr,
+    axesArr,
+    stepsArr,
+  );
+
+  // Handle StaticArray for 1D case (common for shape manipulation)
+  if (dataOp instanceof StaticArray && dataOp.shape.length === 1) {
+    const [start, end, step] = sliceRanges[0];
+    if (step === 1) {
+      const result = dataOp.data.slice(start, end);
+      return [new StaticArray(result, [end - start], dataOp.dtype)];
+    }
+    // Handle step != 1
+    const len = Math.ceil((end - start) / step);
+    const result = new Int32Array(len);
+    for (let i = 0; i < len; i++) {
+      result[i] = dataOp.data[start + i * step];
+    }
+    return [new StaticArray(result, [len], dataOp.dtype)];
+  }
+
+  const data = operandToJax(dataOp);
 
   // First pass: do basic start:end slices
   const sliceArgs: ([] | [number, number])[] = sliceRanges.map(

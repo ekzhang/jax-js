@@ -16,10 +16,10 @@ import {
 import * as onnxOps from "./ops";
 import {
   type Operand,
+  operandRef,
   operandToJax,
-  operandToJaxRef,
   StaticArray,
-  tensorToArray,
+  tensorToOperand,
 } from "./tensor";
 
 /**
@@ -58,7 +58,7 @@ export class ONNXModel {
   ) => Record<string, np.Array>;
 
   /** Cache of initializers (data / weights), needed for `run()` calls. */
-  #initializers: Map<string, np.Array>;
+  #initializers: Map<string, Operand>;
 
   /** Load a new model from binary contents of an `.onnx` file. */
   constructor(modelBytes: Uint8Array<ArrayBuffer>) {
@@ -89,7 +89,9 @@ export class ONNXModel {
    */
   dispose(): void {
     if (!this.#initializers) return;
-    for (const arr of this.#initializers.values()) arr.dispose();
+    for (const arr of this.#initializers.values()) {
+      if (!(arr instanceof StaticArray)) arr.dispose();
+    }
     this.#initializers.clear();
   }
 }
@@ -139,10 +141,10 @@ function parseAttributes(node: NodeProto): Record<string, any> {
 }
 
 /** Parse all initializers (constant weights) from an ONNX graph. */
-function parseInitializers(initializers: TensorProto[]): Map<string, np.Array> {
-  const map = new Map<string, np.Array>();
+function parseInitializers(initializers: TensorProto[]): Map<string, Operand> {
+  const map = new Map<string, Operand>();
   for (const tensor of initializers) {
-    map.set(tensor.name, tensorToArray(tensor));
+    map.set(tensor.name, tensorToOperand(tensor));
   }
   return map;
 }
@@ -165,8 +167,7 @@ function executeNode(node: NodeProto, vars: Map<string, Operand>): Operand[] {
         `Missing input '${name}' for node '${node.name}' (op: ${opType})`,
       );
     }
-    // For np.Array, take a reference; StaticArray is passed directly
-    inputs.push(operand instanceof StaticArray ? operand : operand.ref);
+    inputs.push(operandRef(operand));
   }
   const attrs = parseAttributes(node);
   return handler(inputs, attrs);
@@ -250,7 +251,7 @@ function logDebugStats(name: string, arr: np.Array): void {
 
 function modelAsJaxFunction(
   model: ModelProto,
-  initializers: Map<string, np.Array> = new Map(),
+  initializers: Map<string, Operand> = new Map(),
 ): typeof ONNXModel.prototype.run {
   const graph = model.graph;
   if (!graph) {
@@ -295,7 +296,10 @@ function modelAsJaxFunction(
 
     const vars = new Map<string, Operand>();
     try {
-      for (const [name, arr] of initializers) vars.set(name, arr.ref);
+      for (const [name, arr] of initializers) {
+        validateTensorShape(name, arr.shape, valueInfo);
+        vars.set(name, operandRef(arr));
+      }
       for (const name of inputNames) {
         validateTensorShape(name, inputs[name].shape, valueInfo);
         vars.set(name, inputs[name]);
@@ -326,7 +330,7 @@ function modelAsJaxFunction(
         for (const [i, name] of node.output.entries()) {
           const result = results[i];
           if (debugStats.has(name))
-            logDebugStats(name, operandToJaxRef(result));
+            logDebugStats(name, operandToJax(operandRef(result)));
           validateTensorShape(name, result.shape, valueInfo);
           vars.set(name, result);
         }

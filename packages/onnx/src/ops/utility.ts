@@ -12,7 +12,7 @@ import {
   operandToJax,
   operandToJs,
   StaticArray,
-  tensorToArray,
+  tensorToOperand,
 } from "../tensor";
 
 export function Shape(
@@ -22,7 +22,7 @@ export function Shape(
   const arr = operandToJax(data);
   const shape = arr.shape.slice(start, end);
   arr.dispose();
-  return [new StaticArray(shape, [shape.length])];
+  return [new StaticArray(shape, [shape.length], np.int32)];
 }
 
 export function Constant(
@@ -46,15 +46,15 @@ export function Constant(
   },
 ): Operand[] {
   if (value !== undefined) {
-    return [tensorToArray(value)];
+    return [tensorToOperand(value)];
   } else if (value_float !== undefined) {
     return [np.array(value_float)];
   } else if (value_floats !== undefined) {
     return [np.array(value_floats)];
   } else if (value_int !== undefined) {
-    return [new StaticArray([value_int], [])];
+    return [new StaticArray([value_int], [], np.int32)];
   } else if (value_ints !== undefined) {
-    return [new StaticArray(value_ints, [value_ints.length])];
+    return [new StaticArray(value_ints, [value_ints.length], np.int32)];
   } else if (value_string !== undefined || value_strings !== undefined) {
     throw new Error("ONNX Constant string values are not supported");
   } else {
@@ -68,7 +68,12 @@ export function ConstantOfShape(
 ): Operand[] {
   const shape = operandToJs(input) as number[];
   if (value !== undefined) {
-    return [np.broadcastTo(tensorToArray(value), shape)];
+    const op = tensorToOperand(value);
+    if (op instanceof StaticArray) {
+      return [op.broadcastTo(shape)];
+    } else {
+      return [np.broadcastTo(op, shape)];
+    }
   } else {
     return [np.zeros(shape)];
   }

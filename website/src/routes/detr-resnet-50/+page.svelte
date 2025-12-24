@@ -156,10 +156,7 @@
           pixel_values: pixelValues,
           pixel_mask: pixelMask,
         },
-        // {
-        //   verbose: true,
-        //   debugStats: ["/bbox_predictor/layers.2/Add_output_0"],
-        // },
+        // { verbose: true },
       );
       await blockUntilReady(outputs);
       console.log("Outputs:", outputs);

@@ -16,41 +16,81 @@ export type Operand = np.Array | StaticArray;
  * and those operands are `StaticArray` instead of `np.Array`.
  */
 export class StaticArray {
-  data: Int32Array<ArrayBuffer>;
-  shape: number[];
+  readonly data: Int32Array<ArrayBuffer>;
+  readonly shape: number[];
+  readonly dtype: DType;
 
-  constructor(data: number[] | Int32Array, shape: number[]) {
+  constructor(data: number[] | Int32Array, shape: number[], dtype: DType) {
     this.data = new Int32Array(data);
     this.shape = shape;
+    this.dtype = dtype;
   }
 
   toJax() {
     return np.array(this.data, { shape: this.shape, dtype: np.int32 });
   }
+
+  /**
+   * Broadcast this array to a new shape, similar to np.broadcastTo.
+   * Supports expanding dims of size 1 and prepending new dims at front.
+   */
+  broadcastTo(newShape: number[]): StaticArray {
+    // Pad shape with 1s at the front to match newShape length
+    const padded = [
+      ...new Array(newShape.length - this.shape.length).fill(1),
+      ...this.shape,
+    ];
+
+    // Validate broadcast compatibility
+    for (let i = 0; i < newShape.length; i++) {
+      if (padded[i] !== 1 && padded[i] !== newShape[i]) {
+        throw new Error(
+          `Cannot broadcast shape [${this.shape}] to [${newShape}]`,
+        );
+      }
+    }
+
+    // Calculate strides for the padded shape (0 for broadcast dims)
+    const strides: number[] = new Array(newShape.length);
+    let stride = 1;
+    for (let i = newShape.length - 1; i >= 0; i--) {
+      strides[i] = padded[i] === 1 ? 0 : stride;
+      stride *= padded[i];
+    }
+
+    // Build the new data array
+    const newSize = newShape.reduce((a, b) => a * b, 1);
+    const newData = new Int32Array(newSize);
+
+    for (let i = 0; i < newSize; i++) {
+      // Convert flat index to multi-dimensional indices
+      let remaining = i;
+      let srcIndex = 0;
+      for (let d = 0; d < newShape.length; d++) {
+        const size = newShape.slice(d + 1).reduce((a, b) => a * b, 1);
+        const idx = Math.floor(remaining / size);
+        remaining = remaining % size;
+        srcIndex += idx * strides[d];
+      }
+      newData[i] = this.data[srcIndex];
+    }
+
+    return new StaticArray(newData, newShape, this.dtype);
+  }
 }
 
 export function operandToJax(op: Operand): np.Array {
-  if (op instanceof StaticArray) {
-    return op.toJax();
-  } else {
-    return op;
-  }
+  return op instanceof StaticArray ? op.toJax() : op;
 }
 
-export function operandToJaxRef(op: Operand): np.Array {
-  if (op instanceof StaticArray) {
-    return op.toJax();
-  } else {
-    return op.ref;
-  }
+export function operandRef(op: Operand): Operand {
+  return op instanceof StaticArray ? op : op.ref;
 }
 
 export function operandToJs(op: Operand): any {
-  if (op instanceof StaticArray) {
-    return makeShapedJsArray(op.data, op.shape);
-  } else {
-    return op.js();
-  }
+  return op instanceof StaticArray
+    ? makeShapedJsArray(op.data, op.shape)
+    : op.js();
 }
 
 function makeShapedJsArray(
@@ -171,10 +211,8 @@ function parseRawData(
   }
 }
 
-/**
- * Convert an ONNX TensorProto to a jax-js Array.
- */
-export function tensorToArray(tensor: TensorProto): np.Array {
+/** Convert an ONNX TensorProto to an operand. */
+export function tensorToOperand(tensor: TensorProto): Operand {
   const shape = tensor.dims.map(Number);
   const dtype = onnxDtypeToJax(tensor.dataType);
 
@@ -222,6 +260,14 @@ export function tensorToArray(tensor: TensorProto): np.Array {
       return np.zeros(shape.length === 0 ? [] : shape, { dtype });
     }
     throw new Error(`Tensor ${tensor.name} has no data`);
+  }
+
+  if (
+    (dtype === np.int32 || dtype === np.bool) &&
+    data instanceof Int32Array &&
+    data.length < 16
+  ) {
+    return new StaticArray(data, shape, dtype);
   }
 
   return np.array(data, { shape, dtype });

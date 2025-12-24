@@ -1,37 +1,75 @@
 // Element-wise operations, mostly simple to wrap directly.
 
-import { nn, numpy as np, scipySpecial as special } from "@jax-js/jax";
+import { DType, nn, numpy as np, scipySpecial as special } from "@jax-js/jax";
 
-import { onnxDtypeToJax, type Operand, operandToJax } from "../tensor";
+import {
+  onnxDtypeToJax,
+  type Operand,
+  operandToJax,
+  StaticArray,
+} from "../tensor";
 
 function wrapFn(
   fn: (...args: np.Array[]) => np.Array,
+  staticFn?: (...args: number[]) => number,
+  outDtype?: DType,
 ): (inputs: Operand[]) => Operand[] {
-  return (inputs: Operand[]) => [fn(...inputs.map(operandToJax))];
+  return (inputs: Operand[]) => {
+    // If staticFn provided and all inputs are StaticArray, compute on CPU
+    if (staticFn && inputs.every((op) => op instanceof StaticArray)) {
+      const arrays = inputs as StaticArray[];
+      // Compute broadcast shape across all inputs
+      let outShape = arrays[0].shape;
+      for (let i = 1; i < arrays.length; i++) {
+        outShape = np.broadcastShapes(outShape, arrays[i].shape);
+      }
+      const broadcasted = arrays.map((a) => a.broadcastTo(outShape));
+      const result = new Int32Array(broadcasted[0].data.length);
+      for (let i = 0; i < result.length; i++) {
+        result[i] = staticFn(...broadcasted.map((b) => b.data[i]));
+      }
+      return [
+        new StaticArray(
+          result,
+          outShape,
+          outDtype ?? arrays[arrays.length - 1].dtype,
+        ),
+      ];
+    }
+    return [fn(...inputs.map(operandToJax))];
+  };
 }
 
-export const Add = wrapFn(np.add);
-export const Sub = wrapFn(np.subtract);
-export const Mul = wrapFn(np.multiply);
-export const Div = wrapFn(np.divide);
-export const Neg = wrapFn(np.negative);
-export const Abs = wrapFn(np.abs);
+export const Add = wrapFn(np.add, (a, b) => a + b);
+export const Sub = wrapFn(np.subtract, (a, b) => a - b);
+export const Mul = wrapFn(np.multiply, (a, b) => a * b);
+export const Div = wrapFn(np.divide, (a, b) => Math.floor(a / b));
+export const Neg = wrapFn(np.negative, (a) => -a);
+export const Abs = wrapFn(np.abs, Math.abs);
 export const Sqrt = wrapFn(np.sqrt);
 export const Exp = wrapFn(np.exp);
 export const Log = wrapFn(np.log);
-export const Pow = wrapFn(np.pow);
+export const Pow = wrapFn(np.pow, Math.pow);
 export const Reciprocal = wrapFn(np.reciprocal);
 export const Floor = wrapFn(np.floor);
 export const Ceil = wrapFn(np.ceil);
 export const Identity = wrapFn((x) => x);
 
-export const Equal = wrapFn(np.equal);
-export const Less = wrapFn(np.less);
-export const Greater = wrapFn(np.greater);
-export const LessOrEqual = wrapFn(np.lessEqual);
-export const GreaterOrEqual = wrapFn(np.greaterEqual);
+export const Equal = wrapFn(np.equal, (a, b) => Number(a === b), np.bool);
+export const Less = wrapFn(np.less, (a, b) => Number(a < b), np.bool);
+export const Greater = wrapFn(np.greater, (a, b) => Number(a > b), np.bool);
+export const LessOrEqual = wrapFn(
+  np.lessEqual,
+  (a, b) => Number(a <= b),
+  np.bool,
+);
+export const GreaterOrEqual = wrapFn(
+  np.greaterEqual,
+  (a, b) => Number(a >= b),
+  np.bool,
+);
 
-export const Where = wrapFn(np.where);
+export const Where = wrapFn(np.where, (cond, x, y) => (cond ? x : y));
 export const Clip = wrapFn(np.clip);
 
 export const IsNaN = wrapFn(np.isnan);
@@ -94,9 +132,10 @@ export function LeakyRelu(
   return [nn.leakyRelu(x, alpha)];
 }
 
-export function Cast(inputs: Operand[], { to }: { to: number }): Operand[] {
-  const [x] = inputs.map(operandToJax);
+export function Cast([xOp]: Operand[], { to }: { to: number }): Operand[] {
   const dtype = onnxDtypeToJax(to);
+  if (dtype === xOp.dtype) return [xOp];
+  const x = operandToJax(xOp);
   return [x.astype(dtype)];
 }
 
