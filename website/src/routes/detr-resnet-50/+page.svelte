@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { browser } from "$app/environment";
+
   import {
     blockUntilReady,
     defaultDevice,
@@ -15,6 +17,11 @@
   import { COCO_CLASSES, stringToColor } from "./coco";
 
   let canvasEl: HTMLCanvasElement;
+  let videoEl: HTMLVideoElement;
+  const offscreenCanvas: OffscreenCanvas = browser
+    ? new OffscreenCanvas(800, 800)
+    : (null as any);
+
   let downloadManager: DownloadManager;
   let onnxModel: ONNXModel;
   let onnxModelRun: any;
@@ -22,6 +29,11 @@
     null;
 
   let runCount = 0;
+  let webcamStream: MediaStream | null = null;
+  let inputSource: "example" | "webcam" = $state("example");
+  let isFrontCamera = $state(false);
+  let loopEnabled = $state(false);
+  let isLooping = $state(false);
 
   interface Detection {
     label: string;
@@ -32,8 +44,12 @@
     h: number;
   }
 
-  function drawDetections(detections: Detection[]) {
+  function drawDetections(imageData: ImageData, detections: Detection[]) {
+    canvasEl.width = imageData.width;
+    canvasEl.height = imageData.height;
     const ctx = canvasEl.getContext("2d")!;
+    ctx.putImageData(imageData, 0, 0);
+
     const imgW = canvasEl.width;
     const imgH = canvasEl.height;
 
@@ -75,30 +91,88 @@
     return imageUrls[runCount++ % imageUrls.length];
   }
 
-  async function loadImage(url: string): Promise<{
+  async function startWebcam() {
+    if (webcamStream) return;
+    webcamStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment", width: 800, height: 800 },
+    });
+    videoEl.srcObject = webcamStream;
+    await videoEl.play();
+
+    // Check if we got a front-facing camera
+    // On desktop, facingMode is often undefined, so assume front camera (mirror by default)
+    const track = webcamStream.getVideoTracks()[0];
+    const settings = track.getSettings();
+    isFrontCamera = settings.facingMode !== "environment";
+  }
+
+  function stopWebcam() {
+    if (webcamStream) {
+      webcamStream.getTracks().forEach((track) => track.stop());
+      webcamStream = null;
+      videoEl.srcObject = null;
+    }
+  }
+
+  async function onInputSourceChange() {
+    if (inputSource === "webcam") {
+      await startWebcam();
+    } else {
+      stopWebcam();
+    }
+  }
+
+  async function loadImage(source: "example" | "webcam"): Promise<{
     pixelValues: np.Array;
     pixelMask: np.Array;
+    imageData: ImageData;
   }> {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    await new Promise((resolve, reject) => {
-      img.onload = resolve;
-      img.onerror = reject;
-      img.src = url;
-    });
-
-    // Center crop to square, then resize to 800x800
     const size = 800;
-    const { width: origW, height: origH } = img;
-    const cropSize = Math.min(origW, origH);
-    const sx = (origW - cropSize) / 2;
-    const sy = (origH - cropSize) / 2;
+    const ctx = offscreenCanvas.getContext("2d", { willReadFrequently: true })!;
 
-    // Draw on the visible canvas
-    canvasEl.width = size;
-    canvasEl.height = size;
-    const ctx = canvasEl.getContext("2d", { willReadFrequently: true })!;
-    ctx.drawImage(img, sx, sy, cropSize, cropSize, 0, 0, size, size);
+    if (source === "webcam") {
+      // Draw current video frame, center cropped to square
+      const { videoWidth: origW, videoHeight: origH } = videoEl;
+      const cropSize = Math.min(origW, origH);
+      const sx = (origW - cropSize) / 2;
+      const sy = (origH - cropSize) / 2;
+      if (isFrontCamera) {
+        // Mirror front camera horizontally
+        ctx.save();
+        ctx.scale(-1, 1);
+        ctx.drawImage(
+          videoEl,
+          sx,
+          sy,
+          cropSize,
+          cropSize,
+          -size,
+          0,
+          size,
+          size,
+        );
+        ctx.restore();
+      } else {
+        ctx.drawImage(videoEl, sx, sy, cropSize, cropSize, 0, 0, size, size);
+      }
+    } else {
+      // Load example image
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      const url = getImageUrl();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+        img.src = url;
+      });
+
+      // Center crop to square, then resize to 800x800
+      const { width: origW, height: origH } = img;
+      const cropSize = Math.min(origW, origH);
+      const sx = (origW - cropSize) / 2;
+      const sy = (origH - cropSize) / 2;
+      ctx.drawImage(img, sx, sy, cropSize, cropSize, 0, 0, size, size);
+    }
 
     const imageData = ctx.getImageData(0, 0, size, size);
     const pixels = imageData.data; // RGBA
@@ -123,7 +197,7 @@
     const pixelMask = np.ones([1, 64, 64], { dtype: np.int32 });
 
     await blockUntilReady(pixelValues);
-    return { pixelValues, pixelMask };
+    return { pixelValues, pixelMask, imageData };
   }
 
   async function processOutput(
@@ -182,9 +256,8 @@
       console.log("ONNX Model loaded:", onnxModel);
     }
 
-    const imageUrl = getImageUrl();
-    console.log(`Loading image: ${imageUrl}`);
-    const { pixelValues, pixelMask } = await loadImage(imageUrl);
+    console.log(`Loading image from: ${inputSource}`);
+    const { pixelValues, pixelMask, imageData } = await loadImage(inputSource);
     console.log("Image loaded:", pixelValues.shape);
 
     console.log("Running forward pass...");
@@ -222,7 +295,14 @@
     );
 
     const detections = await processOutput(logitsData!, boxesData!);
-    drawDetections(detections);
+    drawDetections(imageData, detections);
+
+    if (loopEnabled) {
+      isLooping = true;
+      requestAnimationFrame(() => loadAndRun());
+    } else {
+      isLooping = false;
+    }
   }
 
   async function loadAndRunOrt() {
@@ -241,12 +321,11 @@
       console.log("ORT Session loaded:", ortSession);
     }
 
-    const imageUrl = getImageUrl();
-    console.log(`Loading image: ${imageUrl}`);
-    const imageData = await loadImage(imageUrl);
-    const pixelValues = (await imageData.pixelValues.data()) as Float32Array;
+    console.log(`Loading image from: ${inputSource}`);
+    const loadedImage = await loadImage(inputSource);
+    const pixelValues = (await loadedImage.pixelValues.data()) as Float32Array;
     const pixelMask = new BigInt64Array(
-      [...(await imageData.pixelMask.data())].map(BigInt),
+      [...(await loadedImage.pixelMask.data())].map(BigInt),
     );
     console.log("Image loaded for ORT");
 
@@ -285,22 +364,65 @@
     );
 
     const detections = await processOutput(logitsData!, boxesData!);
-    drawDetections(detections);
+    drawDetections(loadedImage.imageData, detections);
+
+    if (loopEnabled) {
+      isLooping = true;
+      requestAnimationFrame(() => loadAndRunOrt());
+    } else {
+      isLooping = false;
+    }
+  }
+
+  function stopLoop() {
+    loopEnabled = false;
   }
 </script>
 
 <DownloadManager bind:this={downloadManager} />
 
 <main class="p-4">
-  <div class="flex gap-2">
-    <button onclick={loadAndRun} class="border px-2">
-      Load & Run (jax-js)
-    </button>
-    <button onclick={loadAndRunOrt} class="border px-2">
-      Load & Run (onnxruntime-web)
-    </button>
+  <div class="flex flex-col gap-2">
+    <div>
+      <label>
+        Input source:
+        <select
+          bind:value={inputSource}
+          onchange={onInputSourceChange}
+          class="border px-1"
+        >
+          <option value="example">Example images</option>
+          <option value="webcam">Webcam</option>
+        </select>
+      </label>
+    </div>
+    <div class="flex gap-2 items-center">
+      {#if isLooping}
+        <button onclick={stopLoop} class="border px-2"> Stop </button>
+      {:else}
+        <button onclick={loadAndRun} class="border px-2">
+          Load & Run (jax-js)
+        </button>
+        <button onclick={loadAndRunOrt} class="border px-2">
+          Load & Run (onnxruntime-web)
+        </button>
+        <label class="flex items-center gap-1">
+          <input type="checkbox" bind:checked={loopEnabled} />
+          Loop
+        </label>
+      {/if}
+    </div>
   </div>
   <div class="mt-4">
+    <video
+      bind:this={videoEl}
+      class="hidden"
+      class:-scale-x-100={isFrontCamera}
+      width="800"
+      height="800"
+      playsinline
+      muted
+    ></video>
     <canvas bind:this={canvasEl} class="border" width="800" height="800"
     ></canvas>
   </div>
