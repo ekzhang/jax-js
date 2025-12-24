@@ -4,6 +4,70 @@ import { DType, numpy as np } from "@jax-js/jax";
 import type { TensorProto } from "onnx-buf";
 import { TensorProto_DataType } from "onnx-buf";
 
+export type Operand = np.Array | StaticArray;
+
+/**
+ * These arrays can be calculated from input shapes as constant; they live on
+ * CPU and don't participate in the tracing.
+ *
+ * We implement a limited subset of operations used by ONNX graphs for shape
+ * manipulation within the graph. This allows us to make more graphs traceable
+ * by JIT when operations like `Reshape` depend on the _values_ of operands,
+ * and those operands are `StaticArray` instead of `np.Array`.
+ */
+export class StaticArray {
+  data: Int32Array<ArrayBuffer>;
+  shape: number[];
+
+  constructor(data: number[] | Int32Array, shape: number[]) {
+    this.data = new Int32Array(data);
+    this.shape = shape;
+  }
+
+  toJax() {
+    return np.array(this.data, { shape: this.shape, dtype: np.int32 });
+  }
+}
+
+export function operandToJax(op: Operand): np.Array {
+  if (op instanceof StaticArray) {
+    return op.toJax();
+  } else {
+    return op;
+  }
+}
+
+export function operandToJaxRef(op: Operand): np.Array {
+  if (op instanceof StaticArray) {
+    return op.toJax();
+  } else {
+    return op.ref;
+  }
+}
+
+export function operandToJs(op: Operand): any {
+  if (op instanceof StaticArray) {
+    return makeShapedJsArray(op.data, op.shape);
+  } else {
+    return op.js();
+  }
+}
+
+function makeShapedJsArray(
+  data: Int32Array<ArrayBuffer>,
+  shape: number[],
+): any {
+  if (shape.length === 0) return data[0];
+  const ret = [];
+  for (let i = 0; i < shape[0]; i++) {
+    const subShape = shape.slice(1);
+    const subSize = subShape.reduce((a, b) => a * b, 1);
+    const subData = data.slice(i * subSize, (i + 1) * subSize);
+    ret.push(makeShapedJsArray(subData, subShape));
+  }
+  return ret;
+}
+
 /** Convert an ONNX data type to a jax-js DType. */
 export function onnxDtypeToJax(onnxType: TensorProto_DataType): DType {
   switch (onnxType) {

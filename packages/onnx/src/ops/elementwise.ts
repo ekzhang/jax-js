@@ -2,12 +2,12 @@
 
 import { nn, numpy as np, scipySpecial as special } from "@jax-js/jax";
 
-import { onnxDtypeToJax } from "../tensor";
+import { onnxDtypeToJax, type Operand, operandToJax } from "../tensor";
 
 function wrapFn(
   fn: (...args: np.Array[]) => np.Array,
-): (inputs: np.Array[]) => np.Array[] {
-  return (inputs: np.Array[]) => [fn(...inputs)];
+): (inputs: Operand[]) => Operand[] {
+  return (inputs: Operand[]) => [fn(...inputs.map(operandToJax))];
 }
 
 export const Add = wrapFn(np.add);
@@ -36,8 +36,8 @@ export const Clip = wrapFn(np.clip);
 
 export const IsNaN = wrapFn(np.isnan);
 
-export function Not([x]: np.Array[]): np.Array[] {
-  return [np.notEqual(x, true)];
+export function Not([x]: Operand[]): Operand[] {
+  return [np.notEqual(operandToJax(x), true)];
 }
 
 export const Sin = wrapFn(np.sin);
@@ -68,13 +68,18 @@ export const Softsign = wrapFn(nn.softSign);
 export const Mish = wrapFn(nn.mish);
 
 export function Gelu(
-  [x]: np.Array[],
+  inputs: Operand[],
   { approximate = "none" }: { approximate?: "none" | "tanh" },
-) {
+): Operand[] {
+  const [x] = inputs.map(operandToJax);
   return [nn.gelu(x, { approximate: approximate === "tanh" })];
 }
 
-export function Swish([x]: np.Array[], { alpha = 1.0 }: { alpha?: number }) {
+export function Swish(
+  inputs: Operand[],
+  { alpha = 1.0 }: { alpha?: number },
+): Operand[] {
+  const [x] = inputs.map(operandToJax);
   if (alpha === 1.0) {
     return [nn.silu(x)];
   }
@@ -82,21 +87,24 @@ export function Swish([x]: np.Array[], { alpha = 1.0 }: { alpha?: number }) {
 }
 
 export function LeakyRelu(
-  [x]: np.Array[],
+  inputs: Operand[],
   { alpha = 0.01 }: { alpha?: number },
-): np.Array[] {
+): Operand[] {
+  const [x] = inputs.map(operandToJax);
   return [nn.leakyRelu(x, alpha)];
 }
 
-export function Cast([x]: np.Array[], { to }: { to: number }): np.Array[] {
+export function Cast(inputs: Operand[], { to }: { to: number }): Operand[] {
+  const [x] = inputs.map(operandToJax);
   const dtype = onnxDtypeToJax(to);
   return [x.astype(dtype)];
 }
 
 export function Mod(
-  [a, b]: np.Array[],
+  inputs: Operand[],
   { fmod = 0 }: { fmod: number },
-): np.Array[] {
+): Operand[] {
+  const [a, b] = inputs.map(operandToJax);
   if (fmod) return [np.fmod(a, b)]; // Use sign of a.
   return [np.remainder(a, b)]; // Semantics of integer mod in ONNX use the sign of b.
 }

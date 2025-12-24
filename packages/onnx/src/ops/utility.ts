@@ -7,19 +7,26 @@
 import { numpy as np } from "@jax-js/jax";
 import { TensorProto } from "onnx-buf";
 
-import { tensorToArray } from "../tensor";
+import {
+  type Operand,
+  operandToJax,
+  operandToJs,
+  StaticArray,
+  tensorToArray,
+} from "../tensor";
 
 export function Shape(
-  [data]: np.Array[],
+  [data]: Operand[],
   { start = 0, end }: { start?: number; end?: number },
-) {
-  const shape = data.shape.slice(start, end);
-  data.dispose();
-  return [np.array(shape, { dtype: np.int32 })];
+): Operand[] {
+  const arr = operandToJax(data);
+  const shape = arr.shape.slice(start, end);
+  arr.dispose();
+  return [new StaticArray(shape, [shape.length])];
 }
 
 export function Constant(
-  _: np.Array[],
+  _: Operand[],
   {
     value,
     value_float,
@@ -37,7 +44,7 @@ export function Constant(
     value_string?: Uint8Array<ArrayBuffer>;
     value_strings?: Uint8Array<ArrayBuffer>[];
   },
-): [np.Array] {
+): Operand[] {
   if (value !== undefined) {
     return [tensorToArray(value)];
   } else if (value_float !== undefined) {
@@ -45,9 +52,9 @@ export function Constant(
   } else if (value_floats !== undefined) {
     return [np.array(value_floats)];
   } else if (value_int !== undefined) {
-    return [np.array(value_int, { dtype: np.int32 })];
+    return [new StaticArray([value_int], [])];
   } else if (value_ints !== undefined) {
-    return [np.array(value_ints, { dtype: np.int32 })];
+    return [new StaticArray(value_ints, [value_ints.length])];
   } else if (value_string !== undefined || value_strings !== undefined) {
     throw new Error("ONNX Constant string values are not supported");
   } else {
@@ -56,10 +63,10 @@ export function Constant(
 }
 
 export function ConstantOfShape(
-  [input]: np.Array[],
+  [input]: Operand[],
   { value }: { value?: TensorProto },
-): [np.Array] {
-  const shape = input.js() as number[];
+): Operand[] {
+  const shape = operandToJs(input) as number[];
   if (value !== undefined) {
     return [np.broadcastTo(tensorToArray(value), shape)];
   } else {

@@ -5,6 +5,13 @@
 
 import { lax, numpy as np } from "@jax-js/jax";
 
+import {
+  type Operand,
+  operandToJax,
+  operandToJs,
+  StaticArray,
+} from "../tensor";
+
 const padsMapping: Record<string, lax.PaddingType> = {
   SAME_UPPER: "SAME",
   SAME_LOWER: "SAME_LOWER",
@@ -12,7 +19,7 @@ const padsMapping: Record<string, lax.PaddingType> = {
 };
 
 export function Conv(
-  [x, w, bias]: (np.Array | undefined)[],
+  inputs: Operand[],
   {
     auto_pad: autoPad = "NOTSET",
     dilations,
@@ -28,7 +35,8 @@ export function Conv(
     pads?: number[];
     strides?: number[];
   },
-) {
+): Operand[] {
+  const [x, w, bias] = inputs.map(operandToJax);
   if (!x || !w) throw new Error("Conv: missing required inputs");
   const [_batchSize, channelsIn, ...xSpatial] = x.shape;
   const [_channelsOut, channelsInGrouped, ...wSpatial] = w.shape;
@@ -86,7 +94,7 @@ function padWithNegInf(x: np.Array, pads: [number, number][]): np.Array {
 }
 
 export function MaxPool(
-  [x]: np.Array[],
+  [xOp]: Operand[],
   {
     auto_pad: autoPad = "NOTSET",
     ceil_mode: ceilMode = 0,
@@ -102,13 +110,14 @@ export function MaxPool(
     pads?: number[];
     strides?: number[];
   },
-): np.Array[] {
+): Operand[] {
   if (ceilMode) {
     throw new Error("MaxPool: ceil_mode=1 is not supported");
   }
   if (dilations && dilations.some((d) => d !== 1)) {
     throw new Error("MaxPool: dilations != 1 is not supported");
   }
+  const x = operandToJax(xOp);
   const n = kernelShape.length;
   const xSpatial = x.shape.slice(2);
   if (xSpatial.length !== n) {
@@ -156,7 +165,7 @@ export function MaxPool(
 }
 
 export function Resize(
-  [x, _roi, scales, sizes]: np.Array[],
+  [xOp, roi, scales, sizes]: Operand[],
   {
     coordinate_transformation_mode: coordMode = "half_pixel",
     mode = "nearest",
@@ -168,7 +177,7 @@ export function Resize(
     // Ignored: cubic_coeff_a, exclude_outside, extrapolation_value,
     // keep_aspect_ratio_policy, axes
   },
-): np.Array[] {
+): Operand[] {
   // Only support nearest + asymmetric + floor for now
   if (mode !== "nearest") {
     throw new Error(`Resize: mode '${mode}' is not supported, only 'nearest'`);
@@ -184,13 +193,19 @@ export function Resize(
     );
   }
 
+  if (roi && !(roi instanceof StaticArray)) {
+    // We don't use roi, so just dispose it.
+    roi.dispose();
+  }
+
   // Determine output shape from scales or sizes
+  const x = operandToJax(xOp);
   const inShape = x.shape;
   let outShape: number[];
   if (sizes && sizes.shape[0] > 0) {
-    outShape = sizes.js();
+    outShape = operandToJs(sizes);
   } else if (scales && scales.shape[0] > 0) {
-    const scalesArr: number[] = scales.js();
+    const scalesArr: number[] = operandToJs(scales);
     outShape = inShape.map((d, i) => Math.floor(d * scalesArr[i]));
   } else {
     throw new Error("Resize: either scales or sizes must be provided");

@@ -4,11 +4,13 @@
 
 import { numpy as np } from "@jax-js/jax";
 
+import { type Operand, operandToJax, operandToJs } from "../tensor";
+
 export function Reshape(
-  [data, shapeArr]: np.Array[],
+  [data, shapeArr]: Operand[],
   { allowzero = 0 }: { allowzero?: number },
-): np.Array[] {
-  const shape = shapeArr.js();
+): Operand[] {
+  const shape = operandToJs(shapeArr);
   if (shape.includes(0) && !allowzero) {
     // Semantics of allowzero=0 are confusing, will skip for now.
     // https://onnx.ai/onnx/operators/onnx__Reshape.html
@@ -16,49 +18,53 @@ export function Reshape(
       "Reshape with 0 in shape is not supported unless allowzero=1",
     );
   }
-  return [data.reshape(shape)];
+  return [operandToJax(data).reshape(shape)];
 }
 
 export function Transpose(
-  [x]: np.Array[],
+  inputs: Operand[],
   { perm }: { perm?: number[] },
-): np.Array[] {
-  return [np.transpose(x, perm)];
+): Operand[] {
+  const [x] = inputs.map(operandToJax);
+  return [np.transpose(operandToJax(x), perm)];
 }
 
 export function Flatten(
-  [x]: np.Array[],
+  inputs: Operand[],
   { axis = 1 }: { axis?: number },
-): np.Array[] {
+): Operand[] {
   // Make a 2D matrix with x[:axis] and x[axis:] flattened.
+  const [x] = inputs.map(operandToJax);
   if (axis <= 0) axis += x.ndim;
   const batchSize = x.shape.slice(0, axis).reduce((a, b) => a * b, 1);
   return [x.reshape([batchSize, -1])];
 }
 
-export function Expand([x, shape]: np.Array[]): np.Array[] {
-  const finalShape = np.broadcastShapes(x.shape, shape.js());
+export function Expand([xOp, shape]: Operand[]): Operand[] {
+  const x = operandToJax(xOp);
+  const finalShape = np.broadcastShapes(x.shape, operandToJs(shape));
   return [np.broadcastTo(x, finalShape)];
 }
 
 export function Squeeze(
-  [data, axes]: np.Array[],
+  [data, axes]: Operand[],
   { axes: axesBeforeOpset13 }: { axes?: number[] },
-): np.Array[] {
+): Operand[] {
   const axis: number[] | undefined = axes
-    ? axes.js()
+    ? operandToJs(axes)
     : (axesBeforeOpset13 ?? undefined);
-  return [np.squeeze(data, axis)];
+  return [np.squeeze(operandToJax(data), axis)];
 }
 
 export function Unsqueeze(
-  [data, axes]: np.Array[],
+  [dataOp, axes]: Operand[],
   { axes: axesBeforeOpset13 }: { axes?: number[] },
-): np.Array[] {
-  const axis: number[] = axes ? axes.js() : axesBeforeOpset13!;
+): Operand[] {
+  const axis: number[] = axes ? operandToJs(axes) : axesBeforeOpset13!;
   if (!axis) {
     throw new Error("Unsqueeze requires axes");
   }
+  const data = operandToJax(dataOp);
   const outputRank = data.ndim + axis.length;
   const axisSet = new Set(axis.map((i) => (i < 0 ? outputRank + i : i)));
   const newShape = [...data.shape];
@@ -69,34 +75,41 @@ export function Unsqueeze(
 }
 
 export function Gather(
-  [data, indices]: np.Array[],
+  [dataOp, indicesOp]: Operand[],
   { axis = 0 }: { axis?: number },
-): np.Array[] {
+): Operand[] {
+  const data = operandToJax(dataOp);
+  const indices = operandToJax(indicesOp);
   if (axis < 0) axis += data.ndim;
   const sliceArgs: (np.Array | [])[] = new Array(data.ndim).fill([]);
   sliceArgs[axis] = indices;
   return [data.slice(...sliceArgs)];
 }
 
-export function Concat(inputs: np.Array[], { axis }: { axis: number }) {
-  return [np.concatenate(inputs, axis)];
+export function Concat(
+  inputs: Operand[],
+  { axis }: { axis: number },
+): Operand[] {
+  const arrays = inputs.map(operandToJax);
+  return [np.concatenate(arrays, axis)];
 }
 
-export function Tile([input, repeats]: np.Array[]): np.Array[] {
-  return [np.tile(input, repeats.js())];
+export function Tile([input, repeats]: Operand[]): Operand[] {
+  return [np.tile(operandToJax(input), operandToJs(repeats))];
 }
 
 export function Slice([
-  data,
+  dataOp,
   starts,
   ends,
   axes,
   steps,
-]: np.Array[]): np.Array[] {
-  const startsArr: number[] = starts.js();
-  const endsArr: number[] = ends.js();
-  const axesArr: number[] | null = axes ? axes.js() : null;
-  const stepsArr: number[] | null = steps ? steps.js() : null;
+]: Operand[]): Operand[] {
+  const data = operandToJax(dataOp);
+  const startsArr: number[] = operandToJs(starts);
+  const endsArr: number[] = operandToJs(ends);
+  const axesArr: number[] | null = axes ? operandToJs(axes) : null;
+  const stepsArr: number[] | null = steps ? operandToJs(steps) : null;
 
   // Build slice specification for all dimensions (default to full range)
   const sliceRanges: [number, number, number][] = data.shape.map(
