@@ -2,6 +2,37 @@
 
 import { linalg, numpy as np } from "../src/index.ts";
 
+function verifyReconstruction(
+  inputJs: any[][],
+  resultRef: any,
+  isLower: boolean = false,
+  label: string = ""
+) {
+  let reconstructed;
+  if (isLower) {
+    reconstructed = np.matmul(resultRef.ref, resultRef.ref.transpose());
+  } else {
+    reconstructed = np.matmul(resultRef.ref.transpose(), resultRef.ref);
+  }
+
+  const reconJs = reconstructed.js();
+  const flatInput = inputJs.flat();
+  const flatRecon = reconJs.flat();
+
+  let maxDiff = 0;
+  for (let i = 0; i < flatInput.length; i++) {
+    const diff = Math.abs(flatInput[i] - flatRecon[i]);
+    if (diff > maxDiff) maxDiff = diff;
+  }
+
+  console.log(`${label} Reconstruction:`);
+  console.log(reconJs);
+  console.log("Max difference:", maxDiff);
+  console.log("Test passed:", maxDiff < 1e-5);
+  console.log();
+  return maxDiff < 1e-5;
+}
+
 console.log("Testing linalg.cholesky()...\n");
 
 // Test 1: 2x2 lower triangular
@@ -10,17 +41,14 @@ const x = np.array([
   [2.0, 1.0],
   [1.0, 2.0],
 ]);
+const xJs = x.ref.js(); // Keep JS version for verification
 console.log("Input:");
-console.log(x.ref.js()); // Use .ref to preserve the array
+console.log(xJs);
 
-const L = linalg.cholesky(x, { lower: true });
+const L = linalg.cholesky(x.ref, { lower: true });
 console.log("Lower Cholesky (L):");
-console.log(L.ref.js()); // Use .ref to preserve L for matmul
-
-const reconstructed = np.matmul(L.ref, L.ref.transpose());
-console.log("L @ L^T (should equal input):");
-console.log(reconstructed.js());
-console.log();
+console.log(L.ref.js());
+verifyReconstruction(xJs, L, true, "Test 1");
 
 // Test 2: 2x2 upper triangular (default)
 console.log("Test 2: 2x2 upper triangular");
@@ -28,14 +56,11 @@ const x2 = np.array([
   [2.0, 1.0],
   [1.0, 2.0],
 ]);
-const U = linalg.cholesky(x2);
+const x2Js = x2.ref.js();
+const U = linalg.cholesky(x2.ref);
 console.log("Upper Cholesky (U):");
 console.log(U.ref.js());
-
-const reconstructedU = np.matmul(U.ref.transpose(), U);
-console.log("U^T @ U (should equal input):");
-console.log(reconstructedU.js());
-console.log();
+verifyReconstruction(x2Js, U, false, "Test 2");
 
 // Test 3: 3x3 matrix
 console.log("Test 3: 3x3 matrix");
@@ -44,29 +69,14 @@ const x3 = np.array([
   [2.0, 5.0, 3.0],
   [1.0, 3.0, 6.0],
 ]);
+const x3Js = x3.ref.js();
 console.log("Input:");
-console.log(x3.ref.js());
+console.log(x3Js);
 
-const L3 = linalg.cholesky(x3, { lower: true });
+const L3 = linalg.cholesky(x3.ref, { lower: true });
 console.log("Lower Cholesky (L):");
 console.log(L3.ref.js());
-
-const reconstructed3 = np.matmul(L3.ref, L3.ref.transpose());
-console.log("L @ L^T (should equal input):");
-const recon3Js = reconstructed3.js();
-console.log(recon3Js);
-
-// Check if close (using approximate comparison for floating point)
-const flatR3 = recon3Js.flat();
-let maxDiff = 0;
-for (let i = 0; i < 9; i++) {
-  const expected = [4, 2, 1, 2, 5, 3, 1, 3, 6][i];
-  const diff = Math.abs(expected - flatR3[i]);
-  if (diff > maxDiff) maxDiff = diff;
-}
-console.log("Max difference:", maxDiff);
-console.log("Test passed:", maxDiff < 1e-5);
-console.log();
+verifyReconstruction(x3Js, L3, true, "Test 3");
 
 // Test 4: Error handling - non-square matrix
 console.log("Test 4: Error handling - non-square matrix");
@@ -75,7 +85,7 @@ try {
     [1.0, 2.0, 3.0],
     [4.0, 5.0, 6.0],
   ]);
-  linalg.cholesky(nonSquare);
+  linalg.cholesky(nonSquare.ref);
   console.log("ERROR: Should have thrown!");
 } catch (e: any) {
   console.log("Correctly threw:", e.message);
@@ -86,10 +96,8 @@ console.log();
 console.log("Test 5: Error handling - non-2D array");
 try {
   const oneD = np.array([1.0, 2.0, 3.0]);
-  linalg.cholesky(oneD);
+  linalg.cholesky(oneD.ref);
   console.log("ERROR: Should have thrown!");
 } catch (e: any) {
   console.log("Correctly threw:", e.message);
 }
-
-console.log("\n✓ All tests passed!");

@@ -1507,7 +1507,9 @@ function slice(val: Array, start: number[], end: number[]): Array {
   return bind1(Primitive.Shrink, [val], { slice: pairs }) as Array;
 }
 
-function choleskyBlocked(a: Array): Array {
+function choleskyBlocked(inputA: Array): Array {
+  // Keep input alive throughout the computation
+  const a = inputA.ref;
   const n = a.shape[0];
   if (n !== a.shape[1]) {
     throw new Error(`Cholesky requires square matrix, got ${a.shape}`);
@@ -1516,13 +1518,17 @@ function choleskyBlocked(a: Array): Array {
     return bind1(Primitive.Sqrt, [a]) as Array;
   }
 
+  // Capture dtype/device
+  const dtype = a.dtype;
+  const device = a.device;
   const n2 = Math.floor(n / 2);
 
   // Partition A = [[A11, A12], [A21, A22]]
   // Since A is symmetric, A21 = A12^T
+  // Use .ref for all slices to keep source data alive
   const a11 = slice(a.ref, [0, 0], [n2, n2]);
   const a21 = slice(a.ref, [n2, 0], [n, n2]);
-  const a22 = slice(a, [n2, n2], [n, n]);
+  const a22 = slice(a.ref, [n2, n2], [n, n]);
 
   // L11 = cholesky(A11)
   const l11 = choleskyBlocked(a11);
@@ -1541,7 +1547,7 @@ function choleskyBlocked(a: Array): Array {
   const l22 = choleskyBlocked(a22.sub(temp));
 
   // Assemble L
-  const z12 = zeros([n2, n - n2], { dtype: a.dtype, device: a.device });
+  const z12 = zeros([n2, n - n2], { dtype, device });
   const row1 = concat2d(l11, z12, 1);
   const row2 = concat2d(l21, l22, 1);
 
@@ -1581,8 +1587,8 @@ function concat2d(a: Array, b: Array, axis: number): Array {
 }
 
 function triangularSolveBlocked(
-  a: Array,
-  b: Array,
+  inputA: Array,
+  inputB: Array,
   {
     leftSide = true,
     lower = true,
@@ -1595,6 +1601,10 @@ function triangularSolveBlocked(
     unitDiagonal?: boolean;
   } = {},
 ): Array {
+  // Keep inputs alive throughout the computation
+  const a = inputA.ref;
+  const b = inputB.ref;
+
   // Handle 1D input b: promote to column vector and flatten result
   if (b.ndim === 1) {
     const b2d = b.reshape([b.shape[0], 1]);
@@ -1632,10 +1642,14 @@ function triangularSolveBlocked(
 }
 
 function solveLower(
-  a: Array,
-  b: Array,
+  inputA: Array,
+  inputB: Array,
   { lower, transposeA, unitDiagonal }: any,
 ): Array {
+  // Keep inputs alive throughout the computation
+  const a = inputA.ref;
+  const b = inputB.ref;
+
   const n = a.shape[0];
   if (n <= 1) {
     if (unitDiagonal) return b;
@@ -1646,19 +1660,21 @@ function solveLower(
   const n2 = Math.floor(n / 2);
   let a11: Array, a21: Array, a22: Array;
 
+  // Use .ref for all slices to keep source data alive
   if (lower) {
     a11 = slice(a.ref, [0, 0], [n2, n2]);
     a21 = slice(a.ref, [n2, 0], [n, n2]);
-    a22 = slice(a, [n2, n2], [n, n]);
+    a22 = slice(a.ref, [n2, n2], [n, n]);
   } else {
     // A is Upper, but we act on A^T (Lower)
     a11 = slice(a.ref, [0, 0], [n2, n2]);
     a21 = slice(a.ref, [0, n2], [n2, n]); // A12 -> L21^T
-    a22 = slice(a, [n2, n2], [n, n]);
+    a22 = slice(a.ref, [n2, n2], [n, n]);
   }
 
-  const b1 = slice(b.ref, [0, 0], [n2, b.shape[1]]);
-  const b2 = slice(b, [n2, 0], [n, b.shape[1]]);
+  const bCols = b.shape[1];
+  const b1 = slice(b.ref, [0, 0], [n2, bCols]);
+  const b2 = slice(b.ref, [n2, 0], [n, bCols]);
 
   // L11 x1 = b1
   const x1 = triangularSolveBlocked(a11, b1, {
@@ -1688,10 +1704,14 @@ function solveLower(
 }
 
 function solveUpper(
-  a: Array,
-  b: Array,
+  inputA: Array,
+  inputB: Array,
   { lower, transposeA, unitDiagonal }: any,
 ): Array {
+  // Keep inputs alive throughout the computation
+  const a = inputA.ref;
+  const b = inputB.ref;
+
   const n = a.shape[0];
   if (n <= 1) {
     if (unitDiagonal) return b;
@@ -1701,19 +1721,21 @@ function solveUpper(
   const n2 = Math.floor(n / 2);
   let a11: Array, a12: Array, a22: Array;
 
+  // Use .ref for all slices to keep source data alive
   if (!lower) {
     a11 = slice(a.ref, [0, 0], [n2, n2]);
     a12 = slice(a.ref, [0, n2], [n2, n]);
-    a22 = slice(a, [n2, n2], [n, n]);
+    a22 = slice(a.ref, [n2, n2], [n, n]);
   } else {
     // A is Lower, but we act on A^T (Upper)
     a11 = slice(a.ref, [0, 0], [n2, n2]);
     a12 = slice(a.ref, [n2, 0], [n, n2]); // A21 -> U12^T
-    a22 = slice(a, [n2, n2], [n, n]);
+    a22 = slice(a.ref, [n2, n2], [n, n]);
   }
 
-  const b1 = slice(b.ref, [0, 0], [n2, b.shape[1]]);
-  const b2 = slice(b, [n2, 0], [n, b.shape[1]]);
+  const bCols = b.shape[1];
+  const b1 = slice(b.ref, [0, 0], [n2, bCols]);
+  const b2 = slice(b.ref, [n2, 0], [n, bCols]);
 
   // U22 x2 = b2
   const x2 = triangularSolveBlocked(a22, b2, {
