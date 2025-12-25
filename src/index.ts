@@ -7,6 +7,7 @@ import * as jvpModule from "./frontend/jvp";
 import * as linearizeModule from "./frontend/linearize";
 import * as vmapModule from "./frontend/vmap";
 import * as lax from "./library/lax";
+import * as linalg from "./library/linalg";
 import * as nn from "./library/nn";
 import * as numpy from "./library/numpy";
 import * as random from "./library/random";
@@ -28,6 +29,7 @@ export {
   type JsTree,
   type JsTreeDef,
   lax,
+  linalg,
   nn,
   numpy,
   type OwnedFunction,
