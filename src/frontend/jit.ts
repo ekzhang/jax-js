@@ -698,13 +698,13 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   },
   [Primitive.Cholesky]() {
     throw new Error(
-      "Cholesky decomposition cannot be JIT compiled (requires sequential CPU computation). " +
+      "Cholesky decomposition cannot be JIT compiled (uses recursive blocked algorithm). " +
         "Use outside of jit() or wrap in a custom_vjp.",
     );
   },
   [Primitive.TriangularSolve]() {
     throw new Error(
-      "Triangular solve cannot be JIT compiled (requires sequential CPU computation). " +
+      "Triangular solve cannot be JIT compiled (uses recursive blocked algorithm). " +
         "Use outside of jit() or wrap in a custom_vjp.",
     );
   },

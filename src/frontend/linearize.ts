@@ -22,7 +22,6 @@ import {
   add,
   bind,
   broadcast,
-  cholesky,
   conv,
   flattenFun,
   flip,

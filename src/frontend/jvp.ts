@@ -1,4 +1,4 @@
-import { AluOp, DType, isFloatDtype } from "../alu";
+import { AluOp, isFloatDtype } from "../alu";
 import {
   JsTree,
   flatten as treeFlatten,
@@ -435,20 +435,6 @@ function phiLowerHalfDiag(x: Tracer, n: number): Tracer {
   const phiResult = where(lowerMask, where(diagMask, xHalf, x), 0);
 
   return phiResult;
-}
-
-// Helper: create lower triangular mask for given size
-function createTrilMask(n: number): Tracer {
-  // Create index arrays
-  const indices = new Float32Array(n);
-  for (let i = 0; i < n; i++) indices[i] = i;
-  const idxArr = array(indices);
-
-  const rowIdx = broadcast(reshape(idxArr.ref, [n, 1]), [n, n], [1]);
-  const colIdx = broadcast(reshape(idxArr, [1, n]), [n, n], [0]);
-
-  // Lower triangular: row >= col
-  return greaterEqual(rowIdx, colIdx);
 }
 
 const jvpJaxprCache = new Map<Jaxpr, ReturnType<typeof jvpJaxpr>>();
