@@ -1509,6 +1509,9 @@ function slice(val: Array, start: number[], end: number[]): Array {
 
 function choleskyBlocked(a: Array): Array {
   const n = a.shape[0];
+  if (n !== a.shape[1]) {
+    throw new Error(`Cholesky requires square matrix, got ${a.shape}`);
+  }
   if (n <= 1) {
     return bind1(Primitive.Sqrt, [a]) as Array;
   }
@@ -1534,7 +1537,7 @@ function choleskyBlocked(a: Array): Array {
   const l21 = l21T.ref.transpose();
 
   // L22 = cholesky(A22 - L21 @ L21^T)
-  const temp = matmul2d(l21.ref, l21T);
+  const temp = matmul2d(l21.ref, l21T.ref);
   const l22 = choleskyBlocked(a22.sub(temp));
 
   // Assemble L
@@ -1546,7 +1549,19 @@ function choleskyBlocked(a: Array): Array {
 }
 
 function matmul2d(a: Array, b: Array): Array {
-  return bind1(Primitive.Dot, [a, b]) as Array;
+  // A: [M, K], B: [K, N] -> [M, N]
+  // Primitive.Dot reduces the last dimension of the broadcasted shape.
+  // We reshape to [M, 1, K] and [1, N, K] so that they broadcast to [M, N, K],
+  // and Dot sums over K to produce [M, N].
+  const [m, k] = a.shape;
+  const [k2, n] = b.shape;
+  if (k !== k2) {
+    throw new Error(`matmul2d shape mismatch: ${a.shape} vs ${b.shape}`);
+  }
+  const a3 = a.reshape([m, 1, k]);
+  // b.transpose() is [N, K], then reshape to [1, N, K]
+  const b3 = b.transpose().reshape([1, n, k]);
+  return bind1(Primitive.Dot, [a3, b3]) as Array;
 }
 
 function concat2d(a: Array, b: Array, axis: number): Array {
