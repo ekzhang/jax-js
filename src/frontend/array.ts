@@ -985,6 +985,158 @@ export class Array extends Tracer {
       [Primitive.Gather]([x, ...indices], { axis, outDim }) {
         return [x.#gather(indices, axis, outDim)];
       },
+      [Primitive.Cholesky]([x]) {
+        // Validate input
+        if (x.ndim !== 2) {
+          throw new TypeError(`cholesky: input must be 2D, got ${x.ndim}D`);
+        }
+        const n = x.shape[0];
+        if (x.shape[1] !== n) {
+          throw new TypeError(
+            `cholesky: matrix must be square, got ${x.shape[0]}x${x.shape[1]}`,
+          );
+        }
+
+        // CPU implementation using Cholesky-Crout algorithm
+        const data = x.dataSync();
+        const result = new Float32Array(n * n);
+
+        for (let i = 0; i < n; i++) {
+          for (let j = 0; j <= i; j++) {
+            let sum = 0;
+            for (let k = 0; k < j; k++) {
+              sum += result[i * n + k] * result[j * n + k];
+            }
+
+            if (i === j) {
+              const diag = data[i * n + i] - sum;
+              result[i * n + i] = diag > 0 ? Math.sqrt(diag) : NaN;
+            } else {
+              result[i * n + j] =
+                (1.0 / result[j * n + j]) * (data[i * n + j] - sum);
+            }
+          }
+        }
+
+        return [
+          arrayFromData(result, [n, n], { dtype: x.dtype, device: x.device }),
+        ];
+      },
+      [Primitive.TriangularSolve](
+        [a, b],
+        { leftSide, lower, transposeA, unitDiagonal },
+      ) {
+        // Validate inputs
+        if (a.ndim !== 2) {
+          throw new TypeError(
+            `triangular_solve: a must be 2D, got ${a.ndim}D`,
+          );
+        }
+        const n = a.shape[0];
+        if (a.shape[1] !== n) {
+          throw new TypeError(
+            `triangular_solve: a must be square, got ${a.shape[0]}x${a.shape[1]}`,
+          );
+        }
+        if (b.ndim < 1 || b.ndim > 2) {
+          throw new TypeError(
+            `triangular_solve: b must be 1D or 2D, got ${b.ndim}D`,
+          );
+        }
+
+        // Handle 1D b as column vector
+        const bIs1D = b.ndim === 1;
+        const bShape = bIs1D ? [b.shape[0], 1] : b.shape;
+
+        if (leftSide && bShape[0] !== n) {
+          throw new TypeError(
+            `triangular_solve: incompatible shapes for leftSide=true: a is ${n}x${n}, b has ${bShape[0]} rows`,
+          );
+        }
+        if (!leftSide && bShape[1] !== n) {
+          throw new TypeError(
+            `triangular_solve: incompatible shapes for leftSide=false: a is ${n}x${n}, b has ${bShape[1]} columns`,
+          );
+        }
+
+        // CPU implementation
+        const aData = a.dataSync();
+        const bData = b.dataSync();
+        const [m, k] = bShape;
+        const result = new Float32Array(m * k);
+
+        // Copy b to result
+        if (bIs1D) {
+          for (let i = 0; i < m; i++) result[i] = bData[i];
+        } else {
+          for (let i = 0; i < m * k; i++) result[i] = bData[i];
+        }
+
+        // Helper to get element from triangular matrix a
+        const getA = (i: number, j: number): number => {
+          const [ii, jj] = transposeA ? [j, i] : [i, j];
+          if (lower ? jj > ii : jj < ii) return 0;
+          if (unitDiagonal && ii === jj) return 1;
+          return aData[ii * n + jj];
+        };
+
+        if (leftSide) {
+          // Solve a @ x = b for each column of b
+          for (let col = 0; col < k; col++) {
+            if (lower !== transposeA) {
+              // Forward substitution
+              for (let i = 0; i < n; i++) {
+                let sum = result[i * k + col];
+                for (let j = 0; j < i; j++) {
+                  sum -= getA(i, j) * result[j * k + col];
+                }
+                result[i * k + col] = sum / getA(i, i);
+              }
+            } else {
+              // Back substitution
+              for (let i = n - 1; i >= 0; i--) {
+                let sum = result[i * k + col];
+                for (let j = i + 1; j < n; j++) {
+                  sum -= getA(i, j) * result[j * k + col];
+                }
+                result[i * k + col] = sum / getA(i, i);
+              }
+            }
+          }
+        } else {
+          // Solve x @ a = b for each row of b
+          for (let row = 0; row < m; row++) {
+            if (lower === transposeA) {
+              // Forward substitution on transposed system
+              for (let j = 0; j < n; j++) {
+                let sum = result[row * k + j];
+                for (let i = 0; i < j; i++) {
+                  sum -= result[row * k + i] * getA(i, j);
+                }
+                result[row * k + j] = sum / getA(j, j);
+              }
+            } else {
+              // Back substitution on transposed system
+              for (let j = n - 1; j >= 0; j--) {
+                let sum = result[row * k + j];
+                for (let i = j + 1; i < n; i++) {
+                  sum -= result[row * k + i] * getA(i, j);
+                }
+                result[row * k + j] = sum / getA(j, j);
+              }
+            }
+          }
+        }
+
+        const outShape = bIs1D ? [m] : [m, k];
+        return [
+          arrayFromData(
+            bIs1D ? result.subarray(0, m) : result,
+            outShape,
+            { dtype: b.dtype, device: b.device },
+          ),
+        ];
+      },
       [Primitive.JitCall](args, { jaxpr, numConsts }) {
         if (jaxpr.inBinders.length !== args.length) {
           throw new Error(

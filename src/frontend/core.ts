@@ -71,6 +71,8 @@ export enum Primitive {
   Pad = "pad",
   Gather = "gather",
   JitCall = "jit_call",
+  Cholesky = "cholesky",
+  TriangularSolve = "triangular_solve",
 }
 
 interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
@@ -94,6 +96,12 @@ interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
   [Primitive.Pad]: { width: Pair[] };
   [Primitive.Gather]: { axis: number[]; outDim: number };
   [Primitive.JitCall]: { name: string; jaxpr: Jaxpr; numConsts: number };
+  [Primitive.TriangularSolve]: {
+    leftSide: boolean;
+    lower: boolean;
+    transposeA: boolean;
+    unitDiagonal: boolean;
+  };
 }
 
 /** Type of parameters taken by each primitive. */
@@ -361,6 +369,42 @@ export function pad(x: TracerValue, width: number | Pair | Pair[]) {
     throw new Error(`Invalid pad(): expected ${nd} axes, got ${width.length}`);
   }
   return bind1(Primitive.Pad, [x], { width });
+}
+
+/**
+ * Cholesky decomposition. Returns lower triangular L where A = L @ L^T.
+ */
+export function cholesky(x: TracerValue) {
+  return bind1(Primitive.Cholesky, [x]);
+}
+
+/**
+ * Solve a triangular linear system.
+ *
+ * Solves `a @ x = b` (if leftSide=true) or `x @ a = b` (if leftSide=false)
+ * where `a` is a triangular matrix.
+ */
+export function triangularSolve(
+  a: TracerValue,
+  b: TracerValue,
+  {
+    leftSide = true,
+    lower = true,
+    transposeA = false,
+    unitDiagonal = false,
+  }: {
+    leftSide?: boolean;
+    lower?: boolean;
+    transposeA?: boolean;
+    unitDiagonal?: boolean;
+  } = {},
+) {
+  return bind1(Primitive.TriangularSolve, [a, b], {
+    leftSide,
+    lower,
+    transposeA,
+    unitDiagonal,
+  });
 }
 
 export function gather(

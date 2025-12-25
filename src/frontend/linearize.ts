@@ -22,6 +22,7 @@ import {
   add,
   bind,
   broadcast,
+  cholesky,
   conv,
   flattenFun,
   flip,
@@ -43,6 +44,7 @@ import {
   TracerValue,
   transpose,
   TreeMismatchError,
+  triangularSolve,
   UseAfterFreeError,
   where,
 } from "./core";
@@ -871,6 +873,50 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
     // Now pull cotangents back to the corresponding UndefPrimal inputs.
     let i = 0;
     return undefPrimals.map((isUndef) => (isUndef ? outs[i++] : null));
+  },
+  [Primitive.Cholesky]([ct], [x]) {
+    // Cholesky is a nonlinear operation, so if x is UndefPrimal (tangent),
+    // we cannot compute the transpose directly.
+    // This should not happen in practice because Cholesky uses primal values only.
+    if (!(x instanceof UndefPrimal)) throw new NonlinearError(Primitive.Cholesky);
+    throw new NonlinearError(Primitive.Cholesky);
+  },
+  [Primitive.TriangularSolve](
+    [ct],
+    [a, b],
+    { leftSide, lower, transposeA, unitDiagonal },
+  ) {
+    // TriangularSolve: a @ x = b => x = triangular_solve(a, b)
+    // This is linear in b, so we can transpose it.
+    // If b is UndefPrimal: transpose of solve(A, b) w.r.t. b is solve(A^T, ct)
+
+    if (a instanceof UndefPrimal) {
+      // If a is the tangent, this is nonlinear
+      throw new NonlinearError(Primitive.TriangularSolve);
+    }
+
+    if (!(b instanceof UndefPrimal)) {
+      // If neither is UndefPrimal, this is a constant
+      throw new NonlinearError(Primitive.TriangularSolve);
+    }
+
+    // The adjoint of solving A @ x = b for x, when differentiating w.r.t. b:
+    // If forward is: x = A^{-1} @ b
+    // Then adjoint is: ct_b = A^{-T} @ ct_x
+    //
+    // For triangular_solve(a, b, leftSide=true, lower, transposeA):
+    // - Solves (possibly transposed A) @ x = b
+    // - Adjoint solves with transposed A^T
+
+    // The adjoint solve has transposeA flipped
+    const ct_b = triangularSolve(a as Tracer, ct, {
+      leftSide,
+      lower,
+      transposeA: !transposeA, // Flip the transpose flag
+      unitDiagonal,
+    });
+
+    return [null, ct_b];
   },
 };
 

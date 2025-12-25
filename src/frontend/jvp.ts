@@ -1,11 +1,11 @@
-import { AluOp, isFloatDtype } from "../alu";
+import { AluOp, DType, isFloatDtype } from "../alu";
 import {
   JsTree,
   flatten as treeFlatten,
   unflatten as treeUnflatten,
 } from "../tree";
 import { unzip2, zip } from "../utils";
-import { pureArray, zerosLike } from "./array";
+import { array, pureArray, zerosLike } from "./array";
 import {
   AbstractValue,
   asin,
@@ -15,13 +15,16 @@ import {
   bitcast,
   broadcast,
   cast,
+  cholesky,
   cos,
+  equal,
   erf,
   erfc,
   exp,
   flattenFun,
   fullRaise,
   gather,
+  greaterEqual,
   idiv,
   less,
   log,
@@ -35,12 +38,14 @@ import {
   PrimitiveParams,
   reciprocal,
   reduce,
+  reshape,
   sin,
   sqrt,
   Trace,
   Tracer,
   TracerValue,
   TreeMismatchError,
+  triangularSolve,
   where,
 } from "./core";
 import { Jaxpr, jaxprAsFun, makeJaxpr } from "./jaxpr";
@@ -293,7 +298,158 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     const [primalsOut, tangentsOut] = [outs.slice(0, n), outs.slice(n)];
     return [primalsOut, tangentsOut];
   },
+  [Primitive.Cholesky]([a], [da]) {
+    // Cholesky JVP based on https://arxiv.org/pdf/1602.07527.pdf
+    // L_dot = L @ phi(L^{-1} @ da @ L^{-T})
+    // where phi(X) takes lower triangular and divides diagonal by 2
+    const L = cholesky(a);
+    const n = L.shape[0];
+
+    // Compute L^{-1} @ da using triangular_solve(L, da, left_side=true)
+    const tmp1 = triangularSolve(L.ref, da, {
+      leftSide: true,
+      lower: true,
+      transposeA: false,
+      unitDiagonal: false,
+    });
+
+    // Compute tmp1 @ L^{-T} using triangular_solve(L, tmp1^T, left_side=true, transpose_a=true)^T
+    // Equivalently: triangular_solve(L, tmp1, left_side=false, transpose_a=true)
+    const tmp2 = triangularSolve(L.ref, tmp1, {
+      leftSide: false,
+      lower: true,
+      transposeA: true,
+      unitDiagonal: false,
+    });
+
+    // phi function: take lower triangular, divide diagonal by 2
+    // This is: tril(X) - 0.5 * diag(diag(X))
+    // Implemented as: where(i > j, X, where(i == j, X/2, 0))
+    const phi = phiLowerHalfDiag(tmp2, n);
+
+    // L_dot = L @ phi - using matmul helper
+    const L_dot = matmul2d(L.ref, phi, n);
+
+    return [[L], [L_dot]];
+  },
+  [Primitive.TriangularSolve](
+    [a, b],
+    [da, db],
+    { leftSide, lower, transposeA, unitDiagonal },
+  ) {
+    // For left_side=true: a @ x = b, so x = triangular_solve(a, b)
+    // Taking derivative: da @ x + a @ dx = db
+    // So: a @ dx = db - da @ x
+    // Therefore: dx = triangular_solve(a, db - da @ x)
+    const x = triangularSolve(a.ref, b.ref, {
+      leftSide,
+      lower,
+      transposeA,
+      unitDiagonal,
+    });
+
+    // Compute da @ x (for left_side) or x @ da (for right_side)
+    const n = a.shape[0];
+    let dax: Tracer;
+    if (leftSide) {
+      // da @ x: need matrix multiply
+      if (x.ndim === 1) {
+        // Matrix-vector multiply
+        dax = matvec2d(da, x, n);
+      } else {
+        dax = matmul2d(da, x, n);
+      }
+    } else {
+      // x @ da
+      if (x.ndim === 1) {
+        // Vector-matrix multiply: x^T @ da
+        dax = matvec2d(da.transpose(), x.ref, n);
+      } else {
+        dax = matmul2d(x, da, n);
+      }
+    }
+
+    // dx = triangular_solve(a, db - dax)
+    const rhs = db.sub(dax);
+    const dx = triangularSolve(a, rhs, {
+      leftSide,
+      lower,
+      transposeA,
+      unitDiagonal,
+    });
+
+    return [[x], [dx]];
+  },
 };
+
+// Helper: 2D matrix multiply using broadcast + mul + reduce
+// For A (n, n) @ B (n, n) -> (n, n)
+function matmul2d(a: Tracer, b: Tracer, n: number): Tracer {
+  // Broadcast a to (n, n, n) by adding axis at end
+  const aExp = broadcast(a, [n, n, n], [2]);
+  // Broadcast b to (n, n, n) by transposing then adding axis at start
+  // b: (n, n) -> b^T: (n, n) -> (n, n, n) with broadcast at axis 0
+  const bT = b.transpose();
+  const bExp = broadcast(bT, [n, n, n], [0]);
+  // Multiply and reduce along axis 1
+  const prod = aExp.mul(bExp);
+  return reduce(prod, AluOp.Add, [1]);
+}
+
+// Helper: matrix-vector multiply A (n, n) @ v (n,) -> (n,)
+function matvec2d(a: Tracer, v: Tracer, n: number): Tracer {
+  // Broadcast a to (n, n) - already is
+  // Broadcast v to (n, n) by adding axis at start
+  const vExp = broadcast(v, [n, n], [0]);
+  // Multiply and reduce along axis 1
+  const prod = a.mul(vExp);
+  return reduce(prod, AluOp.Add, [1]);
+}
+
+// Helper: phi function for Cholesky JVP
+// Takes lower triangular part and divides diagonal by 2
+// phi(X) = tril(X) with diagonal multiplied by 0.5
+function phiLowerHalfDiag(x: Tracer, n: number): Tracer {
+  // For phi: result[i,j] = x[i,j] if i > j, x[i,j]/2 if i == j, 0 if i < j
+  // phi(X) = where(lowerMask, where(diagMask, X/2, X), 0)
+
+  // Create index arrays using array() which works at concrete level
+  const indices = new Float32Array(n);
+  for (let i = 0; i < n; i++) indices[i] = i;
+  const idxArr = array(indices);
+
+  // Row indices: (n,) -> (n, 1) -> broadcast to (n, n)
+  const rowIdx = broadcast(reshape(idxArr.ref, [n, 1]), [n, n], [1]);
+
+  // Col indices: (n,) -> (1, n) -> broadcast to (n, n)
+  const colIdx = broadcast(reshape(idxArr, [1, n]), [n, n], [0]);
+
+  // Lower triangular mask: row >= col
+  const lowerMask = greaterEqual(rowIdx.ref, colIdx.ref);
+
+  // Diagonal mask: row == col
+  const diagMask = equal(rowIdx, colIdx);
+
+  // phi(X) = where(lowerMask, where(diagMask, X/2, X), 0)
+  const xHalf = x.ref.mul(0.5);
+  const phiResult = where(lowerMask, where(diagMask, xHalf, x), 0);
+
+  return phiResult;
+}
+
+// Helper: create lower triangular mask for given size
+function createTrilMask(n: number): Tracer {
+  // Create index arrays
+  const indices = new Float32Array(n);
+  for (let i = 0; i < n; i++) indices[i] = i;
+  const idxArr = array(indices);
+
+  const rowIdx = broadcast(reshape(idxArr.ref, [n, 1]), [n, n], [1]);
+  const colIdx = broadcast(reshape(idxArr, [1, n]), [n, n], [0]);
+
+  // Lower triangular: row >= col
+  return greaterEqual(rowIdx, colIdx);
+}
 
 const jvpJaxprCache = new Map<Jaxpr, ReturnType<typeof jvpJaxpr>>();
 

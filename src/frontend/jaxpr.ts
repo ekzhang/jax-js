@@ -882,6 +882,29 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     }
     return outTypes;
   },
+  [Primitive.Cholesky]([x]) {
+    if (x.ndim !== 2) {
+      throw new TypeError(`cholesky: input must be 2D, got ${x.ndim}D`);
+    }
+    if (x.shape[0] !== x.shape[1]) {
+      throw new TypeError(
+        `cholesky: matrix must be square, got ${x.shape[0]}x${x.shape[1]}`,
+      );
+    }
+    return [new ShapedArray(x.shape, x.dtype, x.weakType)];
+  },
+  [Primitive.TriangularSolve]([a, b], { leftSide }) {
+    if (a.ndim !== 2) {
+      throw new TypeError(`triangular_solve: a must be 2D, got ${a.ndim}D`);
+    }
+    if (a.shape[0] !== a.shape[1]) {
+      throw new TypeError(
+        `triangular_solve: a must be square, got ${a.shape[0]}x${a.shape[1]}`,
+      );
+    }
+    // Output shape is same as b
+    return [new ShapedArray(b.shape, b.dtype, b.weakType)];
+  },
 };
 
 function splitIdx(values: any[], argnums: Set<number>): [any[], any[]] {

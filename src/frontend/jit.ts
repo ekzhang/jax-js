@@ -696,6 +696,18 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
       "internal: JitCall should have been flattened before JIT compilation",
     );
   },
+  [Primitive.Cholesky]() {
+    throw new Error(
+      "Cholesky decomposition cannot be JIT compiled (requires sequential CPU computation). " +
+        "Use outside of jit() or wrap in a custom_vjp.",
+    );
+  },
+  [Primitive.TriangularSolve]() {
+    throw new Error(
+      "Triangular solve cannot be JIT compiled (requires sequential CPU computation). " +
+        "Use outside of jit() or wrap in a custom_vjp.",
+    );
+  },
 };
 
 /** Determines how to split the Jaxpr into kernels via dataflow analysis. */

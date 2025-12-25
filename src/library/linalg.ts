@@ -1,7 +1,7 @@
 // Linear algebra functions, mirroring `jax.numpy.linalg` and `jax.scipy.linalg`.
 
 import { type Array, type ArrayLike, fudgeArray } from "../frontend/array";
-import * as np from "./numpy";
+import * as core from "../frontend/core";
 
 /**
  * Compute the Cholesky decomposition of a matrix.
@@ -44,55 +44,74 @@ export function cholesky(
   { lower = false }: { lower?: boolean } = {},
 ): Array {
   a = fudgeArray(a);
-  if (a.ndim !== 2) {
-    throw new TypeError(`cholesky: input must be 2D, got ${a.ndim}D`);
-  }
-  if (a.shape[0] !== a.shape[1]) {
-    throw new TypeError(
-      `cholesky: matrix must be square, got ${a.shape[0]}x${a.shape[1]}`,
-    );
-  }
-
-  // For a working version without native backend support, we compute
-  // the decomposition on the CPU using dataSync()
-  const data = a.dataSync();
-  const n = a.shape[0];
-  const result = new Float32Array(n * n);
-
-  // Standard Cholesky-Crout algorithm (CPU version)
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j <= i; j++) {
-      let sum = 0;
-      for (let k = 0; k < j; k++) {
-        sum += result[i * n + k] * result[j * n + k];
-      }
-
-      if (i === j) {
-        // Diagonal element
-        const diag = data[i * n + i] - sum;
-        result[i * n + i] = diag > 0 ? Math.sqrt(diag) : NaN;
-      } else {
-        // Off-diagonal element
-        result[i * n + j] =
-          (1.0 / result[j * n + j]) * (data[i * n + j] - sum);
-      }
-    }
-  }
-
-  // Create output array from CPU result
-  const out = np.array(result as any, {
-    dtype: a.dtype,
-    shape: [n, n],
-    device: a.device,
-  });
+  // The core.cholesky primitive always returns lower triangular L
+  const L = core.cholesky(a) as Array;
 
   if (lower) {
-    return out;
+    return L;
   } else {
     // For upper triangular, return transpose of L
-    return out.transpose();
+    return L.transpose();
   }
 }
+
+/**
+ * Solve a triangular linear system.
+ *
+ * Solves `a @ x = b` (if leftSide=true) or `x @ a = b` (if leftSide=false)
+ * where `a` is a triangular matrix.
+ *
+ * Args:
+ *   a: input array, representing a triangular matrix. Must have shape ``(N, N)``.
+ *   b: input array, the right-hand side. Shape ``(N,)`` or ``(N, M)``.
+ *   leftSide: if true (default), solve a @ x = b. if false, solve x @ a = b.
+ *   lower: if true (default), a is lower triangular. if false, a is upper triangular.
+ *   transposeA: if true, solve with the transpose of a. Default false.
+ *   unitDiagonal: if true, assume diagonal elements of a are 1. Default false.
+ *
+ * Returns:
+ *   array of same shape as b, the solution x.
+ *
+ * @example
+ * ```ts
+ * import { array } from "@jax-js/jax";
+ * import { triangular_solve } from "@jax-js/jax/linalg";
+ *
+ * const L = array([[2., 0.], [1., 3.]]);
+ * const b = array([4., 7.]);
+ *
+ * // Solve L @ x = b
+ * const x = triangular_solve(L, b);
+ * // x = [2., 5./3.]
+ * ```
+ */
+export function triangular_solve(
+  a: ArrayLike,
+  b: ArrayLike,
+  {
+    leftSide = true,
+    lower = true,
+    transposeA = false,
+    unitDiagonal = false,
+  }: {
+    leftSide?: boolean;
+    lower?: boolean;
+    transposeA?: boolean;
+    unitDiagonal?: boolean;
+  } = {},
+): Array {
+  a = fudgeArray(a);
+  b = fudgeArray(b);
+  return core.triangularSolve(a, b, {
+    leftSide,
+    lower,
+    transposeA,
+    unitDiagonal,
+  }) as Array;
+}
+
+// Alias for scipy.linalg compatibility
+export { triangular_solve as solve_triangular };
 
 // Re-export commonly used functions from numpy for convenience
 export { tril, triu } from "./numpy";
