@@ -32,6 +32,7 @@ import {
 } from "./convolution";
 import {
   AbstractValue,
+  bind1,
   CompareOp,
   getAval,
   newMain,
@@ -683,8 +684,8 @@ export class Array extends Tracer {
         if (ar.#backend !== backend) {
           throw new Error(
             `Device mismatch in ${name} between committed arrays on ` +
-              `(${backend.type}, ${ar.#backend.type}), ` +
-              `please move to the same device with devicePut()`,
+            `(${backend.type}, ${ar.#backend.type}), ` +
+            `please move to the same device with devicePut()`,
           );
         }
       }
@@ -986,155 +987,19 @@ export class Array extends Tracer {
         return [x.#gather(indices, axis, outDim)];
       },
       [Primitive.Cholesky]([x]) {
-        // Validate input
-        if (x.ndim !== 2) {
-          throw new TypeError(`cholesky: input must be 2D, got ${x.ndim}D`);
-        }
-        const n = x.shape[0];
-        if (x.shape[1] !== n) {
-          throw new TypeError(
-            `cholesky: matrix must be square, got ${x.shape[0]}x${x.shape[1]}`,
-          );
-        }
-
-        // CPU implementation using Cholesky-Crout algorithm
-        const data = x.dataSync();
-        const result = new Float32Array(n * n);
-
-        for (let i = 0; i < n; i++) {
-          for (let j = 0; j <= i; j++) {
-            let sum = 0;
-            for (let k = 0; k < j; k++) {
-              sum += result[i * n + k] * result[j * n + k];
-            }
-
-            if (i === j) {
-              const diag = data[i * n + i] - sum;
-              result[i * n + i] = diag > 0 ? Math.sqrt(diag) : NaN;
-            } else {
-              result[i * n + j] =
-                (1.0 / result[j * n + j]) * (data[i * n + j] - sum);
-            }
-          }
-        }
-
-        return [
-          arrayFromData(result, [n, n], { dtype: x.dtype, device: x.device }),
-        ];
+        return [choleskyBlocked(x)];
       },
       [Primitive.TriangularSolve](
         [a, b],
         { leftSide, lower, transposeA, unitDiagonal },
       ) {
-        // Validate inputs
-        if (a.ndim !== 2) {
-          throw new TypeError(
-            `triangular_solve: a must be 2D, got ${a.ndim}D`,
-          );
-        }
-        const n = a.shape[0];
-        if (a.shape[1] !== n) {
-          throw new TypeError(
-            `triangular_solve: a must be square, got ${a.shape[0]}x${a.shape[1]}`,
-          );
-        }
-        if (b.ndim < 1 || b.ndim > 2) {
-          throw new TypeError(
-            `triangular_solve: b must be 1D or 2D, got ${b.ndim}D`,
-          );
-        }
-
-        // Handle 1D b as column vector
-        const bIs1D = b.ndim === 1;
-        const bShape = bIs1D ? [b.shape[0], 1] : b.shape;
-
-        if (leftSide && bShape[0] !== n) {
-          throw new TypeError(
-            `triangular_solve: incompatible shapes for leftSide=true: a is ${n}x${n}, b has ${bShape[0]} rows`,
-          );
-        }
-        if (!leftSide && bShape[1] !== n) {
-          throw new TypeError(
-            `triangular_solve: incompatible shapes for leftSide=false: a is ${n}x${n}, b has ${bShape[1]} columns`,
-          );
-        }
-
-        // CPU implementation
-        const aData = a.dataSync();
-        const bData = b.dataSync();
-        const [m, k] = bShape;
-        const result = new Float32Array(m * k);
-
-        // Copy b to result
-        if (bIs1D) {
-          for (let i = 0; i < m; i++) result[i] = bData[i];
-        } else {
-          for (let i = 0; i < m * k; i++) result[i] = bData[i];
-        }
-
-        // Helper to get element from triangular matrix a
-        const getA = (i: number, j: number): number => {
-          const [ii, jj] = transposeA ? [j, i] : [i, j];
-          if (lower ? jj > ii : jj < ii) return 0;
-          if (unitDiagonal && ii === jj) return 1;
-          return aData[ii * n + jj];
-        };
-
-        if (leftSide) {
-          // Solve a @ x = b for each column of b
-          for (let col = 0; col < k; col++) {
-            if (lower !== transposeA) {
-              // Forward substitution
-              for (let i = 0; i < n; i++) {
-                let sum = result[i * k + col];
-                for (let j = 0; j < i; j++) {
-                  sum -= getA(i, j) * result[j * k + col];
-                }
-                result[i * k + col] = sum / getA(i, i);
-              }
-            } else {
-              // Back substitution
-              for (let i = n - 1; i >= 0; i--) {
-                let sum = result[i * k + col];
-                for (let j = i + 1; j < n; j++) {
-                  sum -= getA(i, j) * result[j * k + col];
-                }
-                result[i * k + col] = sum / getA(i, i);
-              }
-            }
-          }
-        } else {
-          // Solve x @ a = b for each row of b
-          for (let row = 0; row < m; row++) {
-            if (lower === transposeA) {
-              // Forward substitution on transposed system
-              for (let j = 0; j < n; j++) {
-                let sum = result[row * k + j];
-                for (let i = 0; i < j; i++) {
-                  sum -= result[row * k + i] * getA(i, j);
-                }
-                result[row * k + j] = sum / getA(j, j);
-              }
-            } else {
-              // Back substitution on transposed system
-              for (let j = n - 1; j >= 0; j--) {
-                let sum = result[row * k + j];
-                for (let i = j + 1; i < n; i++) {
-                  sum -= result[row * k + i] * getA(i, j);
-                }
-                result[row * k + j] = sum / getA(j, j);
-              }
-            }
-          }
-        }
-
-        const outShape = bIs1D ? [m] : [m, k];
         return [
-          arrayFromData(
-            bIs1D ? result.subarray(0, m) : result,
-            outShape,
-            { dtype: b.dtype, device: b.device },
-          ),
+          triangularSolveBlocked(a as Array, b as Array, {
+            leftSide,
+            lower,
+            transposeA,
+            unitDiagonal,
+          }),
         ];
       },
       [Primitive.JitCall](args, { jaxpr, numConsts }) {
@@ -1630,4 +1495,233 @@ export function aluCompare(a: AluExp, b: AluExp, op: CompareOp): AluExp {
       // `x <= y` is equivalent to `x < y || x == y`
       return AluExp.add(AluExp.cmplt(a, b), AluExp.cmpne(a, b).not());
   }
+}
+
+// -----------------------------------------------------------------------------
+// Blocked Linear Algebra Implementations
+// -----------------------------------------------------------------------------
+
+function slice(val: Array, start: number[], end: number[]): Array {
+  const pairs = start.map((s, i) => [s, end[i]] as [number, number]);
+  // Use Primitive.Shrink directly to avoid importing shrink wrapper if not avail
+  return bind1(Primitive.Shrink, [val], { slice: pairs }) as Array;
+}
+
+function choleskyBlocked(a: Array): Array {
+  const n = a.shape[0];
+  if (n <= 1) {
+    return bind1(Primitive.Sqrt, [a]) as Array;
+  }
+
+  const n2 = Math.floor(n / 2);
+
+  // Partition A = [[A11, A12], [A21, A22]]
+  // Since A is symmetric, A21 = A12^T
+  const a11 = slice(a.ref, [0, 0], [n2, n2]);
+  const a21 = slice(a.ref, [n2, 0], [n, n2]);
+  const a22 = slice(a, [n2, n2], [n, n]);
+
+  // L11 = cholesky(A11)
+  const l11 = choleskyBlocked(a11);
+
+  // L21 = (L11^{-1} @ A21^T)^T
+  // Solve L11 @ L21^T = A21^T
+  const l21T = triangularSolveBlocked(l11.ref, a21.transpose(), {
+    leftSide: true,
+    lower: true,
+    transposeA: false,
+  });
+  const l21 = l21T.ref.transpose();
+
+  // L22 = cholesky(A22 - L21 @ L21^T)
+  const temp = matmul2d(l21.ref, l21T);
+  const l22 = choleskyBlocked(a22.sub(temp));
+
+  // Assemble L
+  const z12 = zeros([n2, n - n2], { dtype: a.dtype, device: a.device });
+  const row1 = concat2d(l11, z12, 1);
+  const row2 = concat2d(l21, l22, 1);
+
+  return concat2d(row1, row2, 0);
+}
+
+function matmul2d(a: Array, b: Array): Array {
+  return bind1(Primitive.Dot, [a, b]) as Array;
+}
+
+function concat2d(a: Array, b: Array, axis: number): Array {
+  const shapeA = a.shape;
+  const shapeB = b.shape;
+  // Pad A
+  const padA_width = shapeA.map(() => [0, 0] as [number, number]);
+  padA_width[axis] = [0, shapeB[axis]];
+  const paddedA = bind1(Primitive.Pad, [a], { width: padA_width }) as Array;
+
+  // Pad B
+  const padB_width = shapeB.map(() => [0, 0] as [number, number]);
+  padB_width[axis] = [shapeA[axis], 0];
+  const paddedB = bind1(Primitive.Pad, [b], { width: padB_width }) as Array;
+
+  return paddedA.add(paddedB);
+}
+
+function triangularSolveBlocked(
+  a: Array,
+  b: Array,
+  {
+    leftSide = true,
+    lower = true,
+    transposeA = false,
+    unitDiagonal = false,
+  }: {
+    leftSide?: boolean;
+    lower?: boolean;
+    transposeA?: boolean;
+    unitDiagonal?: boolean;
+  } = {},
+): Array {
+  // Handle 1D input b: promote to column vector and flatten result
+  if (b.ndim === 1) {
+    const b2d = b.reshape([b.shape[0], 1]);
+    const res = triangularSolveBlocked(a, b2d, {
+      leftSide,
+      lower,
+      transposeA,
+      unitDiagonal,
+    });
+    return res.reshape([b.shape[0]]);
+  }
+
+  // Normalize to Left Side: AX = B
+  if (!leftSide) {
+    // Solve XA = B => A^T X^T = B^T
+    // triangular_solve(A^T, B^T).T
+    // A^T has "transposeA" flipped effectively.
+    // If transposeA was true, now false. If false, now true.
+    const res = triangularSolveBlocked(a, b.transpose(), {
+      leftSide: true,
+      lower,
+      transposeA: !transposeA,
+      unitDiagonal,
+    });
+    return res.transpose();
+  }
+
+  const isLowerSolve = (lower && !transposeA) || (!lower && transposeA);
+
+  if (isLowerSolve) {
+    return solveLower(a, b, { lower, transposeA, unitDiagonal });
+  } else {
+    return solveUpper(a, b, { lower, transposeA, unitDiagonal });
+  }
+}
+
+function solveLower(
+  a: Array,
+  b: Array,
+  { lower, transposeA, unitDiagonal }: any,
+): Array {
+  const n = a.shape[0];
+  if (n <= 1) {
+    if (unitDiagonal) return b;
+    // Broadcast division
+    return b.div(a);
+  }
+
+  const n2 = Math.floor(n / 2);
+  let a11: Array, a21: Array, a22: Array;
+
+  if (lower) {
+    a11 = slice(a.ref, [0, 0], [n2, n2]);
+    a21 = slice(a.ref, [n2, 0], [n, n2]);
+    a22 = slice(a, [n2, n2], [n, n]);
+  } else {
+    // A is Upper, but we act on A^T (Lower)
+    a11 = slice(a.ref, [0, 0], [n2, n2]);
+    a21 = slice(a.ref, [0, n2], [n2, n]); // A12 -> L21^T
+    a22 = slice(a, [n2, n2], [n, n]);
+  }
+
+  const b1 = slice(b.ref, [0, 0], [n2, b.shape[1]]);
+  const b2 = slice(b, [n2, 0], [n, b.shape[1]]);
+
+  // L11 x1 = b1
+  const x1 = triangularSolveBlocked(a11, b1, {
+    leftSide: true,
+    lower,
+    transposeA,
+    unitDiagonal,
+  });
+
+  // L22 x2 = b2 - L21 x1
+  let nb2: Array;
+  if (lower) {
+    nb2 = b2.sub(matmul2d(a21, x1.ref));
+  } else {
+    // L21 is A12^T.
+    nb2 = b2.sub(matmul2d(a21.transpose(), x1.ref));
+  }
+
+  const x2 = triangularSolveBlocked(a22, nb2, {
+    leftSide: true,
+    lower,
+    transposeA,
+    unitDiagonal,
+  });
+
+  return concat2d(x1, x2, 0);
+}
+
+function solveUpper(
+  a: Array,
+  b: Array,
+  { lower, transposeA, unitDiagonal }: any,
+): Array {
+  const n = a.shape[0];
+  if (n <= 1) {
+    if (unitDiagonal) return b;
+    return b.div(a);
+  }
+
+  const n2 = Math.floor(n / 2);
+  let a11: Array, a12: Array, a22: Array;
+
+  if (!lower) {
+    a11 = slice(a.ref, [0, 0], [n2, n2]);
+    a12 = slice(a.ref, [0, n2], [n2, n]);
+    a22 = slice(a, [n2, n2], [n, n]);
+  } else {
+    // A is Lower, but we act on A^T (Upper)
+    a11 = slice(a.ref, [0, 0], [n2, n2]);
+    a12 = slice(a.ref, [n2, 0], [n, n2]); // A21 -> U12^T
+    a22 = slice(a, [n2, n2], [n, n]);
+  }
+
+  const b1 = slice(b.ref, [0, 0], [n2, b.shape[1]]);
+  const b2 = slice(b, [n2, 0], [n, b.shape[1]]);
+
+  // U22 x2 = b2
+  const x2 = triangularSolveBlocked(a22, b2, {
+    leftSide: true,
+    lower,
+    transposeA,
+    unitDiagonal,
+  });
+
+  // U11 x1 = b1 - U12 x2
+  let nb1: Array;
+  if (!lower) {
+    nb1 = b1.sub(matmul2d(a12, x2.ref));
+  } else {
+    nb1 = b1.sub(matmul2d(a12.transpose(), x2.ref));
+  }
+
+  const x1 = triangularSolveBlocked(a11, nb1, {
+    leftSide: true,
+    lower,
+    transposeA,
+    unitDiagonal,
+  });
+
+  return concat2d(x1, x2, 0);
 }

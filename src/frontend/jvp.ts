@@ -355,9 +355,9 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
       // da @ x: need matrix multiply
       if (x.ndim === 1) {
         // Matrix-vector multiply
-        dax = matvec2d(da, x, n);
+        dax = matvec2d(da, x.ref, n);
       } else {
-        dax = matmul2d(da, x, n);
+        dax = matmul2d(da, x.ref, n);
       }
     } else {
       // x @ da
@@ -365,7 +365,7 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
         // Vector-matrix multiply: x^T @ da
         dax = matvec2d(da.transpose(), x.ref, n);
       } else {
-        dax = matmul2d(x, da, n);
+        dax = matmul2d(x.ref, da, n);
       }
     }
 
