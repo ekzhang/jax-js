@@ -182,11 +182,11 @@ Most operations behave the same way as they do in JAX.
 | `concatenate`         | 🟢      |                                         |
 | `conj`                | ⚪️      | complex numbers                         |
 | `conjugate`           | ⚪️      | complex numbers                         |
-| `convolve`            | 🟠      | `lax.conv_general_dilated` is supported |
+| `convolve`            | 🟢      | `lax.conv_general_dilated` is supported |
 | `copy`                | ⚪️      | move semantics                          |
 | `copysign`            | 🟠      |                                         |
 | `corrcoef`            | 🟠      |                                         |
-| `correlate`           | 🟠      | `lax.conv_general_dilated` is supported |
+| `correlate`           | 🟢      | `lax.conv_general_dilated` is supported |
 | `cos`                 | 🟢      |                                         |
 | `cosh`                | 🟢      |                                         |
 | `count_nonzero`       | 🟠      |                                         |

@@ -1590,4 +1590,41 @@ suite.each(devices)("device:%s", (device) => {
       x.dispose();
     });
   });
+
+  suite("jax.numpy.convolve()", () => {
+    test("computes 1D convolution", () => {
+      const x = np.array([1, 2, 3, 2, 1]);
+      const y = np.array([4, 1, 2]);
+
+      const full = np.convolve(x.ref, y.ref);
+      expect(full.js()).toEqual([4, 9, 16, 15, 12, 5, 2]);
+
+      const same = np.convolve(x.ref, y.ref, "same");
+      expect(same.js()).toEqual([9, 16, 15, 12, 5]);
+
+      const valid = np.convolve(x, y, "valid");
+      expect(valid.js()).toEqual([16, 15, 12]);
+    });
+
+    test("computes 1D correlation", () => {
+      const x = np.array([1, 2, 3, 2, 1]);
+      const y = np.array([4, 5, 6]);
+
+      const valid = np.correlate(x.ref, y.ref);
+      expect(valid.js()).toEqual([32, 35, 28]);
+
+      const full = np.correlate(x.ref, y.ref, "full");
+      expect(full.js()).toEqual([6, 17, 32, 35, 28, 13, 4]);
+
+      const same = np.correlate(x, y, "same");
+      expect(same.js()).toEqual([17, 32, 35, 28, 13]);
+
+      const x1 = np.array([1, 2, 3, 2, 1]);
+      const y1 = np.array([4, 5, 4]);
+      const corr = np.correlate(x1.ref, y1.ref, "full");
+      const conv = np.convolve(x1, y1, "full");
+      expect(corr.js()).toEqual([4, 13, 26, 31, 26, 13, 4]);
+      expect(conv.js()).toEqual([4, 13, 26, 31, 26, 13, 4]);
+    });
+  });
 });

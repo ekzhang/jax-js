@@ -680,8 +680,7 @@ export function diagonal(
  */
 export function diag(v: ArrayLike, k = 0): Array {
   const a = fudgeArray(v);
-  if (!Number.isInteger(k))
-    throw new TypeError(`k must be an integer, got ${k}`);
+  if (!Number.isInteger(k)) throw new Error(`k must be an integer, got ${k}`);
   if (a.ndim === 1) {
     const n = a.shape[0];
     const ret = where(eye(n).equal(1), a.ref, zerosLike(a));
@@ -701,7 +700,7 @@ export function diag(v: ArrayLike, k = 0): Array {
   } else if (a.ndim === 2) {
     return diagonal(a, k);
   } else {
-    throw new TypeError("numpy.diag only supports 1D and 2D arrays");
+    throw new Error("numpy.diag only supports 1D and 2D arrays");
   }
 }
 
@@ -739,7 +738,7 @@ export function allclose(
 /** Matrix product of two arrays. */
 export function matmul(x: ArrayLike, y: ArrayLike) {
   if (ndim(x) === 0 || ndim(y) === 0) {
-    throw new TypeError("matmul: x and y must be at least 1D");
+    throw new Error("matmul: x and y must be at least 1D");
   }
   ((x = x as Array), (y = y as Array));
   if (y.ndim === 1) {
@@ -1030,6 +1029,53 @@ export function vdot(x: ArrayLike, y: ArrayLike): Array {
   return core.dot(ravel(x), ravel(y)) as Array;
 }
 
+function _convImpl(name: string, x: Array, y: Array, mode: string): Array {
+  if (x.ndim !== 1 || y.ndim !== 1) {
+    throw new Error(
+      `${name}: both inputs must be 1D arrays, got ${x.ndim}D and ${y.ndim}D`,
+    );
+  }
+  let flipOutput = false; // for correlate: output[k] = sum(x[i + k] * y[i]) = sum(y[i + (-k)] * x[i])
+  if (x.shape[0] < y.shape[0]) {
+    [x, y] = [y, x];
+    if (name === "correlate") flipOutput = true;
+  }
+  if (name === "convolve") y = flip(y);
+
+  let padding: lax.PaddingType;
+  if (mode === "valid") padding = "VALID";
+  else if (mode === "same") padding = "SAME_LOWER";
+  else if (mode === "full") padding = [[y.shape[0] - 1, y.shape[0] - 1]];
+  else {
+    throw new Error(
+      `${name}: invalid mode ${mode}, expected "full", "same", or "valid"`,
+    );
+  }
+
+  const z = lax
+    .conv(x.slice(null, null), y.slice(null, null), [1], padding)
+    .slice(0, 0);
+  return flipOutput ? flip(z) : z;
+}
+
+/** Convolution of two one-dimensional arrays. */
+export function convolve(
+  x: Array,
+  y: Array,
+  mode: "full" | "same" | "valid" = "full",
+): Array {
+  return _convImpl("convolve", x, y, mode);
+}
+
+/** Correlation of two one dimensional arrays. */
+export function correlate(
+  x: Array,
+  y: Array,
+  mode: "full" | "same" | "valid" = "valid",
+): Array {
+  return _convImpl("correlate", x, y, mode);
+}
+
 /**
  * Return a tuple of coordinate matrices from coordinate vectors.
  *
@@ -1044,7 +1090,7 @@ export function meshgrid(
 
   for (const x of xs) {
     if (x.ndim !== 1) {
-      throw new TypeError(
+      throw new Error(
         `meshgrid: all inputs must be 1D arrays, got ${x.ndim}D array`,
       );
     }
@@ -1084,13 +1130,13 @@ export function tri(
   m ??= n;
   dtype ??= DType.Float32;
   if (!Number.isInteger(n) || n < 0) {
-    throw new TypeError(`tri: n must be a non-negative integer, got ${n}`);
+    throw new Error(`tri: n must be a non-negative integer, got ${n}`);
   }
   if (!Number.isInteger(m) || m < 0) {
-    throw new TypeError(`tri: m must be a non-negative integer, got ${m}`);
+    throw new Error(`tri: m must be a non-negative integer, got ${m}`);
   }
   if (!Number.isInteger(k)) {
-    throw new TypeError(`tri: k must be an integer, got ${k}`);
+    throw new Error(`tri: k must be an integer, got ${k}`);
   }
   const rows = arange(k, n + k, 1, { dtype: DType.Int32, device });
   const cols = arange(0, m, 1, { dtype: DType.Int32, device });
@@ -1100,9 +1146,7 @@ export function tri(
 /** Return the lower triangle of an array. Must be of dimension >= 2. */
 export function tril(a: ArrayLike, k: number = 0): Array {
   if (ndim(a) < 2) {
-    throw new TypeError(
-      `tril: input array must be at least 2D, got ${ndim(a)}D`,
-    );
+    throw new Error(`tril: input array must be at least 2D, got ${ndim(a)}D`);
   }
   a = fudgeArray(a);
   const [n, m] = a.shape.slice(-2);
@@ -1112,9 +1156,7 @@ export function tril(a: ArrayLike, k: number = 0): Array {
 /** Return the upper triangle of an array. Must be of dimension >= 2. */
 export function triu(a: ArrayLike, k: number = 0): Array {
   if (ndim(a) < 2) {
-    throw new TypeError(
-      `tril: input array must be at least 2D, got ${ndim(a)}D`,
-    );
+    throw new Error(`tril: input array must be at least 2D, got ${ndim(a)}D`);
   }
   a = fudgeArray(a);
   const [n, m] = a.shape.slice(-2);
