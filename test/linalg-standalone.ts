@@ -6,7 +6,8 @@ function verifyReconstruction(
   inputJs: any[][],
   resultRef: any,
   isLower: boolean = false,
-  label: string = ""
+  label: string = "",
+  verbose: boolean = true
 ) {
   let reconstructed;
   if (isLower) {
@@ -25,10 +26,12 @@ function verifyReconstruction(
     if (diff > maxDiff) maxDiff = diff;
   }
 
-  console.log(`${label} Reconstruction:`);
-  console.log(reconJs);
-  console.log("Max difference:", maxDiff);
-  console.log("Test passed:", maxDiff < 1e-5);
+  if (verbose) {
+    console.log(`${label} Reconstruction:`);
+    console.log(reconJs);
+  }
+  console.log(`${label} Max difference:`, maxDiff);
+  console.log(`${label} Test passed:`, maxDiff < 1e-5);
   console.log();
   return maxDiff < 1e-5;
 }
@@ -101,3 +104,57 @@ try {
 } catch (e: any) {
   console.log("Correctly threw:", e.message);
 }
+console.log();
+
+// Helper function to generate a positive definite matrix of size n x n
+function generatePositiveDefinite(n: number): number[][] {
+  // Create a diagonally dominant matrix which is guaranteed positive definite
+  const matrix: number[][] = [];
+  for (let i = 0; i < n; i++) {
+    const row: number[] = [];
+    for (let j = 0; j < n; j++) {
+      if (i === j) {
+        // Diagonal: make it large enough for diagonal dominance
+        row.push(n + 1.0);
+      } else {
+        // Off-diagonal: use a pattern based on distance from diagonal
+        row.push(1.0 / (1 + Math.abs(i - j)));
+      }
+    }
+    matrix.push(row);
+  }
+  return matrix;
+}
+
+// Test 6: 8x8 matrix
+console.log("Test 6: 8x8 matrix");
+const x8Data = generatePositiveDefinite(8);
+const x8 = np.array(x8Data);
+const x8Js = x8.ref.js();
+console.log("Input (8x8 positive definite matrix)");
+
+const L8 = linalg.cholesky(x8.ref, { lower: true });
+console.log("Lower Cholesky computed");
+verifyReconstruction(x8Js, L8, true, "Test 6 (8x8)", false);
+
+// Test 7: 16x16 matrix
+console.log("Test 7: 16x16 matrix");
+const x16Data = generatePositiveDefinite(16);
+const x16 = np.array(x16Data);
+const x16Js = x16.ref.js();
+console.log("Input (16x16 positive definite matrix)");
+
+const L16 = linalg.cholesky(x16.ref, { lower: true });
+console.log("Lower Cholesky computed");
+verifyReconstruction(x16Js, L16, true, "Test 7 (16x16)", false);
+
+// Test 8: 32x32 matrix
+console.log("Test 8: 32x32 matrix");
+const x32Data = generatePositiveDefinite(32);
+const x32 = np.array(x32Data);
+const x32Js = x32.ref.js();
+console.log("Input (32x32 positive definite matrix)");
+
+const L32 = linalg.cholesky(x32.ref, { lower: true });
+console.log("Lower Cholesky computed");
+verifyReconstruction(x32Js, L32, true, "Test 8 (32x32)", false);

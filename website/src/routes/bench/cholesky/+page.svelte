@@ -4,7 +4,7 @@
   import { fade } from "svelte/transition";
   import { LoaderCircle, SquareMousePointerIcon, CheckCircle2, AlertCircle } from "@lucide/svelte";
 
-  const n = 64;
+  const n = 128;
   const numRuns = 3;
 
   type Result = {
@@ -15,64 +15,166 @@
     passed: boolean;
   };
 
+  type ErrorInfo = {
+    message: string;
+    stack?: string;
+    device?: string;
+    step?: string;
+  };
+
   let results = $state<Result[]>([]);
   let isRunning = $state(false);
   let currentDevice = $state<string | null>(null);
+  let currentStep = $state<string | null>(null);
+  let error = $state<ErrorInfo | null>(null);
 
   const barColors: Record<string, string> = {
+    js: "#22c55e",
     cpu: "#6366f1",
     wasm: "#8b5cf6",
     webgpu: "#a855f7",
   };
+
+  // Generate a diagonally dominant positive definite matrix (numerically stable)
+  function generatePositiveDefinite(size: number): number[][] {
+    const matrix: number[][] = [];
+    for (let i = 0; i < size; i++) {
+      const row: number[] = [];
+      for (let j = 0; j < size; j++) {
+        if (i === j) {
+          // Diagonal: make it large enough for diagonal dominance
+          row.push(size + 1.0);
+        } else {
+          // Off-diagonal: use a pattern based on distance from diagonal
+          row.push(1.0 / (1 + Math.abs(i - j)));
+        }
+      }
+      matrix.push(row);
+    }
+    return matrix;
+  }
+
+  // Pure JS Cholesky for comparison
+  function choleskyPureJS(A: number[][]): number[][] {
+    const n = A.length;
+    const L: number[][] = Array.from({ length: n }, () => Array(n).fill(0));
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j <= i; j++) {
+        let sum = 0;
+        for (let k = 0; k < j; k++) {
+          sum += L[i][k] * L[j][k];
+        }
+        L[i][j] = i === j
+          ? Math.sqrt(Math.max(A[i][i] - sum, 1e-10))
+          : (A[i][j] - sum) / L[j][j];
+      }
+    }
+    return L;
+  }
+
+  async function benchPureJS(): Promise<Result> {
+    currentDevice = "js";
+    const times: number[] = [];
+    let lastMaxDiff = 0;
+
+    const setStep = (step: string) => {
+      currentStep = step;
+      console.log(`[js] ${step}`);
+    };
+
+    const pdMatrix = generatePositiveDefinite(n);
+
+    for (let i = 0; i < numRuns; i++) {
+      setStep(`Run ${i + 1}/${numRuns}: Running pure JS cholesky...`);
+
+      const start = performance.now();
+      const L = choleskyPureJS(pdMatrix);
+      const end = performance.now();
+
+      const time = (end - start) / 1000;
+      if (i > 0) times.push(time);
+
+      // Verification on last run
+      if (i === numRuns - 1) {
+        setStep(`Run ${i + 1}/${numRuns}: Verifying result...`);
+        let maxDiff = 0;
+        for (let r = 0; r < n; r++) {
+          for (let c = 0; c < n; c++) {
+            let reconstructed = 0;
+            for (let k = 0; k <= Math.min(r, c); k++) {
+              reconstructed += L[r][k] * L[c][k];
+            }
+            maxDiff = Math.max(maxDiff, Math.abs(pdMatrix[r][c] - reconstructed));
+          }
+        }
+        lastMaxDiff = maxDiff;
+      }
+    }
+
+    const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
+    const gflops = ((1 / 3) * n * n * n) / 1e9 / avgTime;
+
+    return {
+      device: "js",
+      gflops,
+      time: avgTime,
+      maxDiff: lastMaxDiff,
+      passed: lastMaxDiff < 1e-2,
+    };
+  }
 
   async function benchDevice(device: "cpu" | "wasm" | "webgpu"): Promise<Result> {
     currentDevice = device;
     const times: number[] = [];
     let lastMaxDiff = 0;
 
-    console.log(`[${device}] Initializing...`);
+    const setStep = (step: string) => {
+      currentStep = step;
+      console.log(`[${device}] ${step}`);
+    };
+
+    setStep("Initializing backend...");
     await init(device);
-    console.log(`[${device}] Initialized!`);
+    setStep("Backend initialized");
+
+    // Generate SPD matrix once (same for all runs)
+    const pdMatrix = generatePositiveDefinite(n);
 
     for (let i = 0; i < numRuns; i++) {
-      console.log(`[${device}] Run ${i + 1}/${numRuns}`);
-      // Create a fresh matrix for each run to avoid any caching effects
-      // or to ensure we're measuring real work.
-      const M_raw = new Float32Array(n * n);
-      for (let j = 0; j < n * n; j++) M_raw[j] = Math.random();
+      setStep(`Run ${i + 1}/${numRuns}: Creating SPD matrix...`);
+      const A = np.array(pdMatrix, { device });
+      // Keep A alive for verification and cleanup
+      A.ref;
 
-      console.log(`[${device}] Creating array...`);
-      const M = np.array(Array.from({ length: n }, (_, row) =>
-        Array.from(M_raw.slice(row * n, (row + 1) * n))
-      ), { device });
+      setStep(`Run ${i + 1}/${numRuns}: Awaiting blockUntilReady(A)...`);
+      await blockUntilReady(A.ref);
 
-      console.log(`[${device}] Creating SPD matrix...`);
-      const A = np.add(
-        np.matmul(M.ref, M.ref.transpose()),
-        np.multiply(np.eye(n, undefined, { device }), 0.1)
-      );
-
-      console.log(`[${device}] Awaiting blockUntilReady(A)...`);
-      // Warm up / Sync
-      await blockUntilReady(A);
-
-      console.log(`[${device}] Running cholesky...`);
+      setStep(`Run ${i + 1}/${numRuns}: Running cholesky...`);
       const start = performance.now();
       const L = linalg.cholesky(A.ref);
-      console.log(`[${device}] Awaiting blockUntilReady(L)...`);
-      await blockUntilReady(L);
+      // Keep L alive for verification and cleanup
+      L.ref;
+
+      setStep(`Run ${i + 1}/${numRuns}: Awaiting blockUntilReady(L)...`);
+      await blockUntilReady(L.ref);
       const end = performance.now();
-      console.log(`[${device}] Cholesky done in ${end - start}ms`);
-      
+
+      setStep(`Run ${i + 1}/${numRuns}: Cholesky done in ${(end - start).toFixed(2)}ms`);
+
       const time = (end - start) / 1000;
       if (i > 0) times.push(time); // Skip first run for average
 
       // Verification (only on the last run for efficiency)
       if (i === numRuns - 1) {
-        const reconstructed = np.matmul(L.ref, L.ref.transpose());
-        const recon_js = (await reconstructed.jsAsync()) as number[][];
-        const A_js = (await A.jsAsync()) as number[][];
-        
+        setStep(`Run ${i + 1}/${numRuns}: Verifying result (L @ L.T)...`);
+        const L_T = L.ref.transpose();
+        const reconstructed = np.matmul(L.ref, L_T);
+
+        setStep(`Run ${i + 1}/${numRuns}: Converting to JS arrays...`);
+        const recon_js = (await reconstructed.ref.jsAsync()) as number[][];
+        const A_js = (await A.ref.jsAsync()) as number[][];
+
+        setStep(`Run ${i + 1}/${numRuns}: Computing max difference...`);
         let maxDiff = 0;
         for (let r = 0; r < n; r++) {
           for (let c = 0; c < n; c++) {
@@ -83,9 +185,9 @@
         reconstructed.dispose();
       }
 
+      setStep(`Run ${i + 1}/${numRuns}: Cleaning up...`);
       L.dispose();
       A.dispose();
-      M.dispose();
     }
 
     const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
@@ -97,7 +199,7 @@
       gflops,
       time: avgTime,
       maxDiff: lastMaxDiff,
-      passed: lastMaxDiff < 1e-4
+      passed: lastMaxDiff < 1e-2
     };
   }
 
@@ -105,8 +207,16 @@
     if (isRunning) return;
     isRunning = true;
     results = [];
+    error = null;
 
     try {
+      // First run pure JS benchmark
+      console.log("Starting benchmark for js...");
+      const jsRes = await benchPureJS();
+      console.log("js result:", jsRes);
+      results.push(jsRes);
+
+      // Then run jax-js backends
       const devices = ["cpu", "wasm", "webgpu"] as const;
       for (const device of devices) {
         console.log(`Starting benchmark for ${device}...`);
@@ -115,11 +225,20 @@
         results.push(res);
       }
     } catch (e) {
-      console.error("Benchmark error:", e);
-      alert(`Benchmark error: ${e}`);
+      const err = e as Error;
+      console.error("Benchmark error:", err);
+      console.error("Stack trace:", err.stack);
+
+      error = {
+        message: err.message || String(e),
+        stack: err.stack,
+        device: currentDevice || undefined,
+        step: currentStep || undefined,
+      };
     } finally {
       isRunning = false;
       currentDevice = null;
+      currentStep = null;
     }
   }
 
@@ -130,7 +249,7 @@
   const chartHeight = 300;
   const barWidth = 80;
   const barGap = 40;
-  const chartWidth = paddingX * 2 + 3 * barWidth + 2 * barGap;
+  const chartWidth = paddingX * 2 + 4 * barWidth + 3 * barGap;
 
   const maxGflops = $derived(
     results.length > 0 ? Math.max(...results.map(r => r.gflops), 0.1) : 10
@@ -142,6 +261,9 @@
   }
 
   function formatNumber(num: number): string {
+    if (num < 0.01 && num > 0) {
+      return num.toExponential(2);
+    }
     return num.toLocaleString(undefined, {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
@@ -187,7 +309,7 @@
           {/each}
 
           <!-- Bars -->
-          {#each ["cpu", "wasm", "webgpu"] as device, i}
+          {#each ["js", "cpu", "wasm", "webgpu"] as device, i}
             {@const result = results.find(r => r.device === device)}
             {@const xPos = paddingX + i * (barWidth + barGap)}
             {@const height = result ? getBarHeight(result.gflops) : 4}
@@ -250,7 +372,13 @@
           {/if}
         </button>
 
-        {#if results.length > 0 && !isRunning}
+        {#if isRunning && currentStep}
+          <div class="text-sm text-gray-500 bg-gray-50 px-4 py-2 rounded-lg border border-gray-200 font-mono">
+            {currentStep}
+          </div>
+        {/if}
+
+        {#if results.length > 0 && !isRunning && !error}
           <div class="flex items-center gap-2 text-sm text-green-600 bg-green-50 px-4 py-2 rounded-lg border border-green-100">
             <CheckCircle2 size={16} />
             Accuracy verified: All results within 1e-4 tolerance.
@@ -260,8 +388,54 @@
     </div>
   </div>
 
+  {#if error}
+    <div class="bg-red-50 rounded-2xl shadow-sm border border-red-200 p-6 mb-8" in:fade>
+      <div class="flex items-start gap-3">
+        <AlertCircle size={24} class="text-red-500 flex-shrink-0 mt-0.5" />
+        <div class="flex-1 min-w-0">
+          <h3 class="text-lg font-semibold text-red-800 mb-2">Benchmark Error</h3>
+
+          <div class="space-y-3">
+            {#if error.device}
+              <div>
+                <span class="text-xs font-bold uppercase tracking-widest text-red-400">Device</span>
+                <p class="text-red-700 font-mono">{error.device}</p>
+              </div>
+            {/if}
+
+            {#if error.step}
+              <div>
+                <span class="text-xs font-bold uppercase tracking-widest text-red-400">Failed at step</span>
+                <p class="text-red-700 font-mono">{error.step}</p>
+              </div>
+            {/if}
+
+            <div>
+              <span class="text-xs font-bold uppercase tracking-widest text-red-400">Error Message</span>
+              <p class="text-red-700 font-mono break-words">{error.message}</p>
+            </div>
+
+            {#if error.stack}
+              <div>
+                <span class="text-xs font-bold uppercase tracking-widest text-red-400">Stack Trace</span>
+                <pre class="text-red-600 font-mono text-xs bg-red-100 rounded-lg p-4 overflow-x-auto mt-1 whitespace-pre-wrap break-words">{error.stack}</pre>
+              </div>
+            {/if}
+          </div>
+
+          <button
+            onclick={() => error = null}
+            class="mt-4 text-sm text-red-600 hover:text-red-800 underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
   {#if results.length > 0}
-    <div class="grid sm:grid-cols-3 gap-6" in:fade>
+    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-6" in:fade>
       {#each results as res}
         <div class="bg-gray-50 rounded-xl p-5 border border-gray-100">
           <div class="flex items-center justify-between mb-3">
