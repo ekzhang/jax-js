@@ -693,7 +693,7 @@ class I32 implements Type {
   shr_u = BINARY_OP("shr_u", 0x76, "i32", "i32", "i32");
   rotl = BINARY_OP("rotl", 0x77, "i32", "i32", "i32");
   rotr = BINARY_OP("rotr", 0x78, "i32", "i32", "i32");
-  eqz = BINARY_OP("eqz", 0x45, "i32", "i32", "i32");
+  eqz = UNARY_OP("eqz", 0x45, "i32", "i32");
   eq = BINARY_OP("eq", 0x46, "i32", "i32", "i32");
   ne = BINARY_OP("ne", 0x47, "i32", "i32", "i32");
   trunc_f32_s = UNARY_OP("trunc_f32_s", 0xa8, "f32", "i32");

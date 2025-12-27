@@ -499,12 +499,17 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
     }
     const unroll = tune.size.unroll ?? 1;
     const upcast = tune.size.upcast ?? 1;
+    const isArgReduce = re.op === AluOp.ArgMin || re.op === AluOp.ArgMax;
 
     const acc = [...Array(upcast)].map((_, i) => `acc${i}`);
+    const accIdx = isArgReduce
+      ? [...Array(upcast)].map((_, i) => `acc_idx${i}`)
+      : [];
     for (let i = 0; i < upcast; i++) {
       emit(
         `var ${acc[i]}: ${dtypeToWgsl(re.dtype)} = ${constToWgsl(re.dtype, re.identity)};`,
       ); // Initialize accumulators.
+      if (isArgReduce) emit(`var ${accIdx[i]}: i32 = 0;`);
     }
 
     emit(
@@ -530,19 +535,45 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
     // After references are counted, we can generate the code.
     const items = exps.map((ar) => ar.map(gen).map(strip1));
     for (let i = 0; i < upcast; i++) {
-      let rhs = items[i][0];
-      for (let j = 1; j < unroll; j++) {
-        if (re.op === AluOp.Add) rhs = `${rhs} + ${items[i][j]}`;
-        else if (re.op === AluOp.Mul) rhs = `${rhs} * ${items[i][j]}`;
-        else if (re.op === AluOp.Min) rhs = `min(${rhs}, ${items[i][j]})`;
-        else if (re.op === AluOp.Max) rhs = `max(${rhs}, ${items[i][j]})`;
+      for (let j = 0; j < unroll; j++) {
+        const rhs = items[i][j];
+        if (isArgReduce) {
+          const idxExpr = unroll === 1 ? "ridx" : `(ridx * ${unroll} + ${j})`;
+          const rhsVal = re.dtype === DType.Bool ? `i32(${rhs})` : rhs;
+          const accVal = re.dtype === DType.Bool ? `i32(${acc[i]})` : acc[i];
+          const better =
+            re.op === AluOp.ArgMin
+              ? `${rhsVal} < ${accVal}`
+              : `${rhsVal} > ${accVal}`;
+          const tie = `${rhsVal} == ${accVal} && ${idxExpr} < ${accIdx[i]}`;
+          emit(
+            `if (${better} || (${tie})) { ${acc[i]} = ${rhs}; ${accIdx[i]} = ${idxExpr}; }`,
+          );
+        } else {
+          if (j === 0) {
+            // first rhs initialized separately for non-argreduce
+          } else {
+            if (re.op === AluOp.Add) items[i][0] = `${items[i][0]} + ${rhs}`;
+            else if (re.op === AluOp.Mul)
+              items[i][0] = `${items[i][0]} * ${rhs}`;
+            else if (re.op === AluOp.Min)
+              items[i][0] = `min(${items[i][0]}, ${rhs})`;
+            else if (re.op === AluOp.Max)
+              items[i][0] = `max(${items[i][0]}, ${rhs})`;
+            else throw new Error(`Unsupported reduction op: ${re.op}`);
+          }
+        }
+      }
+      if (!isArgReduce) {
+        const rhs = items[i][0];
+        if (re.op === AluOp.Add) emit(`${acc[i]} += ${rhs};`);
+        else if (re.op === AluOp.Mul) emit(`${acc[i]} *= ${rhs};`);
+        else if (re.op === AluOp.Min)
+          emit(`${acc[i]} = min(${acc[i]}, ${rhs});`);
+        else if (re.op === AluOp.Max)
+          emit(`${acc[i]} = max(${acc[i]}, ${rhs});`);
         else throw new Error(`Unsupported reduction op: ${re.op}`);
       }
-      if (re.op === AluOp.Add) emit(`${acc[i]} += ${rhs};`);
-      else if (re.op === AluOp.Mul) emit(`${acc[i]} *= ${rhs};`);
-      else if (re.op === AluOp.Min) emit(`${acc[i]} = min(${acc[i]}, ${rhs});`);
-      else if (re.op === AluOp.Max) emit(`${acc[i]} = max(${acc[i]}, ${rhs});`);
-      else throw new Error(`Unsupported reduction op: ${re.op}`);
     }
     emit(popIndent, "}");
 
@@ -561,6 +592,11 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
         tune
           .epilogue!.substitute({
             acc: AluExp.variable(re.dtype, acc[i]),
+            ...(isArgReduce && re.indexDtype
+              ? { acc1: AluExp.variable(re.indexDtype, accIdx[i]) }
+              : isArgReduce
+                ? { acc1: AluExp.variable(DType.Int32, accIdx[i]) }
+                : {}),
             upcast: AluExp.i32(i),
           })
           .simplify(cache),

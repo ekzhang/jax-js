@@ -261,11 +261,11 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
   [Primitive.Sqrt]: unopBatcher(sqrt),
   [Primitive.Min]: broadcastBatcher(min),
   [Primitive.Max]: broadcastBatcher(max),
-  [Primitive.Reduce](axisSize, [x], [xBdim], { op, axis }) {
+  [Primitive.Reduce](axisSize, [x], [xBdim], { op, axis, indexDtype }) {
     assertNonNull(xBdim);
     const newAxis = axis.map((ax) => ax + (xBdim <= ax ? 1 : 0));
     const outBdim = xBdim - axis.filter((ax) => ax < xBdim).length;
-    return [[reduce(x, op, newAxis)], [outBdim]];
+    return [[reduce(x, op, newAxis, { indexDtype })], [outBdim]];
   },
   [Primitive.Dot](axisSize, [x, y], [xBdim, yBdim]) {
     // Move both the batch axes to the second-to-last position.

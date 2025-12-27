@@ -794,10 +794,12 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
   [Primitive.Sqrt]: vectorizedUnopAbstractEval,
   [Primitive.Min]: binopAbstractEval,
   [Primitive.Max]: binopAbstractEval,
-  [Primitive.Reduce]([x], { axis }) {
+  [Primitive.Reduce]([x], { axis, indexDtype }) {
     const axisSet = new Set(axis);
     const newShape = x.shape.filter((_, i) => !axisSet.has(i));
-    return [new ShapedArray(newShape, x.dtype, x.weakType)];
+    const dtype = indexDtype ?? x.dtype;
+    const weakType = indexDtype ? false : x.weakType;
+    return [new ShapedArray(newShape, dtype, weakType)];
   },
   [Primitive.Pool]([x], { window, strides }) {
     const shape = checkPoolShape(x.shape, window, strides);

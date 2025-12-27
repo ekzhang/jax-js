@@ -108,13 +108,37 @@ export class CpuBackend implements Backend {
         outputArray[i] = exp.evaluate({ gidx: i }, globals);
       }
     } else {
+      const isArgReduce =
+        kernel.reduction.op === AluOp.ArgMin ||
+        kernel.reduction.op === AluOp.ArgMax;
       for (let i = 0; i < kernel.size; i++) {
-        let acc = kernel.reduction.identity;
-        for (let j = 0; j < kernel.reduction.size; j++) {
-          const item = exp.evaluate({ gidx: i, ridx: j }, globals);
-          acc = kernel.reduction.evaluate(acc, item);
+        if (isArgReduce) {
+          let accVal = kernel.reduction.identity;
+          let accIdx = 0;
+          for (let j = 0; j < kernel.reduction.size; j++) {
+            const item = exp.evaluate({ gidx: i, ridx: j }, globals);
+            const better =
+              kernel.reduction.op === AluOp.ArgMin
+                ? item < accVal
+                : item > accVal;
+            const tie = item === accVal && j < accIdx;
+            if (better || tie) {
+              accVal = item;
+              accIdx = j;
+            }
+          }
+          outputArray[i] = epilogue!.evaluate(
+            { acc: accVal, acc1: accIdx, gidx: i },
+            globals,
+          );
+        } else {
+          let acc = kernel.reduction.identity;
+          for (let j = 0; j < kernel.reduction.size; j++) {
+            const item = exp.evaluate({ gidx: i, ridx: j }, globals);
+            acc = kernel.reduction.evaluate(acc, item);
+          }
+          outputArray[i] = epilogue!.evaluate({ acc, gidx: i }, globals);
         }
-        outputArray[i] = epilogue!.evaluate({ acc, gidx: i }, globals);
       }
     }
   }

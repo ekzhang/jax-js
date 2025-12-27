@@ -226,7 +226,7 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
   [Primitive.Max]([x, y], [dx, dy]) {
     return [[max(x.ref, y.ref)], [where(less(x, y), dy, dx)]];
   },
-  [Primitive.Reduce]([x], [dx], { op, axis }) {
+  [Primitive.Reduce]([x], [dx], { op, axis, indexDtype }) {
     if (op === AluOp.Add) {
       return [[reduce(x, op, axis)], [reduce(dx, op, axis)]];
     } else if (op === AluOp.Mul) {
@@ -247,6 +247,10 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
       const notMin = notEqual(x, broadcast(primal.ref, x.shape, axis));
       const minCount = where(notMin.ref, 0.0, 1.0).sum(axis);
       const tangent = where(notMin, 0.0, dx).sum(axis).div(minCount);
+      return [[primal], [tangent]];
+    } else if (op === AluOp.ArgMin || op === AluOp.ArgMax) {
+      const primal = reduce(x.ref, op, axis, { indexDtype });
+      const tangent = zerosLike(primal);
       return [[primal], [tangent]];
     } else {
       throw new Error(`JVP rule not implemented for reduce op: ${op}`);

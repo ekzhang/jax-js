@@ -519,7 +519,7 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   [Primitive.Sqrt]: unopJit(AluExp.sqrt),
   [Primitive.Min]: broadcastedJit(([a, b]) => AluExp.min(a, b)),
   [Primitive.Max]: broadcastedJit(([a, b]) => AluExp.max(a, b)),
-  [Primitive.Reduce]([a], [as], { op, axis }) {
+  [Primitive.Reduce]([a], [as], { op, axis, indexDtype }) {
     const keptAxes: number[] = [];
     const shiftedAxes: number[] = [];
     const newShape: number[] = [];
@@ -535,7 +535,17 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
 
     const perm = keptAxes.concat(shiftedAxes);
     a = reshapeViews(a, (st) => st.permute(perm).reshape(newShape), true);
-    const reduction = new Reduction(a.dtype, op, reductionSize);
+    const idxDtype =
+      indexDtype ??
+      (op === AluOp.ArgMin || op === AluOp.ArgMax ? DType.Int32 : undefined);
+    const epilogue = idxDtype ? AluVar.acc1(idxDtype) : undefined;
+    const reduction = new Reduction(
+      a.dtype,
+      op,
+      reductionSize,
+      epilogue,
+      idxDtype,
+    );
     return { exp: a, reduction };
   },
   [Primitive.Pool]: reshapeJit((st, { window, strides }) =>
