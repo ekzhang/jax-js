@@ -1479,6 +1479,9 @@ export class Kernel implements FpHashable {
  * at this level since they depend on GPU, versus CPU or Wasm.
  */
 export class Reduction implements FpHashable {
+  readonly epilogue: AluExp;
+  readonly indexDtype?: DType;
+
   constructor(
     /** Data type of the values being reduced over. */
     readonly dtype: DType,
@@ -1519,25 +1522,38 @@ export class Reduction implements FpHashable {
   /** Get the identity for this reduction operation. */
   get identity(): any {
     if (this.dtype === DType.Bool) {
-      if (this.op === AluOp.Add || this.op === AluOp.Max || this.op === AluOp.ArgMax)
+      if (
+        this.op === AluOp.Add ||
+        this.op === AluOp.Max ||
+        this.op === AluOp.ArgMax
+      )
         return 0;
-      else if (this.op === AluOp.Mul || this.op === AluOp.Min || this.op === AluOp.ArgMin)
+      else if (
+        this.op === AluOp.Mul ||
+        this.op === AluOp.Min ||
+        this.op === AluOp.ArgMin
+      )
         return 1;
     } else if (this.dtype === DType.Int32) {
       if (this.op === AluOp.Add) return 0;
       else if (this.op === AluOp.Mul) return 1;
-      else if (this.op === AluOp.Min || this.op === AluOp.ArgMin) return -1 >>> 1;
-      else if (this.op === AluOp.Max || this.op === AluOp.ArgMax) return 1 << 31;
+      else if (this.op === AluOp.Min || this.op === AluOp.ArgMin)
+        return -1 >>> 1;
+      else if (this.op === AluOp.Max || this.op === AluOp.ArgMax)
+        return 1 << 31;
     } else if (this.dtype === DType.Uint32) {
       if (this.op === AluOp.Add) return 0;
       else if (this.op === AluOp.Mul) return 1;
-      else if (this.op === AluOp.Min || this.op === AluOp.ArgMin) return -1 >>> 0;
+      else if (this.op === AluOp.Min || this.op === AluOp.ArgMin)
+        return -1 >>> 0;
       else if (this.op === AluOp.Max || this.op === AluOp.ArgMax) return 0;
     } else if (isFloatDtype(this.dtype)) {
       if (this.op === AluOp.Add) return 0;
       else if (this.op === AluOp.Mul) return 1;
-      else if (this.op === AluOp.Min || this.op === AluOp.ArgMin) return Infinity;
-      else if (this.op === AluOp.Max || this.op === AluOp.ArgMax) return -Infinity;
+      else if (this.op === AluOp.Min || this.op === AluOp.ArgMin)
+        return Infinity;
+      else if (this.op === AluOp.Max || this.op === AluOp.ArgMax)
+        return -Infinity;
     }
     throw new TypeError(`Unsupported reduction: ${this.op} ${this.dtype}`);
   }

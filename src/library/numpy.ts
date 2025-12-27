@@ -302,10 +302,12 @@ export function argmin(
   } else {
     axis = checkAxis(axis, a.ndim);
   }
-  return core.reduce(a, AluOp.ArgMin, axis, {
-    ...opts,
-    indexDtype: DType.Int32,
-  }).astype(DType.Int32) as Array;
+  return core
+    .reduce(a, AluOp.ArgMin, axis, {
+      ...opts,
+      indexDtype: DType.Int32,
+    })
+    .astype(DType.Int32) as Array;
 }
 
 /**
@@ -326,10 +328,12 @@ export function argmax(
   } else {
     axis = checkAxis(axis, a.ndim);
   }
-  return core.reduce(a, AluOp.ArgMax, axis, {
-    ...opts,
-    indexDtype: DType.Int32,
-  }).astype(DType.Int32) as Array;
+  return core
+    .reduce(a, AluOp.ArgMax, axis, {
+      ...opts,
+      indexDtype: DType.Int32,
+    })
+    .astype(DType.Int32) as Array;
 }
 
 /**

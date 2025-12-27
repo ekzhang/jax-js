@@ -539,7 +539,13 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
       indexDtype ??
       (op === AluOp.ArgMin || op === AluOp.ArgMax ? DType.Int32 : undefined);
     const epilogue = idxDtype ? AluVar.acc1(idxDtype) : undefined;
-    const reduction = new Reduction(a.dtype, op, reductionSize, epilogue, idxDtype);
+    const reduction = new Reduction(
+      a.dtype,
+      op,
+      reductionSize,
+      epilogue,
+      idxDtype,
+    );
     return { exp: a, reduction };
   },
   [Primitive.Pool]: reshapeJit((st, { window, strides }) =>

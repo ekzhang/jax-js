@@ -118,7 +118,9 @@ export class CpuBackend implements Backend {
           for (let j = 0; j < kernel.reduction.size; j++) {
             const item = exp.evaluate({ gidx: i, ridx: j }, globals);
             const better =
-              kernel.reduction.op === AluOp.ArgMin ? item < accVal : item > accVal;
+              kernel.reduction.op === AluOp.ArgMin
+                ? item < accVal
+                : item > accVal;
             const tie = item === accVal && j < accIdx;
             if (better || tie) {
               accVal = item;

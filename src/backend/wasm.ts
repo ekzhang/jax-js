@@ -235,7 +235,9 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
             if (isFloatDtype(re.dtype)) {
               if (re.op === AluOp.ArgMin) dtyF(cg, re.op, re.dtype).lt();
               else dtyF(cg, re.op, re.dtype).gt();
-            } else if ([DType.Int32, DType.Uint32, DType.Bool].includes(re.dtype)) {
+            } else if (
+              [DType.Int32, DType.Uint32, DType.Bool].includes(re.dtype)
+            ) {
               if (re.op === AluOp.ArgMin) {
                 if (re.dtype === DType.Int32) cg.i32.lt_s();
                 else cg.i32.lt_u();
