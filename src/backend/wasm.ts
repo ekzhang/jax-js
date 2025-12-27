@@ -193,16 +193,27 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
       cg.i32.const(byteWidth(kernel.dtype));
       cg.i32.mul();
       cg.i32.add();
+      const outPtr = re ? cg.local.declare(cg.i32) : null;
+      if (outPtr !== null) cg.local.set(outPtr);
 
       if (re) {
         // If reduction, define accumulator and inner ridx loop.
         const acc = cg.local.declare(dty(cg, null, kernel.exp.dtype));
         dty(cg, null, kernel.exp.dtype).const(re.identity);
         cg.local.set(acc);
+        const accIdx =
+          re.op === AluOp.ArgMin || re.op === AluOp.ArgMax
+            ? cg.local.declare(cg.i32)
+            : null;
+        if (accIdx !== null) {
+          cg.i32.const(0);
+          cg.local.set(accIdx);
+        }
 
         const ridx = cg.local.declare(cg.i32);
         cg.i32.const(0);
         cg.local.set(ridx);
+        const cur = cg.local.declare(dty(cg, null, kernel.exp.dtype));
         cg.loop(cg.void);
         {
           // if (ridx >= reduction.size) break;
@@ -215,15 +226,62 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
           // Translate tune.exp to expression and push onto stack.
           translateExp(cg, funcs, tune.exp, { gidx, ridx });
 
-          // acc = reduction.evaluate(acc, exp)
-          if (re.op === AluOp.Add) {
+          if (re.op === AluOp.ArgMin || re.op === AluOp.ArgMax) {
+            // Store current value in local for argreduce operations
+            cg.local.set(cur);
+            // cond = better || tie (tie prefers earlier index)
+            cg.local.get(cur);
+            cg.local.get(acc);
+            if (isFloatDtype(re.dtype)) {
+              if (re.op === AluOp.ArgMin) dtyF(cg, re.op, re.dtype).lt();
+              else dtyF(cg, re.op, re.dtype).gt();
+            } else if ([DType.Int32, DType.Uint32, DType.Bool].includes(re.dtype)) {
+              if (re.op === AluOp.ArgMin) {
+                if (re.dtype === DType.Int32) cg.i32.lt_s();
+                else cg.i32.lt_u();
+              } else {
+                if (re.dtype === DType.Int32) cg.i32.gt_s();
+                else cg.i32.gt_u();
+              }
+            } else throw new Error(`invalid reduction arg over ${re.dtype}`);
+
+            cg.local.get(cur);
+            cg.local.get(acc);
+            if (isFloatDtype(re.dtype)) dtyF(cg, re.op, re.dtype).eq();
+            else cg.i32.eq();
+            cg.local.get(ridx);
+            cg.local.get(accIdx!);
+            cg.i32.lt_u();
+            cg.i32.and();
+
+            cg.i32.or(); // cond on stack
+
+            // Store condition to local since blocks need empty stack
+            const cond = cg.local.declare(cg.i32);
+            cg.local.set(cond);
+
+            // Skip updates if !cond
+            cg.local.get(cond);
+            cg.i32.eqz();
+            cg.if(cg.void);
+            cg.else();
+            {
+              cg.local.get(cur);
+              cg.local.set(acc);
+              cg.local.get(ridx);
+              cg.local.set(accIdx!);
+            }
+            cg.end();
+          } else if (re.op === AluOp.Add) {
             cg.local.get(acc);
             if (re.dtype === DType.Bool) cg.i32.or();
             else dty(cg, re.op, re.dtype).add();
+            cg.local.set(acc);
           } else if (re.op === AluOp.Mul) {
             cg.local.get(acc);
             if (re.dtype === DType.Bool) cg.i32.and();
             else dty(cg, re.op, re.dtype).mul();
+            cg.local.set(acc);
           } else if (re.op === AluOp.Min || re.op === AluOp.Max) {
             if (isFloatDtype(re.dtype)) {
               cg.local.get(acc);
@@ -248,8 +306,8 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
               cg.select();
             } else
               throw new Error(`invalid reduction min/max over ${re.dtype}`);
+            cg.local.set(acc);
           } else throw new Error(`invalid wasm reduction op: ${re.op}`);
-          cg.local.set(acc);
 
           // ridx++
           cg.local.get(ridx);
@@ -262,7 +320,10 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
         }
         cg.end();
 
-        translateExp(cg, funcs, tune.epilogue!, { acc, gidx });
+        const ctx: Record<string, number> = { acc, gidx };
+        if (accIdx !== null) ctx.acc1 = accIdx;
+        cg.local.get(outPtr!);
+        translateExp(cg, funcs, tune.epilogue!, ctx);
       } else {
         // Translate tune.exp to expression and push onto stack.
         translateExp(cg, funcs, tune.exp, { gidx });

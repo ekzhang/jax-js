@@ -1303,6 +1303,8 @@ export enum AluOp {
   Mod = "Mod",
   Min = "Min",
   Max = "Max",
+  ArgMin = "ArgMin",
+  ArgMax = "ArgMax",
 
   Sin = "Sin",
   Cos = "Cos",
@@ -1368,7 +1370,14 @@ export const AluGroup = {
     AluOp.GlobalIndex,
     AluOp.GlobalView,
   ]),
-  Reduce: new Set([AluOp.Add, AluOp.Mul, AluOp.Min, AluOp.Max]),
+  Reduce: new Set([
+    AluOp.Add,
+    AluOp.Mul,
+    AluOp.Min,
+    AluOp.Max,
+    AluOp.ArgMin,
+    AluOp.ArgMax,
+  ]),
   RequiredFloat: new Set([
     AluOp.Sin,
     AluOp.Cos,
@@ -1390,6 +1399,7 @@ export const AluVar = {
   gidx: AluExp.variable(DType.Int32, "gidx"), // global index
   ridx: AluExp.variable(DType.Int32, "ridx"), // reduction index
   acc: (dtype: DType) => AluExp.variable(dtype, "acc"), // accumulator
+  acc1: (dtype: DType) => AluExp.variable(dtype, "acc1"), // secondary accumulator (argreduce index)
   idx: AluExp.variable(DType.Int32, "idx"), // virtual "array index"
 
   unroll: AluExp.variable(DType.Int32, "unroll"), // unroll index, inside loop
@@ -1477,10 +1487,18 @@ export class Reduction implements FpHashable {
     /** Size of the reduction axis. */
     readonly size: number,
     /** Follow-up expression defined with the "acc" variable, defaults to identity. */
-    readonly epilogue: AluExp = AluVar.acc(dtype),
+    epilogue: AluExp = AluVar.acc(dtype),
+    /** Optional secondary accumulator dtype (used for argmin/argmax indices). */
+    indexDtype?: DType,
   ) {
     if (!AluGroup.Reduce.has(op)) {
       throw new TypeError(`Unsupported reduction: ${op}`);
+    }
+    if (op === AluOp.ArgMin || op === AluOp.ArgMax) {
+      this.indexDtype = indexDtype ?? DType.Int32;
+      epilogue = AluVar.acc1(this.indexDtype);
+    } else {
+      this.indexDtype = indexDtype;
     }
     this.epilogue = epilogue.simplify();
   }
@@ -1490,7 +1508,8 @@ export class Reduction implements FpHashable {
       .update(this.dtype)
       .update(this.op)
       .update(this.size)
-      .update(this.epilogue);
+      .update(this.epilogue)
+      .update(this.indexDtype ?? null);
   }
 
   toString(): string {
@@ -1500,22 +1519,25 @@ export class Reduction implements FpHashable {
   /** Get the identity for this reduction operation. */
   get identity(): any {
     if (this.dtype === DType.Bool) {
-      return this.op === AluOp.Add || this.op === AluOp.Max ? 0 : 1;
+      if (this.op === AluOp.Add || this.op === AluOp.Max || this.op === AluOp.ArgMax)
+        return 0;
+      else if (this.op === AluOp.Mul || this.op === AluOp.Min || this.op === AluOp.ArgMin)
+        return 1;
     } else if (this.dtype === DType.Int32) {
       if (this.op === AluOp.Add) return 0;
       else if (this.op === AluOp.Mul) return 1;
-      else if (this.op === AluOp.Min) return -1 >>> 1;
-      else if (this.op === AluOp.Max) return 1 << 31;
+      else if (this.op === AluOp.Min || this.op === AluOp.ArgMin) return -1 >>> 1;
+      else if (this.op === AluOp.Max || this.op === AluOp.ArgMax) return 1 << 31;
     } else if (this.dtype === DType.Uint32) {
       if (this.op === AluOp.Add) return 0;
       else if (this.op === AluOp.Mul) return 1;
-      else if (this.op === AluOp.Min) return -1 >>> 0;
-      else if (this.op === AluOp.Max) return 0;
+      else if (this.op === AluOp.Min || this.op === AluOp.ArgMin) return -1 >>> 0;
+      else if (this.op === AluOp.Max || this.op === AluOp.ArgMax) return 0;
     } else if (isFloatDtype(this.dtype)) {
       if (this.op === AluOp.Add) return 0;
       else if (this.op === AluOp.Mul) return 1;
-      else if (this.op === AluOp.Min) return Infinity;
-      else if (this.op === AluOp.Max) return -Infinity;
+      else if (this.op === AluOp.Min || this.op === AluOp.ArgMin) return Infinity;
+      else if (this.op === AluOp.Max || this.op === AluOp.ArgMax) return -Infinity;
     }
     throw new TypeError(`Unsupported reduction: ${this.op} ${this.dtype}`);
   }

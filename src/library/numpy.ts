@@ -302,17 +302,10 @@ export function argmin(
   } else {
     axis = checkAxis(axis, a.ndim);
   }
-  const shape = a.shape;
-  const isMax = equal(a, min(a.ref, axis, { keepdims: true }));
-  const length = array(shape[axis], { dtype: int32, device: a.device });
-  const idx = isMax.astype(DType.Int32).mul(
-    // Index by length-i instead of i, so we can take the max and get the first i.
-    arange(shape[axis], 0, -1, { dtype: int32, device: a.device }).reshape([
-      shape[axis],
-      ...rep(shape.length - axis - 1, 1),
-    ]),
-  );
-  return length.sub(max(idx, axis, opts));
+  return core.reduce(a, AluOp.ArgMin, axis, {
+    ...opts,
+    indexDtype: DType.Int32,
+  }).astype(DType.Int32) as Array;
 }
 
 /**
@@ -333,17 +326,10 @@ export function argmax(
   } else {
     axis = checkAxis(axis, a.ndim);
   }
-  const shape = a.shape;
-  const isMax = equal(a, max(a.ref, axis, { keepdims: true }));
-  const length = array(shape[axis], { dtype: int32, device: a.device });
-  const idx = isMax.astype(DType.Int32).mul(
-    // Index by length-i instead of i, so we can take the max and get the first i.
-    arange(shape[axis], 0, -1, { dtype: int32, device: a.device }).reshape([
-      shape[axis],
-      ...rep(shape.length - axis - 1, 1),
-    ]),
-  );
-  return length.sub(max(idx, axis, opts));
+  return core.reduce(a, AluOp.ArgMax, axis, {
+    ...opts,
+    indexDtype: DType.Int32,
+  }).astype(DType.Int32) as Array;
 }
 
 /**

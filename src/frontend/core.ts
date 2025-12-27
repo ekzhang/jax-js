@@ -76,7 +76,7 @@ export enum Primitive {
 interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
   [Primitive.Cast]: { dtype: DType };
   [Primitive.Bitcast]: { dtype: DType };
-  [Primitive.Reduce]: { op: AluOp; axis: number[] };
+  [Primitive.Reduce]: { op: AluOp; axis: number[]; indexDtype?: DType };
   [Primitive.Conv]: ConvParams;
   [Primitive.Pool]: { window: number[]; strides: number[] };
   [Primitive.PoolTranspose]: {
@@ -210,7 +210,7 @@ export function max(x: TracerValue, y: TracerValue) {
 export type Axis = number | number[] | null;
 
 /** @inline */
-export type ReduceOpts = { keepdims?: boolean };
+export type ReduceOpts = { keepdims?: boolean; indexDtype?: DType };
 
 export function reduce(
   x: TracerValue,
@@ -223,7 +223,11 @@ export function reduce(
   }
   axis = normalizeAxis(axis, ndim(x));
   const originalShape = getShape(x);
-  let result = bind1(Primitive.Reduce, [x], { op, axis });
+  let result = bind1(Primitive.Reduce, [x], {
+    op,
+    axis,
+    indexDtype: opts?.indexDtype,
+  });
   if (opts?.keepdims) {
     result = result.reshape(
       originalShape.map((dim, i) => (axis.includes(i) ? 1 : dim)),

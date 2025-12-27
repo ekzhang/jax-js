@@ -566,9 +566,19 @@ export class Array extends Tracer {
   }
 
   /** Reduce the last dimension of the array by an operation. */
-  #reduce(op: AluOp): Array {
+  #reduce(op: AluOp, indexDtype?: DType): Array {
     const shape = this.shape;
-    const reduction = new Reduction(this.#dtype, op, shape[shape.length - 1]);
+    const idxDtype =
+      indexDtype ??
+      (op === AluOp.ArgMin || op === AluOp.ArgMax ? DType.Int32 : undefined);
+    const epilogue = idxDtype ? AluVar.acc1(idxDtype) : undefined;
+    const reduction = new Reduction(
+      this.#dtype,
+      op,
+      shape[shape.length - 1],
+      epilogue,
+      idxDtype,
+    );
     const newShape = shape.slice(0, -1); // first n-1 axes are in the shape
     const newSize = prod(newShape);
 
@@ -593,6 +603,8 @@ export class Array extends Tracer {
     return this.#newArrayFrom({
       source: output,
       st: ShapeTracker.fromShape(newShape),
+      dtype: kernel.dtype,
+      weakType: false,
       pending,
     });
   }
@@ -906,9 +918,9 @@ export class Array extends Tracer {
       [Primitive.Max]([x, y]) {
         return [x.#binary(AluOp.Max, y)];
       },
-      [Primitive.Reduce]([x], { op, axis }) {
+      [Primitive.Reduce]([x], { op, axis, indexDtype }) {
         if (axis.length === 0) return [x];
-        return [x.#moveAxesDown(axis).#reduce(op)];
+        return [x.#moveAxesDown(axis).#reduce(op, indexDtype)];
       },
       [Primitive.Pool]([x], { window, strides }) {
         const st = pool(x.#st, window, strides);
