@@ -1,10 +1,4 @@
-import {
-  defaultDevice,
-  devices,
-  grad,
-  init,
-  numpy as np,
-} from "@jax-js/jax";
+import { defaultDevice, devices, init, numpy as np } from "@jax-js/jax";
 import { beforeEach, expect, suite, test } from "vitest";
 
 const devicesAvailable = await init();
@@ -23,9 +17,9 @@ suite.each(devices)("device:%s", (device) => {
       const startTime = performance.now();
       const result = np.argmax(x);
       const endTime = performance.now();
-      
+
       expect(result.js()).toEqual(9999);
-      
+
       // Should complete reasonably fast (< 10ms per operation on large arrays)
       // This demonstrates the argreduce primitive is being used instead of
       // a full reduction followed by a search
@@ -38,12 +32,12 @@ suite.each(devices)("device:%s", (device) => {
       const startTime = performance.now();
       const result = np.argmax(x.ref, 1);
       const endTime = performance.now();
-      
+
       expect(result.shape).toEqual([100]);
       const resultData = result.js();
       expect(resultData[0]).toEqual(999);
       expect(resultData[99]).toEqual(999);
-      
+
       const elapsed = endTime - startTime;
       expect(elapsed).toBeLessThan(100); // 100 reductions should be fast
     });
@@ -68,9 +62,9 @@ suite.each(devices)("device:%s", (device) => {
       const startTime = performance.now();
       const result = np.argmin(x);
       const endTime = performance.now();
-      
+
       expect(result.js()).toEqual(9999);
-      
+
       const elapsed = endTime - startTime;
       expect(elapsed).toBeLessThan(50);
     });
@@ -80,12 +74,12 @@ suite.each(devices)("device:%s", (device) => {
       const startTime = performance.now();
       const result = np.argmin(x.ref, 1);
       const endTime = performance.now();
-      
+
       expect(result.shape).toEqual([100]);
       const resultData = result.js();
       expect(resultData[0]).toEqual(999);
       expect(resultData[99]).toEqual(999);
-      
+
       const elapsed = endTime - startTime;
       expect(elapsed).toBeLessThan(100);
     });
@@ -116,7 +110,7 @@ suite.each(devices)("device:%s", (device) => {
         [6, 5, 4],
         [7, 8, 9],
       ]);
-      
+
       expect(np.argmax(x.ref).js()).toEqual(8); // Global argmax
       expect(np.argmax(x.ref, 0).js()).toEqual([2, 2, 2]); // Column-wise
       expect(np.argmax(x, 1).js()).toEqual([2, 0, 2]); // Row-wise
@@ -128,7 +122,7 @@ suite.each(devices)("device:%s", (device) => {
         [4, 5, 6],
         [3, 2, 1],
       ]);
-      
+
       expect(np.argmin(x.ref).js()).toEqual(8); // Global argmin
       expect(np.argmin(x.ref, 0).js()).toEqual([2, 2, 2]); // Column-wise
       expect(np.argmin(x, 1).js()).toEqual([2, 0, 2]); // Row-wise
