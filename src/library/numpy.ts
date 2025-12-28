@@ -1332,7 +1332,6 @@ export const remainder = jit(function remainder(x: Array, y: Array): Array {
   return core.mod(core.mod(x, y.ref).add(y.ref), y) as Array;
 });
 
-
 /** Round input to the nearest integer towards zero. */
 export function trunc(x: ArrayLike): Array {
   return core.idiv(x, 1) as Array; // Integer division truncates the decimal part.

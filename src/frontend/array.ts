@@ -101,14 +101,14 @@ export class PendingExecute {
       return;
     }
     this.#promise = (async () => {
-      this.prepared = await this.backend.prepare(this.kernel);
+      this.prepared = await this.backend.prepareKernel(this.kernel);
     })();
     await this.#promise;
   }
 
   prepareSync() {
     if (this.prepared) return;
-    this.prepared = this.backend.prepareSync(this.kernel);
+    this.prepared = this.backend.prepareKernelSync(this.kernel);
   }
 
   submit() {

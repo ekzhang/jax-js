@@ -12,6 +12,7 @@
 import { AluOp, DType, Kernel } from "./alu";
 import { CpuBackend } from "./backend/cpu";
 import { WasmBackend } from "./backend/wasm";
+import { Routine } from "./routine";
 
 export type Device = "cpu" | "wasm" | "webgpu";
 export const devices: Device[] = ["cpu", "wasm", "webgpu"];
@@ -166,10 +167,16 @@ export interface Backend {
   readSync(slot: Slot, start?: number, count?: number): Uint8Array<ArrayBuffer>;
 
   /** Prepare an expression to be executed later. */
-  prepare(kernel: Kernel): Promise<Executable>;
+  prepareKernel(kernel: Kernel): Promise<Executable>;
 
   /** Prepare an expression to be executed later, blocking variant. */
-  prepareSync(kernel: Kernel): Executable;
+  prepareKernelSync(kernel: Kernel): Executable;
+
+  /** Prepare an advanced routine to be executed later. */
+  prepareRoutine(routine: Routine): Promise<Executable>;
+
+  /** Prepare an advanced routine to be executed later, blocking variant. */
+  prepareRoutineSync(routine: Routine): Executable;
 
   /**
    * Run a backend operation that was previously prepared.
@@ -183,8 +190,9 @@ export interface Backend {
 
 export class Executable<T = any> {
   constructor(
-    readonly kernel: Kernel,
-    /** Extra data specific to the backend running this kernel. */
+    /** The `Kernel` or `Routine` that was prepared. */
+    readonly source: Kernel | Routine,
+    /** Extra data specific to the backend running this executable. */
     readonly data: T,
   ) {}
 }
