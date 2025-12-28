@@ -151,7 +151,7 @@
 
       setStep(`Run ${i + 1}/${numRuns}: Running cholesky...`);
       const start = performance.now();
-      const L = linalg.cholesky(A.ref);
+      const L = linalg.cholesky(A.ref); // Returns lower triangular by default
       // Keep L alive for verification and cleanup
       L.ref;
 

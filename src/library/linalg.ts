@@ -8,16 +8,16 @@ import * as core from "../frontend/core";
  *
  * The Cholesky decomposition of a matrix `A` is:
  *
- * A = L @ L^T  (for lower=true)
- * A = U^T @ U  (for lower=false, default)
+ * A = L @ L^T  (for lower=true, default)
+ * A = U^T @ U  (for lower=false)
  *
  * where `L` is a lower-triangular matrix and `U` is an upper-triangular matrix.
  *
  * Args:
  *   a: input array, representing a positive-definite hermitian matrix.
  *      Must have shape ``(N, N)``.
- *   lower: if true, compute the lower Cholesky decomposition `L`. if false
- *          (default), compute the upper Cholesky decomposition `U`.
+ *   lower: if true (default), compute the lower Cholesky decomposition `L`.
+ *          if false, compute the upper Cholesky decomposition `U`.
  *
  * Returns:
  *   array of shape ``(N, N)`` representing the cholesky decomposition
@@ -30,18 +30,18 @@ import * as core from "../frontend/core";
  *
  * const x = array([[2., 1.], [1., 2.]]);
  *
- * // Lower Cholesky factorization:
- * const L = cholesky(x, { lower: true });
+ * // Lower Cholesky factorization (default):
+ * const L = cholesky(x);
  * // L ≈ [[1.4142135, 0], [0.70710677, 1.2247449]]
  *
  * // Upper Cholesky factorization:
- * const U = cholesky(x); // lower=false is default
+ * const U = cholesky(x, { lower: false });
  * // U ≈ [[1.4142135, 0.70710677], [0, 1.2247449]]
  * ```
  */
 export function cholesky(
   a: ArrayLike,
-  { lower = false }: { lower?: boolean } = {},
+  { lower = true }: { lower?: boolean } = {},
 ): Array {
   a = fudgeArray(a);
   // The core.cholesky primitive always returns lower triangular L

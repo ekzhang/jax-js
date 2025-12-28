@@ -18,19 +18,19 @@ suite("linalg.cholesky()", () => {
     expect(reconstructed.js()).toBeAllclose(x.js());
   });
 
-  test("computes upper Cholesky decomposition for 2x2 matrix", () => {
+  test("computes lower Cholesky with default params", () => {
     const x = np.array([
       [2.0, 1.0],
       [1.0, 2.0],
     ]);
-    const U = linalg.cholesky(x); // lower=false is default
+    const L = linalg.cholesky(x); // lower=true is default
 
-    // U should be upper triangular
-    expect(U.js()[0][1]).not.toBe(0);
-    expect(U.js()[1][0]).toBeCloseTo(0);
+    // L should be lower triangular
+    expect(L.js()[0][1]).toBeCloseTo(0);
+    expect(L.js()[1][0]).not.toBe(0);
 
-    // Verify: U^T @ U should equal x
-    const reconstructed = np.matmul(U.ref.transpose(), U);
+    // Verify: L @ L^T should equal x
+    const reconstructed = np.matmul(L, L.ref.transpose());
     expect(reconstructed.js()).toBeAllclose(x.js());
   });
 

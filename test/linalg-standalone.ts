@@ -53,17 +53,17 @@ console.log("Lower Cholesky (L):");
 console.log(L.ref.js());
 verifyReconstruction(xJs, L, true, "Test 1");
 
-// Test 2: 2x2 upper triangular (default)
-console.log("Test 2: 2x2 upper triangular");
+// Test 2: 2x2 lower triangular (default)
+console.log("Test 2: 2x2 lower triangular (default)");
 const x2 = np.array([
   [2.0, 1.0],
   [1.0, 2.0],
 ]);
 const x2Js = x2.ref.js();
-const U = linalg.cholesky(x2.ref);
-console.log("Upper Cholesky (U):");
-console.log(U.ref.js());
-verifyReconstruction(x2Js, U, false, "Test 2");
+const L2 = linalg.cholesky(x2.ref); // Uses default lower=true
+console.log("Lower Cholesky (L):");
+console.log(L2.ref.js());
+verifyReconstruction(x2Js, L2, true, "Test 2");
 
 // Test 3: 3x3 matrix
 console.log("Test 3: 3x3 matrix");
