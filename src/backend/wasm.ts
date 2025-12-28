@@ -11,11 +11,11 @@ import {
   Backend,
   Device,
   Executable,
-  Routine,
   Slot,
   SlotError,
   UnsupportedOpError,
 } from "../backend";
+import { Routine } from "../routine";
 import { tuneNullopt } from "../tuner";
 import { DEBUG, FpHash, mapSetUnion, rep, runWithCache } from "../utils";
 import { WasmAllocator } from "./wasm/allocator";

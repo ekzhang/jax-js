@@ -12,7 +12,7 @@
 import { AluOp, DType, Kernel } from "./alu";
 import { CpuBackend } from "./backend/cpu";
 import { WasmBackend } from "./backend/wasm";
-import { ShapedArray } from "./frontend/core";
+import { Routine } from "./routine";
 
 export type Device = "cpu" | "wasm" | "webgpu";
 export const devices: Device[] = ["cpu", "wasm", "webgpu"];
@@ -209,36 +209,4 @@ export class UnsupportedOpError extends Error {
     if (arg !== undefined) msg += ` with arg ${JSON.stringify(arg)}`;
     super(msg);
   }
-}
-
-/**
- * Advanced operations that don't fit into the "AluExp" compiler representation.
- *
- * Some routines like iterative matrix algorithms, FFTs, or sorting may not be
- * easy to express efficiently as a `Kernel` object. These also tend to be
- * somewhat expensive, so the benefit of kernel fusion and inlining is less
- * relevant.
- *
- * For these operations, we dispatch them as a custom operation on the backend,
- * which each backend implements in a specific way. These are listed in the
- * `Routines` enum below.
- *
- * Routines cannot be fused into other kernels and always operate on contiguous
- * arrays (default `ShapeTracker`).
- */
-export class Routine {
-  constructor(
-    /** The name of the routine. */
-    readonly name: Routines,
-    /** Shapes and types of the arguments. */
-    readonly avals: ShapedArray[],
-    /** Extra parameters specific to the routine. */
-    readonly params?: any,
-  ) {}
-}
-
-/** One of the valid `Routine` that can be dispatched to backend. */
-export enum Routines {
-  /** Cholesky decomposition of 2D positive semi-definite matrices. */
-  Cholesky = "Cholesky",
 }

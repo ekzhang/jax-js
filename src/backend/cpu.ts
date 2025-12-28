@@ -1,12 +1,6 @@
 import { AluOp, dtypedArray, Kernel } from "../alu";
-import {
-  Backend,
-  Device,
-  Executable,
-  Routine,
-  Slot,
-  SlotError,
-} from "../backend";
+import { Backend, Device, Executable, Slot, SlotError } from "../backend";
+import { Routine } from "../routine";
 import { tuneNullopt } from "../tuner";
 
 /** Most basic implementation of `Backend` for testing. */

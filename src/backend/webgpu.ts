@@ -3,11 +3,11 @@ import {
   Backend,
   Device,
   Executable,
-  Routine,
   Slot,
   SlotError,
   UnsupportedOpError,
 } from "../backend";
+import { Routine } from "../routine";
 import { tuneWebgpu } from "../tuner";
 import { DEBUG, findPow2, FpHash, mapSetUnion, prod, strip1 } from "../utils";
 import { erfSrc, threefrySrc } from "./webgpu/builtins";
