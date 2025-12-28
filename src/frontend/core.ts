@@ -72,7 +72,6 @@ export enum Primitive {
   Gather = "gather",
   Jit = "jit",
   TriangularSolve = "triangular_solve",
-  CustomOp = "custom_op",
 }
 
 interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
@@ -101,10 +100,6 @@ interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
     lower: boolean;
     transposeA: boolean;
     unitDiagonal: boolean;
-  };
-  [Primitive.CustomOp]: {
-    name: string;
-    [key: string]: any;
   };
 }
 

@@ -1,7 +1,6 @@
 /** @file Implementations of vjp() and partial evaluation. */
 
 import { AluOp, isFloatDtype } from "../alu";
-import { customOpRegistry } from "../custom-ops/registry.js";
 import {
   dispose as treeDispose,
   flatten as treeFlatten,
@@ -906,13 +905,6 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
     });
 
     return [null, ct_b];
-  },
-  [Primitive.CustomOp](cotangents, args, params) {
-    const impl = customOpRegistry.get(params.name);
-    if (!impl?.vjp) {
-      throw new Error(`VJP not implemented for custom op: ${params.name}`);
-    }
-    return impl.vjp(cotangents, args, params);
   },
 };
 

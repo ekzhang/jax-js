@@ -5,7 +5,6 @@ import {
   unflatten as treeUnflatten,
 } from "../tree";
 import { unzip2, zip } from "../utils";
-import { customOpRegistry } from "../custom-ops/registry.js";
 import { array, pureArray, zerosLike } from "./array";
 import {
   AbstractValue,
@@ -346,13 +345,6 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     });
 
     return [[x], [dx]];
-  },
-  [Primitive.CustomOp](primals, tangents, params) {
-    const impl = customOpRegistry.get(params.name);
-    if (!impl?.jvp) {
-      throw new Error(`JVP not implemented for custom op: ${params.name}`);
-    }
-    return impl.jvp(primals, tangents, params);
   },
 };
 

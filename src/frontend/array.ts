@@ -47,7 +47,6 @@ import {
   UseAfterFreeError,
 } from "./core";
 import { jitCompile } from "./jit";
-import { customOpRegistry } from "../custom-ops/registry.js";
 
 const JsArray = globalThis.Array;
 
@@ -1053,19 +1052,6 @@ export class Array extends Tracer {
             unitDiagonal,
           }),
         ];
-      },
-      [Primitive.CustomOp](args, params) {
-        const impl = customOpRegistry.get(params.name);
-        if (!impl) {
-          throw new Error(`Unknown custom op: ${params.name}`);
-        }
-        const device = (args[0] as Array).device;
-        const result = impl.dispatch(args as Array[], params, device);
-        // Handle both sync and async results
-        if (result instanceof Promise) {
-          throw new Error("Async custom ops not yet supported in impl rules");
-        }
-        return JsArray.isArray(result) ? result : [result];
       },
       [Primitive.Jit](args, { jaxpr }) {
         if (jaxpr.inBinders.length !== args.length) {

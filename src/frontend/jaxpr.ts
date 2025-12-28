@@ -1,7 +1,6 @@
 import { byteWidth, DType, isFloatDtype } from "../alu";
 import { PPrint } from "../pprint";
 import { type Pair } from "../shape";
-import { customOpRegistry } from "../custom-ops/registry.js";
 import {
   JsTreeDef,
   MapJsTree,
@@ -914,15 +913,6 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     }
     // Output shape is same as b
     return [new ShapedArray(b.shape, b.dtype, b.weakType)];
-  },
-  [Primitive.CustomOp](inputs, params) {
-    const impl = customOpRegistry.get(params.name);
-    if (!impl?.abstractEval) {
-      // Default: use first input shape/dtype
-      return [inputs[0]];
-    }
-    const result = impl.abstractEval(inputs, params);
-    return Array.isArray(result) ? result : [result];
   },
 };
 
