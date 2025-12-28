@@ -1,4 +1,4 @@
-import { AluExp, AluGroup, AluOp, DType, isFloatDtype, Kernel } from "../alu";
+import { AluExp, AluGroup, AluOp, dtypedArray, DType, isFloatDtype, Kernel } from "../alu";
 import {
   Backend,
   Device,
@@ -7,7 +7,7 @@ import {
   SlotError,
   UnsupportedOpError,
 } from "../backend";
-import { Routine } from "../routine";
+import { Routine, Routines, runCholesky, runSort, runArgsort } from "../routine";
 import { tuneWebgpu } from "../tuner";
 import { DEBUG, findPow2, FpHash, mapSetUnion, prod, strip1 } from "../utils";
 import { erfSrc, threefrySrc } from "./webgpu/builtins";
@@ -169,12 +169,12 @@ export class WebGPUBackend implements Backend {
     return new Executable(kernel, { ...shaderInfo, pipeline });
   }
 
-  async prepareRoutine(_routine: Routine): Promise<Executable> {
-    throw new Error("Routines are not implemented yet");
+  async prepareRoutine(routine: Routine): Promise<Executable> {
+    return this.prepareRoutineSync(routine);
   }
 
-  prepareRoutineSync(_routine: Routine): Executable {
-    throw new Error("Routines are not implemented yet");
+  prepareRoutineSync(routine: Routine): Executable {
+    return new Executable(routine, undefined);
   }
 
   dispatch(
@@ -182,8 +182,20 @@ export class WebGPUBackend implements Backend {
     inputs: Slot[],
     outputs: Slot[],
   ): void {
+    // Handle routines with custom GPU implementations
     if (exe.source instanceof Routine) {
-      throw new Error("Routines are not implemented yet");
+      const routine = exe.source;
+
+      switch (routine.name) {
+        case Routines.Cholesky:
+          this.#dispatchCholesky(inputs[0], outputs[0], routine);
+          return;
+        case Routines.Sort:
+        case Routines.Argsort:
+          throw new Error(`WebGPU routine ${routine.name} not yet implemented. Please use CPU or WASM backend.`);
+        default:
+          throw new Error(`Unknown routine: ${routine.name}`);
+      }
     }
 
     if (inputs.length !== exe.data.nargs) {
@@ -230,6 +242,133 @@ export class WebGPUBackend implements Backend {
       mappedAtCreation: mapped,
     });
     return buffer;
+  }
+
+  /**
+   * WebGPU implementation of Cholesky decomposition using custom compute shader
+   *
+   * Algorithm: Column-wise right-looking Cholesky with workgroup barriers
+   *
+   * For each column j (sequential kernel dispatch):
+   *   - Compute diagonal: L[j,j] = sqrt(A[j,j] - sum(L[j,k]^2))
+   *   - Workgroup barrier
+   *   - Compute off-diagonal: L[i,j] = (A[i,j] - sum(...)) / L[j,j] for i > j
+   */
+  #dispatchCholesky(inputSlot: Slot, outputSlot: Slot, routine: Routine): void {
+    const { buffer: inputBuffer } = this.#getBuffer(inputSlot);
+    const { buffer: outputBuffer } = this.#getBuffer(outputSlot);
+
+    const [n] = routine.avals[0].shape;
+    const dtype = routine.avals[0].dtype;
+
+    if (dtype !== DType.Float32) {
+      throw new Error("WebGPU Cholesky currently only supports Float32");
+    }
+
+    const outputSize = n * n * 4; // float32 = 4 bytes
+
+    // Copy input to output (we modify it in-place)
+    const copyEncoder = this.device.createCommandEncoder();
+    copyEncoder.copyBufferToBuffer(inputBuffer, 0, outputBuffer, 0, outputSize);
+    this.device.queue.submit([copyEncoder.finish()]);
+
+    // Column-wise Cholesky shader
+    const shaderCode = `
+@group(0) @binding(0) var<storage, read_write> L: array<f32>;
+@group(0) @binding(1) var<uniform> params: vec2<u32>; // params.x = n, params.y = j
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+  let i = id.x;
+  let n = params.x;
+  let j = params.y;
+
+  // Compute diagonal element (only thread j)
+  if (i == j && i < n) {
+    var sum_diag: f32 = 0.0;
+    for (var k = 0u; k < j; k = k + 1u) {
+      let ljk = L[j * n + k];
+      sum_diag = sum_diag + (ljk * ljk);
+    }
+    L[j * n + j] = sqrt(max(L[j * n + j] - sum_diag, 1e-10));
+  }
+
+  workgroupBarrier();
+
+  // Compute off-diagonal elements (threads i > j)
+  if (i > j && i < n) {
+    var sum_off: f32 = 0.0;
+    for (var k = 0u; k < j; k = k + 1u) {
+      sum_off = sum_off + (L[i * n + k] * L[j * n + k]);
+    }
+    L[i * n + j] = (L[i * n + j] - sum_off) / L[j * n + j];
+  } else if (i < j && i < n) {
+    // Zero upper triangle
+    L[i * n + j] = 0.0;
+  }
+}
+`;
+
+    // Compile shader once
+    const shaderModule = this.device.createShaderModule({ code: shaderCode });
+    const pipeline = this.device.createComputePipeline({
+      layout: "auto",
+      compute: { module: shaderModule, entryPoint: "main" },
+    });
+
+    const workgroupSize = 256;
+    const numWorkgroups = Math.ceil(n / workgroupSize);
+
+    // Batch size: number of columns to submit in one command buffer
+    const BATCH_SIZE = 32;
+
+    // Pre-allocate uniform buffers and bind groups for the entire batch
+    const uniformBuffers: GPUBuffer[] = [];
+    const bindGroups: GPUBindGroup[] = [];
+
+    for (let batchStart = 0; batchStart < n; batchStart += BATCH_SIZE) {
+      const batchEnd = Math.min(batchStart + BATCH_SIZE, n);
+      const batchCount = batchEnd - batchStart;
+
+      // Create uniform buffers and bind groups for this batch
+      for (let i = 0; i < batchCount; i++) {
+        const j = batchStart + i;
+        const uniformData = new Uint32Array([n, j]);
+        const uniformBuffer = this.device.createBuffer({
+          size: 8,
+          usage: GPUBufferUsage.UNIFORM,
+          mappedAtCreation: true,
+        });
+        new Uint32Array(uniformBuffer.getMappedRange()).set(uniformData);
+        uniformBuffer.unmap();
+        uniformBuffers.push(uniformBuffer);
+
+        const bindGroup = this.device.createBindGroup({
+          layout: pipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: outputBuffer } },
+            { binding: 1, resource: { buffer: uniformBuffer } },
+          ],
+        });
+        bindGroups.push(bindGroup);
+      }
+
+      // Submit all columns in this batch in a single command buffer
+      const commandEncoder = this.device.createCommandEncoder();
+      for (let i = 0; i < batchCount; i++) {
+        const passEncoder = commandEncoder.beginComputePass();
+        passEncoder.setPipeline(pipeline);
+        passEncoder.setBindGroup(0, bindGroups[uniformBuffers.length - batchCount + i]);
+        passEncoder.dispatchWorkgroups(numWorkgroups);
+        passEncoder.end();
+      }
+      this.device.queue.submit([commandEncoder.finish()]);
+    }
+
+    // Cleanup
+    for (const buf of uniformBuffers) {
+      buf.destroy();
+    }
   }
 }
 

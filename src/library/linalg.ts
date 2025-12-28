@@ -1,9 +1,7 @@
 // Linear algebra functions, mirroring `jax.numpy.linalg` and `jax.scipy.linalg`.
 
-import { type Array, type ArrayLike, fudgeArray } from "../frontend/array";
-import * as core from "../frontend/core";
-// Import custom ops to ensure they're registered
-import "../custom-ops/cholesky.js";
+import { Array, type ArrayLike, fudgeArray } from "../frontend/array";
+import { Routines } from "../routine";
 
 /**
  * Compute the Cholesky decomposition of a matrix.
@@ -47,11 +45,8 @@ export function cholesky(
 ): Array {
   a = fudgeArray(a);
 
-  // Use CustomOp primitive to dispatch to backend-specific implementation
-  const result = core.bind1(core.Primitive.CustomOp, [a], {
-    name: "linalg.cholesky",
-    lower,
-  }) as Array;
+  // Dispatch to Routine implementation
+  const result = Array.dispatchRoutine(Routines.Cholesky, [a], { lower });
 
   return result;
 }

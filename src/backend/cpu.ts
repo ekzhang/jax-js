@@ -1,6 +1,6 @@
 import { AluOp, dtypedArray, Kernel } from "../alu";
 import { Backend, Device, Executable, Slot, SlotError } from "../backend";
-import { Routine } from "../routine";
+import { Routine, Routines, runCholesky, runSort, runArgsort } from "../routine";
 import { tuneNullopt } from "../tuner";
 
 /** Most basic implementation of `Backend` for testing. */
@@ -76,13 +76,38 @@ export class CpuBackend implements Backend {
     return this.prepareRoutineSync(routine);
   }
 
-  prepareRoutineSync(_routine: Routine): Executable {
-    throw new Error("Routines are not implemented yet");
+  prepareRoutineSync(routine: Routine): Executable {
+    return new Executable(routine, undefined);
   }
 
   dispatch(exe: Executable<void>, inputs: Slot[], outputs: Slot[]): void {
     if (exe.source instanceof Routine) {
-      throw new Error("Routines are not implemented yet");
+      const routine = exe.source;
+      const inputBuffers = inputs.map((slot) => this.#getBuffer(slot));
+      const outputBuffers = outputs.map((slot) => this.#getBuffer(slot));
+
+      const inputArrays = inputBuffers.map((buf) => dtypedArray(routine.avals[0].dtype, buf));
+
+      // Dispatch to the appropriate routine
+      let result: any[];
+      switch (routine.name) {
+        case Routines.Cholesky:
+          result = runCholesky(inputArrays, routine.avals, routine.params);
+          break;
+        case Routines.Sort:
+          result = runSort(inputArrays, routine.avals);
+          break;
+        case Routines.Argsort:
+          result = runArgsort(inputArrays, routine.avals);
+          break;
+        default:
+          throw new Error(`Unknown routine: ${routine.name}`);
+      }
+
+      // Copy result to output buffer
+      const outputArray = dtypedArray(routine.avals[0].dtype, outputBuffers[0]);
+      outputArray.set(result[0]);
+      return;
     }
 
     const kernel = exe.source as Kernel;

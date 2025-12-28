@@ -13,6 +13,7 @@ import {
   Reduction,
 } from "../alu";
 import { Backend, Device, Executable, getBackend, Slot } from "../backend";
+import { Routine, Routines } from "../routine";
 import { ShapeTracker, unravelAlu } from "../shape";
 import {
   deepEqual,
@@ -692,6 +693,63 @@ export class Array extends Tracer {
       const backend = arrays.length > 0 ? arrays[0].#backend : getBackend();
       return { backend, committed: false };
     }
+  }
+
+  /**
+   * Dispatch a Routine operation on arrays.
+   *
+   * @param name - The routine name (from Routines enum)
+   * @param inputs - Input arrays
+   * @param params - Optional parameters specific to the routine
+   * @returns Result array
+   */
+  static dispatchRoutine(
+    name: Routines,
+    inputs: Array[],
+    params?: any,
+  ): Array {
+    if (inputs.length === 0) throw new Error("Routine requires at least one input");
+
+    const { backend } = Array.#computeBackend(name, inputs);
+    const dtype = inputs[0].#dtype;
+
+    // Create routine
+    const avals = inputs.map(arr => new ShapedArray(arr.shape, arr.#dtype));
+    const routine = new Routine(name, avals, params);
+
+    // Prepare routine
+    const exe = backend.prepareRoutineSync(routine);
+
+    // Allocate output buffer (same size as first input for now - routine-specific)
+    const outputSize = inputs[0].size * byteWidth(dtype);
+    const output = backend.malloc(outputSize);
+
+    // Realize inputs and get slots
+    const inputSlots = inputs.map(arr => arr._realizeSource());
+
+    // Execute all pending operations synchronously
+    for (const arr of inputs) {
+      for (const p of arr.#pending) {
+        p.prepareSync();
+        p.submit();
+      }
+    }
+
+    // Dispatch routine
+    backend.dispatch(exe, inputSlots, [output]);
+
+    // Dispose inputs
+    for (const arr of inputs) arr.dispose();
+
+    // Return result
+    return new Array({
+      source: output,
+      st: inputs[0].#st,
+      dtype,
+      weakType: false,
+      backend,
+      committed: true,
+    });
   }
 
   /** Realize the array and return it as data. */
