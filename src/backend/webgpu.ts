@@ -3,22 +3,24 @@ import {
   Backend,
   Device,
   Executable,
+  Routine,
   Slot,
   SlotError,
   UnsupportedOpError,
 } from "../backend";
 import { tuneWebgpu } from "../tuner";
-import { DEBUG, findPow2, FpHash, mapSetUnion, strip1 } from "../utils";
+import { DEBUG, findPow2, FpHash, mapSetUnion, prod, strip1 } from "../utils";
 import { erfSrc, threefrySrc } from "./webgpu/builtins";
 import { SyncReader } from "./webgpu/reader";
 
 interface ShaderInfo {
-  shader: string;
-  grid: [number, number];
+  shader: string; // WGSL shader source code.
+  grid: [number, number]; // Grid size (number of workgroups) in x and y.
+  nargs: number; // Number of input arguments.
 }
 
 interface ShaderDispatch extends ShaderInfo {
-  pipeline: GPUComputePipeline;
+  pipeline: GPUComputePipeline; // Compiled pipeline for the shader.
 }
 
 /** Implementation of `Backend` that uses WebGPU in browsers. */
@@ -155,16 +157,24 @@ export class WebGPUBackend implements Backend {
     return result;
   }
 
-  async prepare(kernel: Kernel): Promise<Executable<ShaderDispatch>> {
-    const { shader, grid } = this.#cachedShader(kernel);
-    const pipeline = await this.pipelines.prepare(shader);
-    return new Executable(kernel, { shader, grid, pipeline });
+  async prepareKernel(kernel: Kernel): Promise<Executable<ShaderDispatch>> {
+    const shaderInfo = this.#cachedShader(kernel);
+    const pipeline = await this.pipelines.prepare(shaderInfo.shader);
+    return new Executable(kernel, { ...shaderInfo, pipeline });
   }
 
-  prepareSync(kernel: Kernel): Executable<ShaderDispatch> {
-    const { shader, grid } = this.#cachedShader(kernel);
-    const pipeline = this.pipelines.prepareSync(shader);
-    return new Executable(kernel, { shader, grid, pipeline });
+  prepareKernelSync(kernel: Kernel): Executable<ShaderDispatch> {
+    const shaderInfo = this.#cachedShader(kernel);
+    const pipeline = this.pipelines.prepareSync(shaderInfo.shader);
+    return new Executable(kernel, { ...shaderInfo, pipeline });
+  }
+
+  async prepareRoutine(_routine: Routine): Promise<Executable> {
+    throw new Error("Routines are not implemented yet");
+  }
+
+  prepareRoutineSync(_routine: Routine): Executable {
+    throw new Error("Routines are not implemented yet");
   }
 
   dispatch(
@@ -172,12 +182,16 @@ export class WebGPUBackend implements Backend {
     inputs: Slot[],
     outputs: Slot[],
   ): void {
-    if (inputs.length !== exe.kernel.nargs) {
+    if (exe.source instanceof Routine) {
+      throw new Error("Routines are not implemented yet");
+    }
+
+    if (inputs.length !== exe.data.nargs) {
       throw new Error(
-        `webgpu: dispatch with ${inputs.length} inputs, expected ${exe.kernel.nargs}`,
+        `webgpu: dispatch with ${inputs.length} inputs, expected ${exe.data.nargs}`,
       );
     }
-    if (exe.kernel.size === 0) return; // Nothing to do
+    if (prod(exe.data.grid) === 0) return; // Nothing to do
     const inputBuffers = inputs.map((slot) => this.#getBuffer(slot).buffer);
     const outputBuffers = outputs.map((slot) => this.#getBuffer(slot).buffer);
     pipelineSubmit(this.device, exe.data, inputBuffers, outputBuffers);
@@ -580,6 +594,7 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
   return {
     shader: shader.join("\n"),
     grid: [gridX, gridY],
+    nargs,
   };
 }
 

@@ -1,5 +1,12 @@
 import { AluOp, dtypedArray, Kernel } from "../alu";
-import { Backend, Device, Executable, Slot, SlotError } from "../backend";
+import {
+  Backend,
+  Device,
+  Executable,
+  Routine,
+  Slot,
+  SlotError,
+} from "../backend";
 import { tuneNullopt } from "../tuner";
 
 /** Most basic implementation of `Backend` for testing. */
@@ -63,19 +70,28 @@ export class CpuBackend implements Backend {
     return buffer.slice(start, start + count);
   }
 
-  async prepare(kernel: Kernel): Promise<Executable<void>> {
-    return this.prepareSync(kernel);
+  async prepareKernel(kernel: Kernel): Promise<Executable<void>> {
+    return this.prepareKernelSync(kernel);
   }
 
-  prepareSync(kernel: Kernel): Executable<void> {
+  prepareKernelSync(kernel: Kernel): Executable<void> {
     return new Executable(kernel, undefined);
   }
 
-  dispatch(
-    { kernel }: Executable<void>,
-    inputs: Slot[],
-    outputs: Slot[],
-  ): void {
+  async prepareRoutine(routine: Routine): Promise<Executable> {
+    return this.prepareRoutineSync(routine);
+  }
+
+  prepareRoutineSync(_routine: Routine): Executable {
+    throw new Error("Routines are not implemented yet");
+  }
+
+  dispatch(exe: Executable<void>, inputs: Slot[], outputs: Slot[]): void {
+    if (exe.source instanceof Routine) {
+      throw new Error("Routines are not implemented yet");
+    }
+
+    const kernel = exe.source as Kernel;
     const { exp, epilogue } = tuneNullopt(kernel);
     const inputBuffers = inputs.map((slot) => this.#getBuffer(slot));
     const outputBuffers = outputs.map((slot) => this.#getBuffer(slot));

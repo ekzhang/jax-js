@@ -11,6 +11,7 @@ import {
   Backend,
   Device,
   Executable,
+  Routine,
   Slot,
   SlotError,
   UnsupportedOpError,
@@ -109,17 +110,25 @@ export class WasmBackend implements Backend {
     return buffer.slice(start, start + count);
   }
 
-  async prepare(kernel: Kernel): Promise<Executable<WasmProgram>> {
-    return this.prepareSync(kernel);
+  async prepareKernel(kernel: Kernel): Promise<Executable<WasmProgram>> {
+    return this.prepareKernelSync(kernel);
   }
 
-  prepareSync(kernel: Kernel): Executable<WasmProgram> {
+  prepareKernelSync(kernel: Kernel): Executable<WasmProgram> {
     const kernelHash = FpHash.hash(kernel);
     const module = runWithCache(moduleCache, kernelHash.toString(), () => {
       const bytes = codegenWasm(kernel);
       return new WebAssembly.Module(bytes);
     });
     return new Executable(kernel, { module });
+  }
+
+  async prepareRoutine(routine: Routine): Promise<Executable> {
+    return this.prepareRoutineSync(routine);
+  }
+
+  prepareRoutineSync(_routine: Routine): Executable {
+    throw new Error("Routines are not implemented yet");
   }
 
   dispatch(
