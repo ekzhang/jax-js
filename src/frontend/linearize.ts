@@ -806,6 +806,15 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
     cond.dispose();
     return cts;
   },
+  [Primitive.Gather]([ct], [x, ...indices], { axis, outDim }) {
+    if (!(x instanceof UndefPrimal)) throw new NonlinearError(Primitive.Gather);
+    if (indices.some((i) => i instanceof UndefPrimal))
+      throw new NonlinearError(Primitive.Gather);
+    void [ct, axis, outDim];
+    throw new Error(
+      "Gather transpose rule is not yet implemented, requires complex Scatter sum operation",
+    );
+  },
   [Primitive.Transpose]([ct], [x], { perm }) {
     if (!(x instanceof UndefPrimal))
       throw new NonlinearError(Primitive.Transpose);
@@ -838,15 +847,6 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
       ([s, _e], i) => [s, s + x.aval.shape[i]] as [number, number],
     );
     return [shrink(ct, slice)];
-  },
-  [Primitive.Gather]([ct], [x, ...indices], { axis, outDim }) {
-    if (!(x instanceof UndefPrimal)) throw new NonlinearError(Primitive.Gather);
-    if (indices.some((i) => i instanceof UndefPrimal))
-      throw new NonlinearError(Primitive.Gather);
-    void [ct, axis, outDim];
-    throw new Error(
-      "Gather transpose rule is not yet implemented, requires complex Scatter sum operation",
-    );
   },
   [Primitive.Jit](cts, args, { name, jaxpr }) {
     // We need this one because the jvp() rule for Jit generates a Jit

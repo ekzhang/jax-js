@@ -33,10 +33,15 @@ import type { Jaxpr } from "./jaxpr";
  * All n-ary operations support broadcasting, with NumPy semantics.
  */
 export enum Primitive {
+  // Arithmetic
   Add = "add",
   Mul = "mul",
   Idiv = "idiv",
-  Mod = "mod", // uses sign of dividend, C-style, matches JS but not Python
+  Mod = "mod", // uses sign of numerator, C-style, matches JS but not Python
+  Min = "min",
+  Max = "max",
+
+  // Unary functions and type casting
   Neg = "neg",
   Reciprocal = "reciprocal",
   Floor = "floor",
@@ -44,7 +49,6 @@ export enum Primitive {
   StopGradient = "stop_gradient",
   Cast = "cast",
   Bitcast = "bitcast",
-  RandomBits = "random_bits",
   Sin = "sin",
   Cos = "cos",
   Asin = "asin",
@@ -54,22 +58,29 @@ export enum Primitive {
   Erf = "erf",
   Erfc = "erfc",
   Sqrt = "sqrt",
-  Min = "min",
-  Max = "max",
+
+  // Reductions, convolution and pooling
   Reduce = "reduce",
   Dot = "dot", // sum(x*y, axis=-1)
   Conv = "conv", // see lax.conv_general_dilated
   Pool = "pool",
   PoolTranspose = "pool_transpose",
+
+  // Utility
   Compare = "compare",
   Where = "where",
+  RandomBits = "random_bits",
+  Gather = "gather",
+
+  // Movement
   Transpose = "transpose",
   Broadcast = "broadcast",
   Reshape = "reshape",
   Flip = "flip",
   Shrink = "shrink",
   Pad = "pad",
-  Gather = "gather",
+
+  // JIT compilation
   Jit = "jit",
 }
 
@@ -85,14 +96,14 @@ interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
     strides: number[];
   };
   [Primitive.Compare]: { op: CompareOp };
+  [Primitive.RandomBits]: { shape: number[]; mode: "xor" | 0 | 1 };
+  [Primitive.Gather]: { axis: number[]; outDim: number };
   [Primitive.Transpose]: { perm: number[] };
   [Primitive.Broadcast]: { shape: number[]; axis: number[] };
-  [Primitive.RandomBits]: { shape: number[]; mode: "xor" | 0 | 1 };
   [Primitive.Reshape]: { shape: number[] };
   [Primitive.Flip]: { axis: number[] };
   [Primitive.Shrink]: { slice: Pair[] };
   [Primitive.Pad]: { width: Pair[] };
-  [Primitive.Gather]: { axis: number[]; outDim: number };
   [Primitive.Jit]: { name: string; jaxpr: Jaxpr; numConsts: number };
 }
 
@@ -125,6 +136,14 @@ export function mod(x: TracerValue, y: TracerValue) {
   return bind1(Primitive.Mod, [x, y]);
 }
 
+export function min(x: TracerValue, y: TracerValue) {
+  return bind1(Primitive.Min, [x, y]);
+}
+
+export function max(x: TracerValue, y: TracerValue) {
+  return bind1(Primitive.Max, [x, y]);
+}
+
 export function neg(x: TracerValue) {
   return bind1(Primitive.Neg, [x]);
 }
@@ -151,15 +170,6 @@ export function cast(x: TracerValue, dtype: DType) {
 
 export function bitcast(x: TracerValue, dtype: DType) {
   return bind1(Primitive.Bitcast, [x], { dtype });
-}
-
-export function randomBits(
-  k0: Tracer,
-  k1: Tracer,
-  shape: number[],
-  mode: "xor" | 0 | 1 = "xor",
-) {
-  return bind1(Primitive.RandomBits, [k0, k1], { shape, mode });
 }
 
 export function sin(x: TracerValue) {
@@ -196,14 +206,6 @@ export function erfc(x: TracerValue) {
 
 export function sqrt(x: TracerValue) {
   return bind1(Primitive.Sqrt, [x]);
-}
-
-export function min(x: TracerValue, y: TracerValue) {
-  return bind1(Primitive.Min, [x, y]);
-}
-
-export function max(x: TracerValue, y: TracerValue) {
-  return bind1(Primitive.Max, [x, y]);
 }
 
 /** @inline */
@@ -279,6 +281,41 @@ export function lessEqual(x: TracerValue, y: TracerValue) {
 
 export function where(cond: TracerValue, x: TracerValue, y: TracerValue) {
   return bind1(Primitive.Where, [cond, x, y]);
+}
+
+export function randomBits(
+  k0: Tracer,
+  k1: Tracer,
+  shape: number[],
+  mode: "xor" | 0 | 1 = "xor",
+) {
+  return bind1(Primitive.RandomBits, [k0, k1], { shape, mode });
+}
+
+export function gather(
+  x: TracerValue,
+  indices: TracerValue[],
+  axis: number[], // one for each index
+  outDim: number,
+) {
+  // Evaluate advanced indexing x[:, ...indices, :], with the index dimensions
+  // starting at axis `outDim` in the output.
+  if (indices.length === 0) {
+    throw new Error("gather() requires at least one index");
+  }
+  if (!Array.isArray(axis) || axis.length !== indices.length) {
+    throw new Error(
+      `Invalid gather() axis: expected ${indices.length} axes, got ${JSON.stringify(axis)}`,
+    );
+  }
+  axis = axis.map((a) => checkAxis(a, ndim(x)));
+  if (new Set(axis).size !== axis.length) {
+    throw new Error(
+      `Invalid gather() axis: duplicate axes ${JSON.stringify(axis)}`,
+    );
+  }
+  outDim = checkAxis(outDim, ndim(x) - axis.length + 1);
+  return bind1(Primitive.Gather, [x, ...indices], { axis, outDim });
 }
 
 export function transpose(x: TracerValue, perm?: number[]) {
@@ -361,32 +398,6 @@ export function pad(x: TracerValue, width: number | Pair | Pair[]) {
     throw new Error(`Invalid pad(): expected ${nd} axes, got ${width.length}`);
   }
   return bind1(Primitive.Pad, [x], { width });
-}
-
-export function gather(
-  x: TracerValue,
-  indices: TracerValue[],
-  axis: number[], // one for each index
-  outDim: number,
-) {
-  // Evaluate advanced indexing x[:, ...indices, :], with the index dimensions
-  // starting at axis `outDim` in the output.
-  if (indices.length === 0) {
-    throw new Error("gather() requires at least one index");
-  }
-  if (!Array.isArray(axis) || axis.length !== indices.length) {
-    throw new Error(
-      `Invalid gather() axis: expected ${indices.length} axes, got ${JSON.stringify(axis)}`,
-    );
-  }
-  axis = axis.map((a) => checkAxis(a, ndim(x)));
-  if (new Set(axis).size !== axis.length) {
-    throw new Error(
-      `Invalid gather() axis: duplicate axes ${JSON.stringify(axis)}`,
-    );
-  }
-  outDim = checkAxis(outDim, ndim(x) - axis.length + 1);
-  return bind1(Primitive.Gather, [x, ...indices], { axis, outDim });
 }
 
 export function bind1<P extends Primitive>(

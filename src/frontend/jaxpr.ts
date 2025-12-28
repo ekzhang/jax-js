@@ -750,6 +750,8 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
   [Primitive.Mul]: binopAbstractEval,
   [Primitive.Idiv]: binopAbstractEval,
   [Primitive.Mod]: binopAbstractEval,
+  [Primitive.Min]: binopAbstractEval,
+  [Primitive.Max]: binopAbstractEval,
   [Primitive.Neg]: vectorizedUnopAbstractEval,
   [Primitive.Reciprocal]: vectorizedUnopAbstractEval,
   [Primitive.Floor]: vectorizedUnopAbstractEval,
@@ -769,20 +771,6 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     }
     return [new ShapedArray(x.shape, dtype, false)];
   },
-  [Primitive.RandomBits]([k0, k1]: ShapedArray[], { shape }) {
-    if (k0.dtype !== DType.Uint32 || k1.dtype !== DType.Uint32) {
-      throw new TypeError(
-        `RandomBits requires uint32 keys, got ${k0.dtype} and ${k1.dtype}`,
-      );
-    }
-    const keyShape = generalBroadcast(k0.shape, k1.shape);
-    if (!deepEqual(generalBroadcast(keyShape, shape), shape)) {
-      throw new TypeError(
-        `Keys of shapes ${k0.shape} and ${k1.shape} cannot be broadcast to shape ${shape}`,
-      );
-    }
-    return [new ShapedArray(shape, DType.Uint32, false)];
-  },
   [Primitive.Sin]: vectorizedUnopAbstractEval,
   [Primitive.Cos]: vectorizedUnopAbstractEval,
   [Primitive.Asin]: vectorizedUnopAbstractEval,
@@ -792,8 +780,6 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
   [Primitive.Erf]: vectorizedUnopAbstractEval,
   [Primitive.Erfc]: vectorizedUnopAbstractEval,
   [Primitive.Sqrt]: vectorizedUnopAbstractEval,
-  [Primitive.Min]: binopAbstractEval,
-  [Primitive.Max]: binopAbstractEval,
   [Primitive.Reduce]([x], { axis }) {
     const axisSet = new Set(axis);
     const newShape = x.shape.filter((_, i) => !axisSet.has(i));
@@ -835,31 +821,19 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     const shape = generalBroadcast(cond.shape, xy.shape);
     return [new ShapedArray(shape, xy.dtype, xy.weakType)];
   },
-  [Primitive.Transpose]([x], { perm }) {
-    return [
-      new ShapedArray(
-        perm.map((i) => x.shape[i]),
-        x.dtype,
-        x.weakType,
-      ),
-    ];
-  },
-  [Primitive.Broadcast]([x], { shape }) {
-    return [new ShapedArray(shape, x.dtype, x.weakType)];
-  },
-  [Primitive.Reshape]([x], { shape }) {
-    return [new ShapedArray(shape, x.dtype, x.weakType)];
-  },
-  [Primitive.Flip]([x], _) {
-    return [ShapedArray.fromAval(x)];
-  },
-  [Primitive.Shrink]([x], { slice }) {
-    const newShape = slice.map((s) => s[1] - s[0]);
-    return [new ShapedArray(newShape, x.dtype, x.weakType)];
-  },
-  [Primitive.Pad]([x], { width }) {
-    const newShape = x.shape.map((dim, i) => dim + width[i][0] + width[i][1]);
-    return [new ShapedArray(newShape, x.dtype, x.weakType)];
+  [Primitive.RandomBits]([k0, k1]: ShapedArray[], { shape }) {
+    if (k0.dtype !== DType.Uint32 || k1.dtype !== DType.Uint32) {
+      throw new TypeError(
+        `RandomBits requires uint32 keys, got ${k0.dtype} and ${k1.dtype}`,
+      );
+    }
+    const keyShape = generalBroadcast(k0.shape, k1.shape);
+    if (!deepEqual(generalBroadcast(keyShape, shape), shape)) {
+      throw new TypeError(
+        `Keys of shapes ${k0.shape} and ${k1.shape} cannot be broadcast to shape ${shape}`,
+      );
+    }
+    return [new ShapedArray(shape, DType.Uint32, false)];
   },
   [Primitive.Gather]([x, ...indices], { axis, outDim }) {
     for (const a of indices)
@@ -884,6 +858,32 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     );
     const newShape = x.shape.filter((_, i) => !axisSet.has(i));
     newShape.splice(outDim, 0, ...gatherShape);
+    return [new ShapedArray(newShape, x.dtype, x.weakType)];
+  },
+  [Primitive.Transpose]([x], { perm }) {
+    return [
+      new ShapedArray(
+        perm.map((i) => x.shape[i]),
+        x.dtype,
+        x.weakType,
+      ),
+    ];
+  },
+  [Primitive.Broadcast]([x], { shape }) {
+    return [new ShapedArray(shape, x.dtype, x.weakType)];
+  },
+  [Primitive.Reshape]([x], { shape }) {
+    return [new ShapedArray(shape, x.dtype, x.weakType)];
+  },
+  [Primitive.Flip]([x], _) {
+    return [ShapedArray.fromAval(x)];
+  },
+  [Primitive.Shrink]([x], { slice }) {
+    const newShape = slice.map((s) => s[1] - s[0]);
+    return [new ShapedArray(newShape, x.dtype, x.weakType)];
+  },
+  [Primitive.Pad]([x], { width }) {
+    const newShape = x.shape.map((dim, i) => dim + width[i][0] + width[i][1]);
     return [new ShapedArray(newShape, x.dtype, x.weakType)];
   },
   [Primitive.Jit](args, { jaxpr }) {

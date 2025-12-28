@@ -815,6 +815,12 @@ export class Array extends Tracer {
       [Primitive.Mod]([x, y]) {
         return [x.#binary(AluOp.Mod, y)];
       },
+      [Primitive.Min]([x, y]) {
+        return [x.#binary(AluOp.Min, y)];
+      },
+      [Primitive.Max]([x, y]) {
+        return [x.#binary(AluOp.Max, y)];
+      },
       [Primitive.Neg]([x]) {
         return [zerosLike(x.ref).#binary(AluOp.Sub, x)];
       },
@@ -855,24 +861,6 @@ export class Array extends Tracer {
           return [y];
         }
       },
-      [Primitive.RandomBits]([k0, k1], { shape, mode }) {
-        const keyShape = generalBroadcast(k0.shape, k1.shape);
-        if (!deepEqual(generalBroadcast(keyShape, shape), shape)) {
-          throw new TypeError(
-            `Keys of shapes ${k0.shape} and ${k1.shape} cannot be broadcast to shape ${shape}`,
-          );
-        }
-        // Arrays of size >2^32 won't fit into browser memory anyway, so it's
-        // okay to take lazy iota this way for counters.
-        const c0 = zeros(shape, { dtype: DType.Uint32, device: k0.device });
-        const c1 = arange(0, prod(shape), 1, {
-          dtype: DType.Uint32,
-          device: k0.device,
-        }).reshape(shape);
-        const custom = ([k0, k1, c0, c1]: AluExp[]) =>
-          AluExp.threefry2x32(k0, k1, c0, c1, mode);
-        return [Array.#naryCustom("random_bits", custom, [k0, k1, c0, c1])];
-      },
       [Primitive.Sin]([x]) {
         return [x.#unary(AluOp.Sin)];
       },
@@ -899,12 +887,6 @@ export class Array extends Tracer {
       },
       [Primitive.Sqrt]([x]) {
         return [x.#unary(AluOp.Sqrt)];
-      },
-      [Primitive.Min]([x, y]) {
-        return [x.#binary(AluOp.Min, y)];
-      },
-      [Primitive.Max]([x, y]) {
-        return [x.#binary(AluOp.Max, y)];
       },
       [Primitive.Reduce]([x], { op, axis }) {
         if (axis.length === 0) return [x];
@@ -958,6 +940,27 @@ export class Array extends Tracer {
           }),
         ];
       },
+      [Primitive.RandomBits]([k0, k1], { shape, mode }) {
+        const keyShape = generalBroadcast(k0.shape, k1.shape);
+        if (!deepEqual(generalBroadcast(keyShape, shape), shape)) {
+          throw new TypeError(
+            `Keys of shapes ${k0.shape} and ${k1.shape} cannot be broadcast to shape ${shape}`,
+          );
+        }
+        // Arrays of size >2^32 won't fit into browser memory anyway, so it's
+        // okay to take lazy iota this way for counters.
+        const c0 = zeros(shape, { dtype: DType.Uint32, device: k0.device });
+        const c1 = arange(0, prod(shape), 1, {
+          dtype: DType.Uint32,
+          device: k0.device,
+        }).reshape(shape);
+        const custom = ([k0, k1, c0, c1]: AluExp[]) =>
+          AluExp.threefry2x32(k0, k1, c0, c1, mode);
+        return [Array.#naryCustom("random_bits", custom, [k0, k1, c0, c1])];
+      },
+      [Primitive.Gather]([x, ...indices], { axis, outDim }) {
+        return [x.#gather(indices, axis, outDim)];
+      },
       [Primitive.Transpose]([x], { perm }) {
         return [x.#transpose(perm)];
       },
@@ -977,9 +980,6 @@ export class Array extends Tracer {
       },
       [Primitive.Pad]([x], { width }) {
         return [x.#reshape(x.#st.pad(width))];
-      },
-      [Primitive.Gather]([x, ...indices], { axis, outDim }) {
-        return [x.#gather(indices, axis, outDim)];
       },
       [Primitive.Jit](args, { jaxpr }) {
         if (jaxpr.inBinders.length !== args.length) {

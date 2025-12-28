@@ -489,6 +489,8 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   [Primitive.Mul]: broadcastedJit(([a, b]) => AluExp.mul(a, b)),
   [Primitive.Idiv]: broadcastedJit(([a, b]) => AluExp.idiv(a, b)),
   [Primitive.Mod]: broadcastedJit(([a, b]) => AluExp.mod(a, b)),
+  [Primitive.Min]: broadcastedJit(([a, b]) => AluExp.min(a, b)),
+  [Primitive.Max]: broadcastedJit(([a, b]) => AluExp.max(a, b)),
   [Primitive.Neg]: unopJit((a) => AluExp.sub(AluExp.const(a.dtype, 0), a)),
   [Primitive.Reciprocal]: unopJit(AluExp.reciprocal),
   [Primitive.Floor]: unopJit(AluExp.floor),
@@ -496,18 +498,6 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   [Primitive.StopGradient]: unopJit((a) => a), // No-op, just return the input.
   [Primitive.Cast]: unopJit((a, { dtype }) => AluExp.cast(dtype, a)),
   [Primitive.Bitcast]: unopJit((a, { dtype }) => AluExp.bitcast(dtype, a)),
-  [Primitive.RandomBits]: (keys, keyShapes, { shape, mode }) => {
-    const mapping = (st: ShapeTracker): ShapeTracker | undefined => {
-      if (!deepEqual(st.shape, shape))
-        return st.broadcast(shape, range(shape.length - st.shape.length));
-    };
-    const k0 = reshapeViews(keys[0], mapping);
-    const k1 = reshapeViews(keys[1], mapping);
-    const c0 = AluExp.u32(0);
-    const c1 = AluExp.cast(DType.Uint32, AluVar.gidx);
-    const exp = AluExp.threefry2x32(k0, k1, c0, c1, mode);
-    return { exp };
-  },
   [Primitive.Sin]: unopJit(AluExp.sin),
   [Primitive.Cos]: unopJit(AluExp.cos),
   [Primitive.Asin]: unopJit(AluExp.asin),
@@ -517,8 +507,6 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   [Primitive.Erf]: unopJit(AluExp.erf),
   [Primitive.Erfc]: unopJit(AluExp.erfc),
   [Primitive.Sqrt]: unopJit(AluExp.sqrt),
-  [Primitive.Min]: broadcastedJit(([a, b]) => AluExp.min(a, b)),
-  [Primitive.Max]: broadcastedJit(([a, b]) => AluExp.max(a, b)),
   [Primitive.Reduce]([a], [as], { op, axis }) {
     const keptAxes: number[] = [];
     const shiftedAxes: number[] = [];
@@ -584,18 +572,18 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
     ([cond, a, b]) => AluExp.where(cond, a, b),
     { skipCastIdx: [0] },
   ),
-  [Primitive.Transpose]: reshapeJit((st, { perm }) => st.permute(perm)),
-  [Primitive.Broadcast]: reshapeJit((st, { shape, axis }) =>
-    st.broadcast(shape, axis),
-  ),
-  [Primitive.Reshape]: reshapeJit((st, { shape }) => st.reshape(shape)),
-  [Primitive.Flip]: reshapeJit((st, { axis }) => {
-    const arg = rep(st.shape.length, false);
-    for (const ax of axis) arg[ax] = true;
-    return st.flip(arg);
-  }),
-  [Primitive.Shrink]: reshapeJit((st, { slice }) => st.shrink(slice)),
-  [Primitive.Pad]: reshapeJit((st, { width }) => st.pad(width)),
+  [Primitive.RandomBits]: (keys, keyShapes, { shape, mode }) => {
+    const mapping = (st: ShapeTracker): ShapeTracker | undefined => {
+      if (!deepEqual(st.shape, shape))
+        return st.broadcast(shape, range(shape.length - st.shape.length));
+    };
+    const k0 = reshapeViews(keys[0], mapping);
+    const k1 = reshapeViews(keys[1], mapping);
+    const c0 = AluExp.u32(0);
+    const c1 = AluExp.cast(DType.Uint32, AluVar.gidx);
+    const exp = AluExp.threefry2x32(k0, k1, c0, c1, mode);
+    return { exp };
+  },
   [Primitive.Gather](
     [x, ...indices],
     [xs, ...indicesShapes],
@@ -645,6 +633,18 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
       throw new Error("internal: expected full validity mask in Gather");
     return { exp: x.substitute({ gidx: index }) };
   },
+  [Primitive.Transpose]: reshapeJit((st, { perm }) => st.permute(perm)),
+  [Primitive.Broadcast]: reshapeJit((st, { shape, axis }) =>
+    st.broadcast(shape, axis),
+  ),
+  [Primitive.Reshape]: reshapeJit((st, { shape }) => st.reshape(shape)),
+  [Primitive.Flip]: reshapeJit((st, { axis }) => {
+    const arg = rep(st.shape.length, false);
+    for (const ax of axis) arg[ax] = true;
+    return st.flip(arg);
+  }),
+  [Primitive.Shrink]: reshapeJit((st, { slice }) => st.shrink(slice)),
+  [Primitive.Pad]: reshapeJit((st, { width }) => st.pad(width)),
   [Primitive.Jit]() {
     throw new Error(
       "internal: Jit should have been flattened before JIT compilation",
@@ -728,8 +728,8 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
           case Primitive.Mul:
           case Primitive.Idiv:
           case Primitive.Mod:
-          case Primitive.Max:
-          case Primitive.Min: {
+          case Primitive.Min:
+          case Primitive.Max: {
             const otherInput = nextEqn.inputs.find((v) => v !== outVar)!;
             if (
               otherInput instanceof Lit ||
@@ -776,8 +776,8 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
   const heterogeneousViewPrimitives = [
     // These primitives generate heterogeneous GlobalView outputs, there are
     // multiple views in the expression with different indexing.
-    Primitive.Gather,
     Primitive.RandomBits,
+    Primitive.Gather,
   ];
   const needsCleanShapePrimitives = [
     // If Pad is applied to a non-clean input, the reshaped padding would apply
