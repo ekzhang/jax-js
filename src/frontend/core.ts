@@ -70,7 +70,7 @@ export enum Primitive {
   Shrink = "shrink",
   Pad = "pad",
   Gather = "gather",
-  JitCall = "jit_call",
+  Jit = "jit",
   Cholesky = "cholesky",
   TriangularSolve = "triangular_solve",
 }
@@ -95,7 +95,7 @@ interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
   [Primitive.Shrink]: { slice: Pair[] };
   [Primitive.Pad]: { width: Pair[] };
   [Primitive.Gather]: { axis: number[]; outDim: number };
-  [Primitive.JitCall]: { name: string; jaxpr: Jaxpr; numConsts: number };
+  [Primitive.Jit]: { name: string; jaxpr: Jaxpr; numConsts: number };
   [Primitive.TriangularSolve]: {
     leftSide: boolean;
     lower: boolean;

@@ -21,7 +21,7 @@ import {
 export interface ConvParams {
   vmapDims: number; // number of dims to batch in front for (lhs, rhs)
   strides: number[];
-  padding: [number, number][];
+  padding: Pair[];
   lhsDilation: number[];
   rhsDilation: number[];
 }

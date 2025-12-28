@@ -3,10 +3,12 @@
 import { isFloatDtype } from "../alu";
 import {
   absolute,
+  add,
   Array,
   ArrayLike,
   clip,
   exp,
+  expm1,
   less,
   log,
   max,
@@ -70,6 +72,34 @@ export function softplus(x: ArrayLike): Array {
 }
 
 /**
+ * @function
+ * Sparse plus function:
+ *
+ * - When `x <= -1`: `0`
+ * - When `-1 < x < 1`: `(x+1)**2 / 4`
+ * - When `x >= 1`: `x`
+ */
+export const sparsePlus = jit((x: Array): Array => {
+  return where(
+    x.ref.lessEqual(-1),
+    0,
+    where(x.ref.less(1), square(x.ref.add(1)).mul(0.25), x),
+  );
+});
+
+/**
+ * @function
+ * Sparse sigmoid activation function.
+ *
+ * - When `x <= -1`: `0`
+ * - When `-1 < x < 1`: `(x + 1) / 2`
+ * - When `x >= 1`: `1`
+ */
+export const sparseSigmoid = jit((x: Array): Array => {
+  return clip(x.add(1).mul(0.5), 0, 1);
+});
+
+/**
  * Soft-sign activation function, computed element-wise:
  * `softsign(x) = x / (|x| + 1)`.
  */
@@ -92,17 +122,7 @@ export const silu = jit(function silu(x: Array) {
   return x.ref.mul(sigmoid(x));
 });
 
-/**
- * @function
- * Sigmoid-weighted Linear Unit (SiLU) activation function, also known as
- * Swish, computed element-wise:
- * `silu(x) = x * sigmoid(x) = x / (1 + exp(-x))`.
- *
- * `swish()` and `silu()` are both aliases for the same function.
- *
- * Reference: https://en.wikipedia.org/wiki/Swish_function
- */
-export const swish = silu;
+export { silu as swish };
 
 /**
  * Log-sigmoid activation function, computed element-wise:
@@ -127,6 +147,24 @@ export function leakyRelu(
   return where(less(x.ref, 0), x.ref.mul(negativeSlope), x);
 }
 
+/** Hard sigmoid activation function: `relu6(x+3)/6`. */
+export function hardSigmoid(x: ArrayLike): Array {
+  return relu6(add(x, 3)).mul(1 / 6);
+}
+
+/** Hard SiLU (swish) activation function: `x * hardSigmoid(x)`. */
+export function hardSilu(x: ArrayLike): Array {
+  x = fudgeArray(x);
+  return x.ref.mul(hardSigmoid(x));
+}
+
+export { hardSilu as hardSwish };
+
+/** Hard tanh activation function: `clip(x, -1, 1)`. */
+export function hardTanh(x: ArrayLike): Array {
+  return clip(x, -1, 1);
+}
+
 /**
  * Exponential linear unit activation function.
  *
@@ -148,6 +186,21 @@ export function celu(x: ArrayLike, alpha: ArrayLike = 1.0): Array {
   x = fudgeArray(x);
   return where(less(x.ref, 0), exp(x.ref.div(alpha)).sub(1).mul(alpha), x);
 }
+
+/**
+ * @function
+ * Scaled exponential linear unit activation.
+ *
+ * Computes the element-wise function:
+ * `selu(x) = lambda * (x > 0 ? x : alpha * (exp(x) - 1))`
+ *
+ * Where `alpha = 1.6732632423543772` and `lambda = 1.0507009873554805`.
+ */
+export const selu = jit(function selu(x: Array) {
+  const alpha = 1.6732632423543772;
+  const lambda = 1.0507009873554805;
+  return where(x.ref.less(0), expm1(x.ref).mul(alpha), x).mul(lambda);
+});
 
 /**
  * @function

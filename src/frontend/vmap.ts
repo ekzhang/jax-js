@@ -54,7 +54,7 @@ import {
   flatten as treeFlatten,
   unflatten as treeUnflatten,
 } from "../tree";
-import { Jaxpr, jaxprAsFun, makeJaxpr } from "./jaxpr";
+import { ClosedJaxpr, Jaxpr, jaxprAsFun, makeJaxpr } from "./jaxpr";
 import { jvp } from "./jvp";
 
 function mappedAval(batchDim: number, aval: AbstractValue) {
@@ -368,31 +368,28 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
       return [[gather(x, indices, newAxis, outDim)], [outDim]];
     }
   },
-  [Primitive.JitCall](axisSize, args, dims, { name, jaxpr }) {
-    const { newJaxpr, newConsts } = vmapJaxpr(jaxpr, axisSize, dims);
+  [Primitive.Jit](axisSize, args, dims, { name, jaxpr }) {
+    const newJaxpr = vmapJaxpr(jaxpr, axisSize, dims);
     const outs = bind(
-      Primitive.JitCall,
-      [...newConsts.map((c) => c.ref), ...args],
+      Primitive.Jit,
+      [...newJaxpr.consts.map((c) => c.ref), ...args],
       {
         name: `${name}_vmap`,
-        jaxpr: newJaxpr,
-        numConsts: newConsts.length,
+        jaxpr: newJaxpr.jaxpr,
+        numConsts: newJaxpr.consts.length,
       },
     );
     return [outs, rep(outs.length, 0)];
   },
 };
 
-const vmapJaxprCache = new Map<
-  Jaxpr,
-  Map<string, ReturnType<typeof vmapJaxpr>>
->();
+const vmapJaxprCache = new Map<Jaxpr, Map<string, ClosedJaxpr>>();
 
 function vmapJaxpr(
   jaxpr: Jaxpr,
   axisSize: number,
   dims: (number | null)[],
-): { newJaxpr: Jaxpr; newConsts: Tracer[] } {
+): ClosedJaxpr {
   const cacheKey = JSON.stringify([axisSize, dims]); // deterministic
   const prevResult = vmapJaxprCache.get(jaxpr)?.get(cacheKey);
   if (prevResult) return prevResult;
@@ -409,14 +406,13 @@ function vmapJaxpr(
     shape.splice(dims[i], 0, axisSize); // Insert the mapped axis into the shape.
     return new ShapedArray(shape, v.aval.dtype, v.aval.weakType);
   });
-  const { jaxpr: newJaxpr, consts: newConsts } = makeJaxpr((args: Tracer[]) =>
+  const { jaxpr: newJaxpr } = makeJaxpr((args: Tracer[]) =>
     vmapFlat(jaxprAsFun(jaxpr), dims, args),
   )(inAvals);
-  const result = { newJaxpr, newConsts };
 
   if (!vmapJaxprCache.has(jaxpr)) vmapJaxprCache.set(jaxpr, new Map());
-  vmapJaxprCache.get(jaxpr)!.set(cacheKey, result);
-  return result;
+  vmapJaxprCache.get(jaxpr)!.set(cacheKey, newJaxpr);
+  return newJaxpr;
 }
 
 function vmapFlat(

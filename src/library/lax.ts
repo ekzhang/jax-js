@@ -7,6 +7,7 @@ import { Array, ArrayLike } from "../frontend/array";
 import * as core from "../frontend/core";
 import { bind1, Primitive } from "../frontend/core";
 import { moveaxis, vmap } from "../frontend/vmap";
+import { Pair } from "../shape";
 import { checkAxis, deepEqual, prod, range, rep, zipn } from "../utils";
 
 /**
@@ -116,7 +117,7 @@ export function dot(
   ) as Array;
 }
 
-export type PaddingType = "VALID" | "SAME" | "SAME_LOWER" | [number, number][];
+export type PaddingType = "VALID" | "SAME" | "SAME_LOWER" | Pair[];
 
 function padtypeToPads(
   inShape: number[],

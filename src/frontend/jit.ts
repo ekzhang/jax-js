@@ -1,4 +1,4 @@
-// Handle JitCall operations by translating Jaxprs into dispatched Kernels.
+// Handle Jit operations by translating Jaxprs into dispatched Kernels.
 
 import { AluExp, AluOp, AluVar, DType, Kernel, Reduction } from "../alu";
 import { Backend, Slot } from "../backend";
@@ -13,7 +13,7 @@ import {
   range,
   rep,
 } from "../utils";
-import { aluCompare, Array, PendingExecute } from "./array";
+import { aluCompare, PendingExecute } from "./array";
 import { pool, poolTranspose, prepareConv } from "./convolution";
 import { Primitive, PrimitiveParams, promoteAvals, ShapedArray } from "./core";
 import { Jaxpr, Lit, Var } from "./jaxpr";
@@ -26,11 +26,6 @@ export type JitStep =
       kernel: Kernel;
       inputs: JitId[]; // mapped to backend Slot
       outputs: JitId[]; // mapped to backend Slot
-    }
-  | {
-      type: "const";
-      slot: Slot; // must avoid being GC'd for the lifetime of JitProgram
-      output: JitId;
     }
   | {
       type: "malloc";
@@ -67,8 +62,6 @@ export class JitProgram {
             `execute (${inputsNice}) -> ${outputsNice}, kernel`,
           ).concat(step.kernel.pprint().indent(2));
         }
-        case "const":
-          return PPrint.pp(`%${step.output} = const <Slot ${step.slot}>`);
         case "malloc":
           return PPrint.pp(`%${step.output} = malloc <${step.size} bytes>`);
         case "incref":
@@ -119,9 +112,6 @@ export class JitProgram {
           );
           break;
         }
-        case "const":
-          scope.set(step.output, step.slot);
-          break;
         case "malloc": {
           const slot = this.backend.malloc(step.size);
           scope.set(step.output, slot);
@@ -158,16 +148,6 @@ class JitProgramBuilder {
     this.backend = backend;
     this.#nextId = nargs;
     this.steps = [];
-  }
-
-  pushConst(slot: Slot): JitId {
-    const id = this.#nextId++;
-    this.steps.push({
-      type: "const",
-      slot,
-      output: id,
-    });
-    return id;
   }
 
   pushLit(lit: Lit): JitId {
@@ -243,26 +223,8 @@ type JitValue =
 
 const jitCompileCache = new Map<string, JitProgram>();
 
-export function jitCompile(
-  backend: Backend,
-  jaxpr: Jaxpr,
-  consts: Array[],
-): JitProgram {
-  if (jaxpr.inBinders.length < consts.length) {
-    throw new TypeError(
-      `Jaxpr has ${jaxpr.inBinders.length} inputs, but ${consts.length} consts were provided`,
-    );
-  }
-  for (let i = 0; i < consts.length; i++) {
-    if (consts[i].device !== backend.type) {
-      throw new TypeError(
-        `Const ${i} has device ${consts[i].device}, but expected ${backend.type}`,
-      );
-    }
-  }
-
-  const cacheKey =
-    backend.type + FpHash.hash(jaxpr, ...consts.map((c) => c.id));
+export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
+  const cacheKey = backend.type + "," + FpHash.hash(jaxpr);
 
   const cached = jitCompileCache.get(cacheKey);
   if (cached) return cached;
@@ -272,20 +234,15 @@ export function jitCompile(
   }
 
   jaxpr = jaxpr.flatten().simplify();
-  const nargs = jaxpr.inBinders.length - consts.length;
+  const nargs = jaxpr.inBinders.length;
   const builder = new JitProgramBuilder(backend, nargs);
 
   const blackNodes = splitGraphDataflow(backend, jaxpr);
 
   // Initialize jaxpr inBinders.
   const ctx = new Map<Var, JitValue>();
-  for (let i = 0; i < consts.length; i++) {
-    const v = jaxpr.inBinders[i];
-    const slot = consts[i]._realizeSource();
-    ctx.set(v, { type: "imm", arg: builder.pushConst(slot) });
-  }
   for (let i = 0; i < nargs; i++) {
-    const v = jaxpr.inBinders[consts.length + i];
+    const v = jaxpr.inBinders[i];
     ctx.set(v, { type: "imm", arg: i }); // JitId i = input #i
   }
 
@@ -411,12 +368,9 @@ export function jitCompile(
   }
 
   // Each output should have its own backend reference. If an output slot is
-  // returned twice, or if an input/const is returned directly, insert "incref"
-  // steps to balance the books.
-  const outputNeedsRef = new Set<JitId>([
-    ...range(nargs), // inputs
-    ...builder.steps.filter((s) => s.type === "const").map((s) => s.output),
-  ]);
+  // returned twice, or if an input is returned directly, insert "incref" steps
+  // to balance the books.
+  const outputNeedsRef = new Set<JitId>(range(nargs)); // inputs
   for (const outputId of outputIds) {
     if (outputNeedsRef.has(outputId)) {
       builder.pushIncref(outputId);
@@ -691,9 +645,9 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
       throw new Error("internal: expected full validity mask in Gather");
     return { exp: x.substitute({ gidx: index }) };
   },
-  [Primitive.JitCall]() {
+  [Primitive.Jit]() {
     throw new Error(
-      "internal: JitCall should have been flattened before JIT compilation",
+      "internal: Jit should have been flattened before JIT compilation",
     );
   },
   [Primitive.Cholesky]() {

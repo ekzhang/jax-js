@@ -24,7 +24,7 @@
 
 import { accessorGlobal, AluExp, AluOp, AluVar, DType, Kernel } from "./alu";
 import { ShapeTracker, unravelAlu } from "./shape";
-import { DEBUG, deepEqual, lexCompare, prod, range } from "./utils";
+import { DEBUG, deepEqual, lexCompare, prod, range, sorted } from "./utils";
 
 export interface TuneResult {
   /** New expression with GlobalView ops and gidx/ridx lowered. */
@@ -314,7 +314,7 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
     }
   }
 
-  for (const ax of Array.from(upcastedAxis).sort()) {
+  for (const ax of sorted(upcastedAxis)) {
     const s = dim.st.shape[ax];
     // TODO: These applyLocal() calls are a hack / bad heuristic, make this better.
     for (const amount of [8, 4]) {

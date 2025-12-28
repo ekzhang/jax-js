@@ -27,6 +27,7 @@ import {
   prod,
   range,
   rep,
+  sorted,
   zip,
 } from "./utils";
 
@@ -741,7 +742,7 @@ export class ShapeTracker {
     if (axis.length > 0) {
       // First, unsqueeze each dimension of "axis".
       const unsqueezed = [...st.shape];
-      for (const i of axis.toSorted()) {
+      for (const i of sorted(axis)) {
         unsqueezed.splice(i, 0, 1);
       }
       st = st.reshape(unsqueezed);

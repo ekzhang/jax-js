@@ -49,6 +49,7 @@ import {
 } from "./core";
 import {
   abstractEvalRules,
+  ClosedJaxpr,
   evalJaxpr,
   Jaxpr,
   JaxprEqn,
@@ -88,7 +89,7 @@ class PartialVal {
 function partialEvalFlat(
   f: (...args: any[]) => any,
   pvalsIn: PartialVal[],
-): { jaxpr: Jaxpr; pvalsOut: PartialVal[]; consts: Tracer[] } {
+): { jaxpr: ClosedJaxpr; pvalsOut: PartialVal[] } {
   const main = newMain(PartialEvalTrace);
   const trace = new PartialEvalTrace(main);
   const tracersIn = pvalsIn.map((pval) => trace.newArg(pval));
@@ -103,11 +104,8 @@ function partialEvalFlat(
 
   const pvalsOut = tracersOut.map((t) => t.pval); // Ownership either transferred here, or in the next line.
   const unknownTracersOut = tracersOut.filter((t) => !t.pval.isKnown);
-  const { jaxpr, consts } = partialEvalGraphToJaxpr(
-    unknownTracersIn,
-    unknownTracersOut,
-  );
-  return { jaxpr, pvalsOut, consts };
+  const jaxpr = partialEvalGraphToJaxpr(unknownTracersIn, unknownTracersOut);
+  return { jaxpr, pvalsOut };
 }
 
 /**
@@ -120,7 +118,7 @@ function partialEvalFlat(
 function linearizeFlatUtil(
   f: (...args: any[]) => any,
   primalsIn: Tracer[],
-): { primalsOut: Tracer[]; jaxpr: Jaxpr; consts: Tracer[] } {
+): { primalsOut: Tracer[]; jaxpr: ClosedJaxpr } {
   const pvalsIn = [
     ...primalsIn.map(PartialVal.known),
     ...primalsIn.map((t) => PartialVal.unknown(t.aval)),
@@ -131,25 +129,23 @@ function linearizeFlatUtil(
     const [primalsOut, tangentsOut] = jvp(f, x.slice(0, k), x.slice(k, 2 * k));
     return [...primalsOut, ...tangentsOut];
   };
-  const { jaxpr, pvalsOut, consts } = partialEvalFlat(fJvp, pvalsIn);
+  const { jaxpr, pvalsOut } = partialEvalFlat(fJvp, pvalsIn);
   const primalPvals = pvalsOut.slice(0, pvalsOut.length / 2);
   if (!primalPvals.every((pval) => pval.isKnown)) {
     throw new Error("Not all primal values are known after partial evaluation");
   }
   const primalsOut = primalPvals.map((pval) => pval.val!);
-  return { primalsOut, jaxpr, consts };
+  return { primalsOut, jaxpr };
 }
 
 function linearizeFlat(
   f: (...args: any[]) => any,
   primalsIn: Tracer[],
 ): [Tracer[], (...args: Tracer[]) => Tracer[], () => void] {
-  const { primalsOut, jaxpr, consts } = linearizeFlatUtil(f, primalsIn);
+  const { primalsOut, jaxpr } = linearizeFlatUtil(f, primalsIn);
   const fLin = (...tangents: Tracer[]) =>
-    evalJaxpr(jaxpr, [...consts.map((c) => c.ref), ...tangents]);
-  const dispose = () => {
-    for (const c of consts) c.dispose();
-  };
+    evalJaxpr(jaxpr.jaxpr, [...jaxpr.consts.map((c) => c.ref), ...tangents]);
+  const dispose = () => jaxpr.dispose();
   return [primalsOut, fLin, dispose];
 }
 
@@ -295,12 +291,12 @@ class PartialEvalTrace extends Trace {
         params,
       );
     }
-    if (primitive === Primitive.JitCall) {
+    if (primitive === Primitive.Jit) {
       // Special case, needs its own PartialEvalTrace handling because unlike
-      // other primtiives, JitCall can have subexpressions that are known while
+      // other primtiives, Jit can have subexpressions that are known while
       // other outputs are unknown.
       const { name, jaxpr, numConsts } =
-        params as PrimitiveParams<Primitive.JitCall>;
+        params as PrimitiveParams<Primitive.Jit>;
       return this.#partialEvalJaxpr(name, jaxpr, numConsts, tracers);
     }
     const tracersIn = tracers.map((t) => this.instantiateConst(t));
@@ -330,7 +326,7 @@ class PartialEvalTrace extends Trace {
    * Evaluate a Jaxpr on a set of PartialEvalTracers, computing as many known
    * values as possible (with JIT) and forwarding the unknown ones.
    *
-   * Used when encountering a JitCall rule during the trace.
+   * Used when encountering a Jit rule during the trace.
    */
   #partialEvalJaxpr(
     name: string,
@@ -350,7 +346,7 @@ class PartialEvalTrace extends Trace {
     const [knownTracers, unknownTracers] = partitionList(inUnknowns, tracers);
 
     const outs1Res = bind(
-      Primitive.JitCall,
+      Primitive.Jit,
       knownTracers.map((t) => t.ref.fullLower()),
       { name: `${name}_peval`, jaxpr: jaxpr1, numConsts: 0 },
     );
@@ -362,7 +358,7 @@ class PartialEvalTrace extends Trace {
     );
     const recipe: JaxprRecipe = {
       type: "JaxprEqn",
-      prim: Primitive.JitCall,
+      prim: Primitive.Jit,
       tracersIn: resTracers.concat(unknownTracers),
       params: { name: `${name}_resid`, jaxpr: jaxpr2, numConsts: 0 },
       avalsOut: jaxpr2.outs.map((x) => x.aval),
@@ -378,7 +374,7 @@ class PartialEvalTrace extends Trace {
     });
     recipe.tracerRefsOut = outs2.map((t) => new WeakRef(t));
 
-    // Stitch the known and unknown output tracers together, both with JitCall.
+    // Stitch the known and unknown output tracers together, both with Jit.
     let i = 0;
     let j = 0;
     return outUnknowns.map((unk) => (unk ? outs2[j++] : outs1[i++]));
@@ -400,7 +396,7 @@ function partialEvalJaxpr(
   const eqns1: JaxprEqn[] = [];
   const eqns2: JaxprEqn[] = [];
   for (const eqn of jaxpr.eqns) {
-    if (eqn.primitive === Primitive.JitCall) {
+    if (eqn.primitive === Primitive.Jit) {
       throw new TypeError("partialEvalJaxpr requires flattened Jaxpr");
     }
     const hasUnknowns = eqn.inputs.some(
@@ -449,7 +445,7 @@ function partialEvalJaxpr(
 function partialEvalGraphToJaxpr(
   tracersIn: PartialEvalTracer[],
   tracersOut: PartialEvalTracer[],
-): { jaxpr: Jaxpr; consts: Tracer[] } {
+): ClosedJaxpr {
   const tracerToVar = new Map<PartialEvalTracer, Var>();
   const constToVar = new Map<Tracer, Var>();
   const processedEqns = new Set<JaxprRecipe>(); // Avoid translating the same equation multiple times.
@@ -515,7 +511,7 @@ function partialEvalGraphToJaxpr(
     console.info("jaxpr from partial evaluation:\n" + jaxpr.toString());
   }
 
-  return { jaxpr, consts };
+  return new ClosedJaxpr(jaxpr, consts);
 }
 
 // implementation of vjp and grad
@@ -853,20 +849,20 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
       "Gather transpose rule is not yet implemented, requires complex Scatter sum operation",
     );
   },
-  [Primitive.JitCall](cts, args, { name, jaxpr }) {
-    // We need this one because the jvp() rule for JitCall generates a JitCall
+  [Primitive.Jit](cts, args, { name, jaxpr }) {
+    // We need this one because the jvp() rule for Jit generates a Jit
     // with the transformed Jaxpr. So grad-of-jit will result in a transposed
-    // JitCall, which we need to handle.
+    // Jit, which we need to handle.
     const undefPrimals = args.map((x) => x instanceof UndefPrimal);
-    const { newJaxpr, newConsts } = transposeJaxpr(jaxpr, undefPrimals);
+    const newJaxpr = transposeJaxpr(jaxpr, undefPrimals);
     const residuals = args.filter((x, i) => !undefPrimals[i]) as Tracer[];
     const outs = bind(
-      Primitive.JitCall,
-      [...newConsts.map((c) => c.ref), ...residuals, ...cts],
+      Primitive.Jit,
+      [...newJaxpr.consts.map((c) => c.ref), ...residuals, ...cts],
       {
         name: `${name}_t`,
-        jaxpr: newJaxpr,
-        numConsts: newConsts.length,
+        jaxpr: newJaxpr.jaxpr,
+        numConsts: newJaxpr.consts.length,
       },
     );
     // Now pull cotangents back to the corresponding UndefPrimal inputs.
@@ -919,15 +915,9 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
   },
 };
 
-const transposeJaxprCache = new Map<
-  Jaxpr,
-  Map<string, ReturnType<typeof transposeJaxpr>>
->();
+const transposeJaxprCache = new Map<Jaxpr, Map<string, ClosedJaxpr>>();
 
-function transposeJaxpr(
-  jaxpr: Jaxpr,
-  undefPrimals: boolean[],
-): { newJaxpr: Jaxpr; newConsts: Tracer[] } {
+function transposeJaxpr(jaxpr: Jaxpr, undefPrimals: boolean[]): ClosedJaxpr {
   const cacheKey = JSON.stringify(undefPrimals); // deterministic
   const prevResult = transposeJaxprCache.get(jaxpr)?.get(cacheKey);
   if (prevResult) return prevResult;
@@ -940,7 +930,7 @@ function transposeJaxpr(
   // Need to remove the UndefPrimals from the input types, as they are not
   // inputs to the Jaxpr while tracing.
   const forwardInTypes = inTypes.filter((_, i) => !undefPrimals[i]);
-  const { jaxpr: newJaxpr, consts: newConsts } = makeJaxpr(
+  const { jaxpr: newJaxpr } = makeJaxpr(
     (forwardIn: Tracer[], cotangents: Tracer[]) => {
       const args: (Tracer | UndefPrimal)[] = [];
       let forwardInIdx = 0; // index in forwardIn
@@ -951,32 +941,29 @@ function transposeJaxpr(
       return evalJaxprTransposed(jaxpr, args, cotangents);
     },
   )(forwardInTypes, outTypes);
-  typecheckJaxpr(newJaxpr); // sanity check
-  const result = { newJaxpr, newConsts };
+  typecheckJaxpr(newJaxpr.jaxpr); // sanity check
 
   if (!transposeJaxprCache.has(jaxpr))
     transposeJaxprCache.set(jaxpr, new Map());
-  transposeJaxprCache.get(jaxpr)!.set(cacheKey, result);
-  return result;
+  transposeJaxprCache.get(jaxpr)!.set(cacheKey, newJaxpr);
+  return newJaxpr;
 }
 
 function vjpFlat(
   f: (...x: Tracer[]) => Tracer[],
   primalsIn: Tracer[],
 ): [Tracer[], (...cotangents: Tracer[]) => Tracer[], () => void] {
-  const { primalsOut, jaxpr, consts } = linearizeFlatUtil(f, primalsIn);
+  const { primalsOut, jaxpr } = linearizeFlatUtil(f, primalsIn);
   // Pullback cotangents to the UndefPrimal transpose inputs.
   const fVjp = (...cotangents: Tracer[]) => {
     const transposeInputs = [
-      ...consts.map((c) => c.ref),
+      ...jaxpr.consts.map((c) => c.ref),
       // Explcitly list which arguments should be transposed.
       ...primalsIn.map((t) => new UndefPrimal(t.aval)),
     ];
-    return evalJaxprTransposed(jaxpr, transposeInputs, cotangents);
+    return evalJaxprTransposed(jaxpr.jaxpr, transposeInputs, cotangents);
   };
-  const dispose = () => {
-    for (const c of consts) c.dispose();
-  };
+  const dispose = () => jaxpr.dispose();
   return [primalsOut, fVjp, dispose];
 }
 

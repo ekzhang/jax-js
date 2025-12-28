@@ -1,6 +1,6 @@
 {
   "name": "@jax-js/optax",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Gradient processing and optimization library for jax-js",
   "keywords": [
     "machine learning",

@@ -14,14 +14,11 @@ const opts: Options = {
   },
   format: ["cjs", "esm"],
   platform: "browser",
-  sourcemap: true, // For dev, not included in distribution.
   dts: {
     // Without newContext, dts generation in watch mode has trouble updating
     // when files are changed.
     // https://github.com/rolldown/tsdown/issues/396
     newContext: true,
-    // Declaration maps for dev, not included in distribution.
-    sourcemap: true,
   },
 };
 

@@ -14,18 +14,16 @@ import { expect, suite, test } from "vitest";
 
 suite("jax.makeJaxpr()", () => {
   test("tracks a nullary function", () => {
-    const { jaxpr, consts } = makeJaxpr(() => np.multiply(2, 2))();
+    const { jaxpr } = makeJaxpr(() => np.multiply(2, 2))();
     expect(jaxpr.toString()).toMatchInlineSnapshot(`
       "{ lambda  .
         ( 4 ) }"
     `);
-    expect(consts).toEqual([]);
+    expect(jaxpr.consts).toEqual([]);
   });
 
   test("tracks a unary function", () => {
-    const { jaxpr, consts } = makeJaxpr((x: np.Array) =>
-      np.multiply(x.add(2), x),
-    )(
+    const { jaxpr } = makeJaxpr((x: np.Array) => np.multiply(x.add(2), x))(
       np.array([
         [2, 4, 10],
         [1, 1, 1],
@@ -37,21 +35,21 @@ suite("jax.makeJaxpr()", () => {
             c:float32[2,3] = mul b a
         in ( c ) }"
     `);
-    expect(consts).toEqual([]);
+    expect(jaxpr.consts).toEqual([]);
   });
 
   test("composes with jvp", () => {
     const f = (x: np.Array) => np.multiply(x.add(2), x);
     const fdot = (x: np.Array) => jvp(f, [x], [1])[1];
 
-    const { jaxpr, consts } = makeJaxpr(fdot)(np.array(2));
+    const { jaxpr } = makeJaxpr(fdot)(np.array(2));
     expect(jaxpr.toString()).toMatchInlineSnapshot(`
       "{ lambda a:float32[] .
         let b:float32[] = add a 2
             c:float32[] = add b a
         in ( c ) }"
     `);
-    expect(consts).toEqual([]);
+    expect(jaxpr.consts).toEqual([]);
   });
 
   test("composes with grad", () => {
@@ -59,8 +57,8 @@ suite("jax.makeJaxpr()", () => {
       const y = x.ref.add(2);
       return x.ref.mul(x).add(y);
     };
-    const { jaxpr, consts } = makeJaxpr(grad(f))(3);
-    expect(consts).toEqual([]);
+    const { jaxpr } = makeJaxpr(grad(f))(3);
+    expect(jaxpr.consts).toEqual([]);
     expect(jaxpr.toString()).toMatchInlineSnapshot(`
       "{ lambda a:float32[] .
         let b:float32[] = add 1 a
@@ -76,23 +74,23 @@ suite("jax.makeJaxpr()", () => {
     };
     const jf = jit(f);
 
-    const { jaxpr, consts } = makeJaxpr((x) => f(jf(x)))(3);
-    expect(consts).toEqual([]);
+    const { jaxpr } = makeJaxpr((x) => f(jf(x)))(3);
+    expect(jaxpr.consts).toEqual([]);
     expect(jaxpr.toString()).toMatchInlineSnapshot(`
       "{ lambda a:float32[] .
-        let b:float32[] = jit_call [ name=f
-                                     jaxpr={ lambda a:float32[] .
-                                       let b:float32[] = add a 2
-                                           c:float32[] = mul a a
-                                           d:float32[] = add c b
-                                       in ( d ) }
-                                     numConsts=0 ] a
+        let b:float32[] = jit [ name=f
+                                jaxpr={ lambda a:float32[] .
+                                  let b:float32[] = add a 2
+                                      c:float32[] = mul a a
+                                      d:float32[] = add c b
+                                  in ( d ) }
+                                numConsts=0 ] a
             c:float32[] = add b 2
             d:float32[] = mul b b
             e:float32[] = add d c
         in ( e ) }"
     `);
-    expect(jaxpr.flatten().toString()).toMatchInlineSnapshot(`
+    expect(jaxpr.jaxpr.flatten().toString()).toMatchInlineSnapshot(`
       "{ lambda a:float32[] .
         let b:float32[] = add a 2
             c:float32[] = mul a a

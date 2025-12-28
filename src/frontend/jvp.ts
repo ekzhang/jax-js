@@ -48,7 +48,7 @@ import {
   triangularSolve,
   where,
 } from "./core";
-import { Jaxpr, jaxprAsFun, makeJaxpr } from "./jaxpr";
+import { ClosedJaxpr, Jaxpr, jaxprAsFun, makeJaxpr } from "./jaxpr";
 
 class JVPTracer extends Tracer {
   constructor(
@@ -281,15 +281,15 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
       [gather(dx, indicesRef, axis, outDim)],
     ];
   },
-  [Primitive.JitCall](primals, tangents, { name, jaxpr }) {
-    const { newJaxpr, newConsts } = jvpJaxpr(jaxpr);
+  [Primitive.Jit](primals, tangents, { name, jaxpr }) {
+    const newJaxpr = jvpJaxpr(jaxpr);
     const outs = bind(
-      Primitive.JitCall,
-      [...newConsts.map((c) => c.ref), ...primals, ...tangents],
+      Primitive.Jit,
+      [...newJaxpr.consts.map((c) => c.ref), ...primals, ...tangents],
       {
         name: `${name}_jvp`,
-        jaxpr: newJaxpr,
-        numConsts: newConsts.length,
+        jaxpr: newJaxpr.jaxpr,
+        numConsts: newJaxpr.consts.length,
       },
     );
     const n = outs.length / 2;
@@ -437,9 +437,9 @@ function phiLowerHalfDiag(x: Tracer, n: number): Tracer {
   return phiResult;
 }
 
-const jvpJaxprCache = new Map<Jaxpr, ReturnType<typeof jvpJaxpr>>();
+const jvpJaxprCache = new Map<Jaxpr, ClosedJaxpr>();
 
-function jvpJaxpr(jaxpr: Jaxpr): { newJaxpr: Jaxpr; newConsts: Tracer[] } {
+function jvpJaxpr(jaxpr: Jaxpr): ClosedJaxpr {
   if (jvpJaxprCache.has(jaxpr)) {
     return jvpJaxprCache.get(jaxpr)!;
   }
@@ -452,14 +452,13 @@ function jvpJaxpr(jaxpr: Jaxpr): { newJaxpr: Jaxpr; newConsts: Tracer[] } {
   // only happens in jvp-of-jit cases, where you understandably have to
   // sacrifice some performance versus wrapping jit() outside.
   const inAvals = jaxpr.inBinders.map((v) => v.aval);
-  const { jaxpr: newJaxpr, consts: newConsts } = makeJaxpr(
+  const { jaxpr: newJaxpr } = makeJaxpr(
     (primals: Tracer[], tangents: Tracer[]) =>
       jvpFlat(jaxprAsFun(jaxpr), primals, tangents),
   )(inAvals, inAvals);
-  const result = { newJaxpr, newConsts };
 
-  jvpJaxprCache.set(jaxpr, result);
-  return result;
+  jvpJaxprCache.set(jaxpr, newJaxpr);
+  return newJaxpr;
 }
 
 function jvpFlat(

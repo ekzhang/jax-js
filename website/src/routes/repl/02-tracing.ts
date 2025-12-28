@@ -8,5 +8,5 @@ const fdot = (x: np.Array) => jvp(f, [x], [np.array(1)])[1];
 
 console.log(makeJaxpr(f)(np.array(2)).jaxpr.toString());
 
-const { jaxpr, consts: _consts } = makeJaxpr(fdot)(np.array(2));
+const { jaxpr } = makeJaxpr(fdot)(np.array(2));
 console.log(jaxpr.toString());

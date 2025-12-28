@@ -2,7 +2,7 @@ import { DType } from "./alu";
 import { defaultDevice, Device, devices, getBackend, init } from "./backend";
 import { Array, ArrayLike } from "./frontend/array";
 import * as jaxprModule from "./frontend/jaxpr";
-import { Jaxpr, OwnedFunction } from "./frontend/jaxpr";
+import { ClosedJaxpr, Jaxpr, OwnedFunction } from "./frontend/jaxpr";
 import * as jvpModule from "./frontend/jvp";
 import * as linearizeModule from "./frontend/linearize";
 import * as vmapModule from "./frontend/vmap";
@@ -21,6 +21,7 @@ import "./polyfills";
 export {
   init,
   Array,
+  ClosedJaxpr,
   defaultDevice,
   type Device,
   devices,
@@ -79,8 +80,7 @@ export const makeJaxpr = jaxprModule.makeJaxpr as unknown as <
 >(
   f: F,
 ) => (...args: Parameters<F>) => {
-  jaxpr: jaxprModule.Jaxpr;
-  consts: Array[];
+  jaxpr: ClosedJaxpr;
   treedef: JsTreeDef;
 };
 
@@ -172,11 +172,7 @@ export const valueAndGrad = linearizeModule.valueAndGrad as <
  */
 export const jacrev = linearizeModule.jacrev as typeof jacfwd;
 
-/**
- * @function
- * Compute the Jacobian with reverse-mode AD. Alias for `jacrev()`.
- */
-export const jacobian = jacrev;
+export { jacrev as jacobian };
 
 /**
  * Wait until all `Array` leaves are ready by calling `Array.blockUntilReady()`.

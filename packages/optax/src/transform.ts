@@ -112,3 +112,124 @@ export function scaleByLearningRate(
   }
   return scale(m * learningRate);
 }
+
+export type MaskFn = (tree: JsTree<np.Array>) => JsTree<np.Array>;
+
+export type AddDecayedWeightsOptions = {
+  weightDecay?: ScalarOrSchedule;
+  mask?: JsTree<np.Array> | MaskFn | null;
+};
+
+/** Add parameter scaled by weight decay. */
+export function addDecayedWeights({
+  weightDecay = 0.0,
+  mask = null,
+}: AddDecayedWeightsOptions = {}): GradientTransformation {
+  const isSchedule = typeof weightDecay === "function";
+
+  return {
+    init(params) {
+      tree.dispose(params);
+      if (isSchedule) {
+        return { count: u32(0) };
+      } else {
+        return [];
+      }
+    },
+    update(updates, state, params) {
+      if (!params) {
+        throw new Error("addDecayedWeights requires params to be provided");
+      }
+
+      let newState: typeof state;
+      let currentWeightDecay: number;
+
+      if (isSchedule) {
+        const { count } = state as { count: np.Array };
+        const countInt = count.item();
+        currentWeightDecay = (weightDecay as Schedule)(countInt);
+        newState = { count: u32(countInt + 1) };
+      } else {
+        currentWeightDecay = weightDecay as number;
+        newState = state;
+      }
+
+      if (currentWeightDecay === 0.0) {
+        tree.dispose(params);
+        return [updates, newState];
+      }
+
+      let decayedParams: JsTree<np.Array>;
+      if (mask) {
+        const maskTree =
+          typeof mask === "function" ? mask(tree.ref(updates)) : mask;
+
+        decayedParams = tree.map(
+          (p: np.Array, m: np.Array) => p.mul(m).mul(currentWeightDecay),
+          tree.ref(params),
+          maskTree,
+        );
+      } else {
+        decayedParams = tree.map(
+          (p: np.Array) => p.mul(currentWeightDecay),
+          tree.ref(params),
+        );
+      }
+
+      tree.dispose(params);
+
+      updates = tree.map(
+        (g: np.Array, d: np.Array) => g.add(d),
+        updates,
+        decayedParams,
+      ) as typeof updates;
+
+      return [updates, newState];
+    },
+  };
+}
+
+export type TraceOptions = {
+  decay?: number;
+  nesterov?: boolean;
+};
+
+/** Compute a trace of past updates. */
+export function trace({
+  decay = 0.9,
+  nesterov = false,
+}: TraceOptions = {}): GradientTransformation {
+  return {
+    init(params) {
+      const trace = treeZerosLike(params);
+      return { trace };
+    },
+    update(updates, state, params) {
+      tree.dispose(params);
+      const { trace: prevTrace } = state as { trace: JsTree<np.Array> };
+
+      // new_trace = g + decay * t
+      const newTrace = tree.map(
+        (g: np.Array, t: np.Array) => g.add(t.mul(decay)),
+        tree.ref(updates),
+        prevTrace,
+      );
+
+      let finalUpdates: typeof updates;
+      if (nesterov) {
+        // Nesterov: updates = g + decay * new_trace
+        finalUpdates = tree.map(
+          (g: np.Array, t: np.Array) => g.add(t.mul(decay)),
+          updates,
+          tree.ref(newTrace),
+        ) as typeof updates;
+      } else {
+        // Standard momentum: updates = new_trace
+        finalUpdates = tree.ref(newTrace) as typeof updates;
+        tree.dispose(updates);
+      }
+
+      return [finalUpdates, { trace: newTrace }];
+    },
+  };
+}

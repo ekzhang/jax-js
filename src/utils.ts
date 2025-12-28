@@ -41,6 +41,10 @@ export function zipn<T>(...arrays: T[][]): T[][] {
   );
 }
 
+export function sorted(arr: Iterable<number>): number[] {
+  return [...arr].sort((a, b) => a - b);
+}
+
 export function rep<T>(
   length: number,
   value: T,
@@ -175,7 +179,7 @@ export function normalizeAxis(
         throw new Error(`Duplicate axis ${ca} passed to function`);
       seen.add(ca);
     }
-    return [...seen].sort();
+    return sorted(seen);
   }
 }
 

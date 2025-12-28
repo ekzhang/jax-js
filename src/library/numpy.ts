@@ -54,6 +54,8 @@ export {
   zeros,
 };
 
+export * as fft from "./numpy-fft";
+
 export const float32 = DType.Float32;
 export const int32 = DType.Int32;
 export const uint32 = DType.Uint32;
@@ -364,8 +366,7 @@ export function cumsum(a: ArrayLike, axis?: number): Array {
   return moveaxis(tril(a).sum(-1), -1, axis);
 }
 
-/** @function Alternative name for `jax.numpy.cumsum()`. */
-export const cumulativeSum = cumsum;
+export { cumsum as cumulativeSum };
 
 /** Reverse the elements in an array along the given axes. */
 export function flip(x: ArrayLike, axis: core.Axis = null): Array {
@@ -537,8 +538,7 @@ export function fliplr(x: ArrayLike): Array {
   return flip(x, 1);
 }
 
-/** @function Alternative name for `numpy.transpose()`. */
-export const permuteDims = transpose;
+export { transpose as permuteDims };
 
 /** Return a 1-D flattened array containing the elements of the input. */
 export function ravel(a: ArrayLike): Array {
@@ -680,8 +680,7 @@ export function diagonal(
  */
 export function diag(v: ArrayLike, k = 0): Array {
   const a = fudgeArray(v);
-  if (!Number.isInteger(k))
-    throw new TypeError(`k must be an integer, got ${k}`);
+  if (!Number.isInteger(k)) throw new Error(`k must be an integer, got ${k}`);
   if (a.ndim === 1) {
     const n = a.shape[0];
     const ret = where(eye(n).equal(1), a.ref, zerosLike(a));
@@ -701,7 +700,7 @@ export function diag(v: ArrayLike, k = 0): Array {
   } else if (a.ndim === 2) {
     return diagonal(a, k);
   } else {
-    throw new TypeError("numpy.diag only supports 1D and 2D arrays");
+    throw new Error("numpy.diag only supports 1D and 2D arrays");
   }
 }
 
@@ -739,7 +738,7 @@ export function allclose(
 /** Matrix product of two arrays. */
 export function matmul(x: ArrayLike, y: ArrayLike) {
   if (ndim(x) === 0 || ndim(y) === 0) {
-    throw new TypeError("matmul: x and y must be at least 1D");
+    throw new Error("matmul: x and y must be at least 1D");
   }
   ((x = x as Array), (y = y as Array));
   if (y.ndim === 1) {
@@ -1030,6 +1029,53 @@ export function vdot(x: ArrayLike, y: ArrayLike): Array {
   return core.dot(ravel(x), ravel(y)) as Array;
 }
 
+function _convImpl(name: string, x: Array, y: Array, mode: string): Array {
+  if (x.ndim !== 1 || y.ndim !== 1) {
+    throw new Error(
+      `${name}: both inputs must be 1D arrays, got ${x.ndim}D and ${y.ndim}D`,
+    );
+  }
+  let flipOutput = false; // for correlate: output[k] = sum(x[i + k] * y[i]) = sum(y[i + (-k)] * x[i])
+  if (x.shape[0] < y.shape[0]) {
+    [x, y] = [y, x];
+    if (name === "correlate") flipOutput = true;
+  }
+  if (name === "convolve") y = flip(y);
+
+  let padding: lax.PaddingType;
+  if (mode === "valid") padding = "VALID";
+  else if (mode === "same") padding = "SAME_LOWER";
+  else if (mode === "full") padding = [[y.shape[0] - 1, y.shape[0] - 1]];
+  else {
+    throw new Error(
+      `${name}: invalid mode ${mode}, expected "full", "same", or "valid"`,
+    );
+  }
+
+  const z = lax
+    .conv(x.slice(null, null), y.slice(null, null), [1], padding)
+    .slice(0, 0);
+  return flipOutput ? flip(z) : z;
+}
+
+/** Convolution of two one-dimensional arrays. */
+export function convolve(
+  x: Array,
+  y: Array,
+  mode: "full" | "same" | "valid" = "full",
+): Array {
+  return _convImpl("convolve", x, y, mode);
+}
+
+/** Correlation of two one dimensional arrays. */
+export function correlate(
+  x: Array,
+  y: Array,
+  mode: "full" | "same" | "valid" = "valid",
+): Array {
+  return _convImpl("correlate", x, y, mode);
+}
+
 /**
  * Return a tuple of coordinate matrices from coordinate vectors.
  *
@@ -1044,7 +1090,7 @@ export function meshgrid(
 
   for (const x of xs) {
     if (x.ndim !== 1) {
-      throw new TypeError(
+      throw new Error(
         `meshgrid: all inputs must be 1D arrays, got ${x.ndim}D array`,
       );
     }
@@ -1084,13 +1130,13 @@ export function tri(
   m ??= n;
   dtype ??= DType.Float32;
   if (!Number.isInteger(n) || n < 0) {
-    throw new TypeError(`tri: n must be a non-negative integer, got ${n}`);
+    throw new Error(`tri: n must be a non-negative integer, got ${n}`);
   }
   if (!Number.isInteger(m) || m < 0) {
-    throw new TypeError(`tri: m must be a non-negative integer, got ${m}`);
+    throw new Error(`tri: m must be a non-negative integer, got ${m}`);
   }
   if (!Number.isInteger(k)) {
-    throw new TypeError(`tri: k must be an integer, got ${k}`);
+    throw new Error(`tri: k must be an integer, got ${k}`);
   }
   const rows = arange(k, n + k, 1, { dtype: DType.Int32, device });
   const cols = arange(0, m, 1, { dtype: DType.Int32, device });
@@ -1100,9 +1146,7 @@ export function tri(
 /** Return the lower triangle of an array. Must be of dimension >= 2. */
 export function tril(a: ArrayLike, k: number = 0): Array {
   if (ndim(a) < 2) {
-    throw new TypeError(
-      `tril: input array must be at least 2D, got ${ndim(a)}D`,
-    );
+    throw new Error(`tril: input array must be at least 2D, got ${ndim(a)}D`);
   }
   a = fudgeArray(a);
   const [n, m] = a.shape.slice(-2);
@@ -1112,9 +1156,7 @@ export function tril(a: ArrayLike, k: number = 0): Array {
 /** Return the upper triangle of an array. Must be of dimension >= 2. */
 export function triu(a: ArrayLike, k: number = 0): Array {
   if (ndim(a) < 2) {
-    throw new TypeError(
-      `tril: input array must be at least 2D, got ${ndim(a)}D`,
-    );
+    throw new Error(`tril: input array must be at least 2D, got ${ndim(a)}D`);
   }
   a = fudgeArray(a);
   const [n, m] = a.shape.slice(-2);
@@ -1151,8 +1193,7 @@ export function absolute(x: ArrayLike): Array {
   return where(less(x.ref, 0), x.ref.mul(-1), x);
 }
 
-/** @function Alias of `jax.numpy.absolute()`. */
-export const abs = absolute;
+export { absolute as abs };
 
 /** Return an element-wise indication of sign of the input. */
 export function sign(x: ArrayLike): Array {
@@ -1251,12 +1292,7 @@ export const atan2 = jit(function atan2(y: Array, x: Array) {
   return atan(numer.div(denom)).mul(2);
 });
 
-/** @function Alias of `jax.numpy.acos()`. */
-export const arccos = acos;
-/** @function Alias of `jax.numpy.atan()`. */
-export const arctan = atan;
-/** @function Alias of `jax.numpy.atan2()`. */
-export const arctan2 = atan2;
+export { asin as arcsin, acos as arccos, atan as arctan, atan2 as arctan2 };
 
 /** Element-wise subtraction, with broadcasting. */
 export function subtract(x: ArrayLike, y: ArrayLike): Array {
@@ -1276,6 +1312,8 @@ export function trueDivide(x: ArrayLike, y: ArrayLike): Array {
   return x.div(y);
 }
 
+export { trueDivide as divide };
+
 /**
  * @function
  * Calculate element-wise floating-point modulo operation.
@@ -1294,8 +1332,6 @@ export const remainder = jit(function remainder(x: Array, y: Array): Array {
   return core.mod(core.mod(x, y.ref).add(y.ref), y) as Array;
 });
 
-/** @function Alias of `jax.numpy.trueDivide()`. */
-export const divide = trueDivide;
 
 /** Round input to the nearest integer towards zero. */
 export function trunc(x: ArrayLike): Array {
@@ -1320,13 +1356,13 @@ export function ldexp(x1: ArrayLike, x2: ArrayLike): Array {
  */
 export function frexp(x: ArrayLike): [Array, Array] {
   x = fudgeArray(x);
-  const absx = abs(x.ref);
+  const absx = absolute(x.ref);
   const exponent = where(
     equal(x.ref, 0),
     0,
     floor(log2(absx)).add(1).astype(DType.Int32),
   );
-  const mantissa = divide(x, exp2(exponent.ref.astype(x.dtype)));
+  const mantissa = x.div(exp2(exponent.ref.astype(x.dtype)));
   return [mantissa, exponent];
 }
 
@@ -1389,11 +1425,14 @@ export const power = jit(function power(x1: Array, x2: Array) {
     where(x1.ref.less(0), -1, 1),
     1,
   );
-  return where(shouldBeNaN, nan, exp(log(abs(x1)).mul(x2)).mul(resultSign));
+  return where(
+    shouldBeNaN,
+    nan,
+    exp(log(absolute(x1)).mul(x2)).mul(resultSign),
+  );
 });
 
-/** @function Alias of `jax.numpy.power()`. */
-export const pow = power;
+export { power as pow };
 
 /** @function Calculate the element-wise cube root of the input array. */
 export const cbrt = jit(function cbrt(x: Array) {
@@ -1470,12 +1509,7 @@ export const arctanh = jit(function arctanh(x: Array) {
   return log(add(1, x.ref).div(subtract(1, x))).mul(0.5);
 });
 
-/** @function Alias of `jax.numpy.arcsinh()`. */
-export const asinh = arcsinh;
-/** @function Alias of `jax.numpy.arccosh()`. */
-export const acosh = arccosh;
-/** @function Alias of `jax.numpy.arctanh()`. */
-export const atanh = arctanh;
+export { arcsinh as asinh, arccosh as acosh, arctanh as atanh };
 
 /**
  * Compute the variance of an array.
@@ -1521,6 +1555,30 @@ export function std(
   opts?: { mean?: ArrayLike; correction?: number } & core.ReduceOpts,
 ): Array {
   return sqrt(var_(x, axis, opts));
+}
+
+/** Estimate the sample covariance of a set of variables. */
+export function cov(x: ArrayLike, y?: ArrayLike): Array {
+  // x should shape (M, N) or (N,), representing N observations of M variables.
+  x = fudgeArray(x);
+  if (x.ndim === 1) x = x.reshape([1, x.shape[0]]);
+  // optional set of additional observations, concatenated to m
+  if (y !== undefined) {
+    y = fudgeArray(y);
+    if (y.ndim === 1) y = y.reshape([1, y.shape[0]]);
+    x = vstack([x, y]);
+  }
+  const [_M, N] = x.shape;
+  x = x.ref.sub(x.mean(1, { keepdims: true })); // Center variables
+  return dot(x.ref, x.transpose()).div(N - 1); // [M, M]
+}
+
+/** Compute the Pearson correlation coefficients (in range `[-1, 1]`). */
+export function corrcoef(x: ArrayLike, y?: ArrayLike): Array {
+  const c = cov(x, y);
+  const variances = diag(c.ref);
+  const norm = sqrt(outer(variances.ref, variances));
+  return c.div(norm);
 }
 
 /** Test element-wise for positive or negative infinity, return bool array. */
