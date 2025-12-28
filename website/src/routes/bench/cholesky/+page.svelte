@@ -2,7 +2,12 @@
   import { linalg, numpy as np, init, blockUntilReady } from "@jax-js/jax";
   import { onMount, tick } from "svelte";
   import { fade } from "svelte/transition";
-  import { LoaderCircle, SquareMousePointerIcon, CheckCircle2, AlertCircle } from "@lucide/svelte";
+  import {
+    LoaderCircle,
+    SquareMousePointerIcon,
+    CheckCircle2,
+    AlertCircle,
+  } from "@lucide/svelte";
 
   // Test multiple matrix sizes
   const matrixSizes = [128, 256, 512];
@@ -37,23 +42,43 @@
     webgpu: "#a855f7",
   };
 
-  // Generate a diagonally dominant positive definite matrix (numerically stable)
+  // Generate a classic well-conditioned SPD matrix: A = M*M^T + lambda*I
   function generatePositiveDefinite(size: number): number[][] {
-    const matrix: number[][] = [];
+    // 1. Generate random matrix M
+    const M: number[][] = [];
     for (let i = 0; i < size; i++) {
       const row: number[] = [];
       for (let j = 0; j < size; j++) {
-        if (i === j) {
-          // Diagonal: make it large enough for diagonal dominance
-          row.push(size + 1.0);
-        } else {
-          // Off-diagonal: use a pattern based on distance from diagonal
-          row.push(1.0 / (1 + Math.abs(i - j)));
-        }
+        row.push(Math.random() - 0.5);
       }
-      matrix.push(row);
+      M.push(row);
     }
-    return matrix;
+
+    // 2. Compute A = M * M^T
+    const A: number[][] = [];
+    for (let i = 0; i < size; i++) {
+      const row: number[] = new Array(size).fill(0);
+      A.push(row);
+    }
+
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j <= i; j++) {
+        let sum = 0;
+        for (let k = 0; k < size; k++) {
+          sum += M[i][k] * M[j][k];
+        }
+        A[i][j] = sum;
+        if (i !== j) A[j][i] = sum;
+      }
+    }
+
+    // 3. Add lambda to diagonal for conditioning
+    const lambda = size * 5.0;
+    for (let i = 0; i < size; i++) {
+      A[i][i] += lambda;
+    }
+
+    return A;
   }
 
   // Pure JS Cholesky for comparison (using Float32Array to match JAX-JS precision)
@@ -76,15 +101,16 @@
         for (let k = 0; k < j; k++) {
           sum += lFlat[i * n + k] * lFlat[j * n + k];
         }
-        lFlat[i * n + j] = i === j
-          ? Math.sqrt(Math.max(aFlat[i * n + i] - sum, 1e-10))
-          : (aFlat[i * n + j] - sum) / lFlat[j * n + j];
+        lFlat[i * n + j] =
+          i === j
+            ? Math.sqrt(Math.max(aFlat[i * n + i] - sum, 1e-10))
+            : (aFlat[i * n + j] - sum) / lFlat[j * n + j];
       }
     }
     return lFlat;
   }
 
-  async function benchPureJS(): Promise<Result> {
+  async function benchPureJS(pdMatrix: number[][]): Promise<Result> {
     currentDevice = "js";
     const times: number[] = [];
     let lastMaxDiff = 0;
@@ -93,8 +119,6 @@
       currentStep = step;
       console.log(`[js] ${step}`);
     };
-
-    const pdMatrix = generatePositiveDefinite(selectedSize);
 
     for (let i = 0; i < numRuns; i++) {
       setStep(`Run ${i + 1}/${numRuns}: Running pure JS cholesky...`);
@@ -114,9 +138,13 @@
           for (let c = 0; c < selectedSize; c++) {
             let reconstructed = 0;
             for (let k = 0; k <= Math.min(r, c); k++) {
-              reconstructed += L[r * selectedSize + k] * L[c * selectedSize + k];
+              reconstructed +=
+                L[r * selectedSize + k] * L[c * selectedSize + k];
             }
-            maxDiff = Math.max(maxDiff, Math.abs(pdMatrix[r][c] - reconstructed));
+            maxDiff = Math.max(
+              maxDiff,
+              Math.abs(pdMatrix[r][c] - reconstructed),
+            );
           }
         }
         lastMaxDiff = maxDiff;
@@ -124,7 +152,8 @@
     }
 
     const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
-    const gflops = ((1 / 3) * selectedSize * selectedSize * selectedSize) / 1e9 / avgTime;
+    const gflops =
+      ((1 / 3) * selectedSize * selectedSize * selectedSize) / 1e9 / avgTime;
 
     return {
       device: "js",
@@ -135,7 +164,10 @@
     };
   }
 
-  async function benchDevice(device: "cpu" | "wasm" | "webgpu"): Promise<Result> {
+  async function benchDevice(
+    device: "cpu" | "wasm" | "webgpu",
+    pdMatrix: number[][],
+  ): Promise<Result> {
     currentDevice = device;
     const times: number[] = [];
     let lastMaxDiff = 0;
@@ -148,9 +180,6 @@
     setStep("Initializing backend...");
     await init(device);
     setStep("Backend initialized");
-
-    // Generate SPD matrix once (same for all runs)
-    const pdMatrix = generatePositiveDefinite(selectedSize);
 
     for (let i = 0; i < numRuns; i++) {
       setStep(`Run ${i + 1}/${numRuns}: Creating SPD matrix...`);
@@ -171,7 +200,9 @@
       await blockUntilReady(L.ref);
       const end = performance.now();
 
-      setStep(`Run ${i + 1}/${numRuns}: Cholesky done in ${(end - start).toFixed(2)}ms`);
+      setStep(
+        `Run ${i + 1}/${numRuns}: Cholesky done in ${(end - start).toFixed(2)}ms`,
+      );
 
       const time = (end - start) / 1000;
       if (i > 0) times.push(time); // Skip first run for average
@@ -179,8 +210,12 @@
       // Verification (only on the last run for efficiency)
       if (i === numRuns - 1) {
         setStep(`Run ${i + 1}/${numRuns}: Verifying result (L @ L.T)...`);
-        const L_T = L.ref.transpose();
-        const reconstructed = np.matmul(L.ref, L_T);
+
+        const L_lower = np.tril(L.ref);
+        const reconstructed = np.matmul(L_lower.ref, L_lower.ref.transpose());
+
+        // const L_T = L.ref.transpose();
+        // const reconstructed = np.matmul(L.ref, L_T);
 
         setStep(`Run ${i + 1}/${numRuns}: Converting to JS arrays...`);
         const recon_js = (await reconstructed.ref.jsAsync()) as number[][];
@@ -204,14 +239,15 @@
 
     const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
     // Cholesky complexity: ~ (1/3) * n^3 FLOPs
-    const gflops = ( (1/3) * selectedSize * selectedSize * selectedSize ) / 1e9 / avgTime;
+    const gflops =
+      ((1 / 3) * selectedSize * selectedSize * selectedSize) / 1e9 / avgTime;
 
     return {
       device,
       gflops,
       time: avgTime,
       maxDiff: lastMaxDiff,
-      passed: lastMaxDiff < 1e-2
+      passed: lastMaxDiff < 1e-2,
     };
   }
 
@@ -222,9 +258,18 @@
     error = null;
 
     try {
+      const setStep = (step: string) => {
+        currentStep = step;
+        console.log(`[bench] ${step}`);
+      };
+
+      // Generate SPD matrix once for all backends
+      setStep("Generating test matrix...");
+      const pdMatrix = generatePositiveDefinite(selectedSize);
+
       // First run pure JS benchmark
       console.log("Starting benchmark for js...");
-      const jsRes = await benchPureJS();
+      const jsRes = await benchPureJS(pdMatrix);
       console.log("js result:", jsRes);
       results.push(jsRes);
 
@@ -232,7 +277,7 @@
       const devices = ["cpu", "wasm", "webgpu"] as const;
       for (const device of devices) {
         console.log(`Starting benchmark for ${device}...`);
-        const res = await benchDevice(device);
+        const res = await benchDevice(device, pdMatrix);
         console.log(`${device} result:`, res);
         results.push(res);
       }
@@ -264,7 +309,7 @@
   const chartWidth = paddingX * 2 + 4 * barWidth + 3 * barGap;
 
   const maxGflops = $derived(
-    results.length > 0 ? Math.max(...results.map(r => r.gflops), 0.1) : 10
+    results.length > 0 ? Math.max(...results.map((r) => r.gflops), 0.1) : 10,
   );
 
   function getBarHeight(gflops: number) {
@@ -296,20 +341,28 @@
   <div class="text-center mb-8">
     <h1 class="text-4xl font-bold mb-4">Cholesky Decomposition</h1>
     <p class="text-gray-600 text-lg max-w-2xl mx-auto">
-      Benchmarking performance of {selectedSize}×{selectedSize} matrix factorization across CPU, WASM, and WebGPU backends.
+      Benchmarking performance of {selectedSize}×{selectedSize} matrix factorization
+      across CPU, WASM, and WebGPU backends.
     </p>
   </div>
 
   <!-- Optimization Banner -->
-  <div class="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border-2 border-green-200 p-6 mb-8">
+  <div
+    class="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border-2 border-green-200 p-6 mb-8"
+  >
     <div class="flex items-start gap-4">
-      <div class="flex-shrink-0 w-12 h-12 bg-green-500 rounded-full flex items-center justify-center text-white text-2xl font-bold">
+      <div
+        class="flex-shrink-0 w-12 h-12 bg-green-500 rounded-full flex items-center justify-center text-white text-2xl font-bold"
+      >
         ⚡
       </div>
       <div class="flex-1">
-        <h3 class="text-xl font-bold text-green-900 mb-2">Optimized Implementation</h3>
+        <h3 class="text-xl font-bold text-green-900 mb-2">
+          Optimized Implementation
+        </h3>
         <p class="text-green-800 mb-3">
-          This benchmark now uses an optimized right-looking Cholesky algorithm with better cache locality.
+          This benchmark now uses an optimized right-looking Cholesky algorithm
+          with better cache locality.
           <strong>1,800x+ faster</strong> than the previous blocked implementation!
         </p>
         <div class="grid grid-cols-2 gap-4 text-sm">
@@ -318,7 +371,9 @@
             <div class="text-gray-700">Right-looking, column-major</div>
           </div>
           <div class="bg-white rounded-lg p-3 border border-green-200">
-            <div class="text-green-600 font-semibold mb-1">Performance (128×128)</div>
+            <div class="text-green-600 font-semibold mb-1">
+              Performance (128×128)
+            </div>
             <div class="text-gray-700">~0.7ms (was 1,322ms)</div>
           </div>
         </div>
@@ -339,32 +394,50 @@
         >
           <!-- Grid Lines -->
           {#each [0, 0.25, 0.5, 0.75, 1] as tick}
-            {@const y = chartHeight - paddingBottom - tick * (chartHeight - paddingBottom - paddingTop)}
-            <line x1={paddingX} y1={y} x2={chartWidth - paddingX} y2={y} stroke="#f1f5f9" stroke-width="1" />
-            <text x={paddingX - 8} y={y + 4} text-anchor="end" class="text-[10px] fill-gray-400 font-mono">
+            {@const y =
+              chartHeight -
+              paddingBottom -
+              tick * (chartHeight - paddingBottom - paddingTop)}
+            <line
+              x1={paddingX}
+              y1={y}
+              x2={chartWidth - paddingX}
+              y2={y}
+              stroke="#f1f5f9"
+              stroke-width="1"
+            />
+            <text
+              x={paddingX - 8}
+              y={y + 4}
+              text-anchor="end"
+              class="text-[10px] fill-gray-400 font-mono"
+            >
               {formatNumber(tick * maxGflops)}
             </text>
           {/each}
 
           <!-- Bars -->
           {#each ["js", "cpu", "wasm", "webgpu"] as device, i}
-            {@const result = results.find(r => r.device === device)}
+            {@const result = results.find((r) => r.device === device)}
             {@const xPos = paddingX + i * (barWidth + barGap)}
             {@const height = result ? getBarHeight(result.gflops) : 4}
             {@const yPos = chartHeight - paddingBottom - height}
             {@const isCurrent = currentDevice === device}
 
-            <g class="transition-opacity duration-300" style="opacity: {isRunning && !isCurrent && !result ? 0.3 : 1}">
+            <g
+              class="transition-opacity duration-300"
+              style="opacity: {isRunning && !isCurrent && !result ? 0.3 : 1}"
+            >
               <rect
                 x={xPos}
                 y={yPos}
                 width={barWidth}
-                height={height}
+                {height}
                 fill={barColors[device]}
                 rx="6"
                 class="transition-all duration-500 ease-out"
               />
-              
+
               {#if result}
                 <text
                   x={xPos + barWidth / 2}
@@ -387,8 +460,20 @@
               </text>
 
               {#if isCurrent}
-                <g transform="translate({xPos + barWidth/2 - 8}, {chartHeight - paddingBottom + 40})">
-                   <circle cx="8" cy="8" r="8" fill="none" stroke={barColors[device]} stroke-width="2" class="animate-ping opacity-75" />
+                <g
+                  transform="translate({xPos + barWidth / 2 - 8}, {chartHeight -
+                    paddingBottom +
+                    40})"
+                >
+                  <circle
+                    cx="8"
+                    cy="8"
+                    r="8"
+                    fill="none"
+                    stroke={barColors[device]}
+                    stroke-width="2"
+                    class="animate-ping opacity-75"
+                  />
                 </g>
               {/if}
             </g>
@@ -399,15 +484,20 @@
       <div class="mt-12 flex flex-col items-center gap-4">
         <!-- Matrix Size Selector -->
         <div class="mb-4">
-          <p class="text-sm font-semibold text-gray-700 mb-3 text-center">Matrix Size</p>
+          <p class="text-sm font-semibold text-gray-700 mb-3 text-center">
+            Matrix Size
+          </p>
           <div class="flex gap-3 justify-center">
             {#each matrixSizes as size}
               <button
-                onclick={() => selectedSize = size}
+                onclick={() => (selectedSize = size)}
                 disabled={isRunning}
-                class="px-6 py-2 rounded-lg font-semibold transition-all {selectedSize === size
+                class="px-6 py-2 rounded-lg font-semibold transition-all {selectedSize ===
+                size
                   ? 'bg-blue-600 text-white shadow-md'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'} {isRunning ? 'opacity-50 cursor-not-allowed' : ''}"
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'} {isRunning
+                  ? 'opacity-50 cursor-not-allowed'
+                  : ''}"
               >
                 {size}×{size}
               </button>
@@ -415,7 +505,9 @@
           </div>
           <div class="mt-3 text-center">
             <p class="text-sm text-gray-600">
-              Selected: <span class="font-bold text-blue-600">N = {selectedSize}</span>
+              Selected: <span class="font-bold text-blue-600"
+                >N = {selectedSize}</span
+              >
             </p>
           </div>
         </div>
@@ -434,24 +526,30 @@
         </button>
 
         {#if isRunning && currentStep}
-          <div class="text-sm text-gray-500 bg-gray-50 px-4 py-2 rounded-lg border border-gray-200 font-mono">
+          <div
+            class="text-sm text-gray-500 bg-gray-50 px-4 py-2 rounded-lg border border-gray-200 font-mono"
+          >
             {currentStep}
           </div>
         {/if}
 
         {#if results.length > 0 && !isRunning && !error}
           <div class="flex flex-col gap-2 items-center">
-            <div class="flex items-center gap-2 text-sm text-green-600 bg-green-50 px-4 py-2 rounded-lg border border-green-100">
+            <div
+              class="flex items-center gap-2 text-sm text-green-600 bg-green-50 px-4 py-2 rounded-lg border border-green-100"
+            >
               <CheckCircle2 size={16} />
               Accuracy verified: All results within 1e-2 tolerance.
             </div>
-            {#if results.find(r => r.device === "cpu")}
-              {@const cpuResult = results.find(r => r.device === "cpu")}
-              {@const jsResult = results.find(r => r.device === "js")}
+            {#if results.find((r) => r.device === "cpu")}
+              {@const cpuResult = results.find((r) => r.device === "cpu")}
+              {@const jsResult = results.find((r) => r.device === "js")}
               {#if cpuResult && jsResult}
                 <div class="text-xs text-gray-600">
-                  CPU is {(jsResult.time / cpuResult.time).toFixed(2)}x vs Pure JS baseline
-                  ({cpuResult.time < jsResult.time ? 'faster ⚡' : 'slower'})
+                  CPU is {(jsResult.time / cpuResult.time).toFixed(2)}x vs Pure
+                  JS baseline ({cpuResult.time < jsResult.time
+                    ? "faster ⚡"
+                    : "slower"})
                 </div>
               {/if}
             {/if}
@@ -462,42 +560,60 @@
   </div>
 
   {#if error}
-    <div class="bg-red-50 rounded-2xl shadow-sm border border-red-200 p-6 mb-8" in:fade>
+    <div
+      class="bg-red-50 rounded-2xl shadow-sm border border-red-200 p-6 mb-8"
+      in:fade
+    >
       <div class="flex items-start gap-3">
         <AlertCircle size={24} class="text-red-500 flex-shrink-0 mt-0.5" />
         <div class="flex-1 min-w-0">
-          <h3 class="text-lg font-semibold text-red-800 mb-2">Benchmark Error</h3>
+          <h3 class="text-lg font-semibold text-red-800 mb-2">
+            Benchmark Error
+          </h3>
 
           <div class="space-y-3">
             {#if error.device}
               <div>
-                <span class="text-xs font-bold uppercase tracking-widest text-red-400">Device</span>
+                <span
+                  class="text-xs font-bold uppercase tracking-widest text-red-400"
+                  >Device</span
+                >
                 <p class="text-red-700 font-mono">{error.device}</p>
               </div>
             {/if}
 
             {#if error.step}
               <div>
-                <span class="text-xs font-bold uppercase tracking-widest text-red-400">Failed at step</span>
+                <span
+                  class="text-xs font-bold uppercase tracking-widest text-red-400"
+                  >Failed at step</span
+                >
                 <p class="text-red-700 font-mono">{error.step}</p>
               </div>
             {/if}
 
             <div>
-              <span class="text-xs font-bold uppercase tracking-widest text-red-400">Error Message</span>
+              <span
+                class="text-xs font-bold uppercase tracking-widest text-red-400"
+                >Error Message</span
+              >
               <p class="text-red-700 font-mono break-words">{error.message}</p>
             </div>
 
             {#if error.stack}
               <div>
-                <span class="text-xs font-bold uppercase tracking-widest text-red-400">Stack Trace</span>
-                <pre class="text-red-600 font-mono text-xs bg-red-100 rounded-lg p-4 overflow-x-auto mt-1 whitespace-pre-wrap break-words">{error.stack}</pre>
+                <span
+                  class="text-xs font-bold uppercase tracking-widest text-red-400"
+                  >Stack Trace</span
+                >
+                <pre
+                  class="text-red-600 font-mono text-xs bg-red-100 rounded-lg p-4 overflow-x-auto mt-1 whitespace-pre-wrap break-words">{error.stack}</pre>
               </div>
             {/if}
           </div>
 
           <button
-            onclick={() => error = null}
+            onclick={() => (error = null)}
             class="mt-4 text-sm text-red-600 hover:text-red-800 underline"
           >
             Dismiss
@@ -512,7 +628,10 @@
       {#each results as res}
         <div class="bg-gray-50 rounded-xl p-5 border border-gray-100">
           <div class="flex items-center justify-between mb-3">
-            <span class="text-xs font-bold uppercase tracking-widest text-gray-400">{res.device}</span>
+            <span
+              class="text-xs font-bold uppercase tracking-widest text-gray-400"
+              >{res.device}</span
+            >
             <div class="flex items-center gap-1">
               {#if res.passed}
                 <CheckCircle2 size={14} class="text-green-500" />
@@ -523,9 +642,16 @@
               {/if}
             </div>
           </div>
-          <div class="text-2xl font-bold text-gray-900 mb-1">{formatNumber(res.gflops)} <span class="text-sm font-normal text-gray-500">GFLOPs</span></div>
-          <div class="text-xs text-gray-500">Time: {formatNumber(res.time * 1000)}ms</div>
-          <div class="text-[10px] text-gray-400 mt-2 font-mono">Max error: {res.maxDiff.toExponential(2)}</div>
+          <div class="text-2xl font-bold text-gray-900 mb-1">
+            {formatNumber(res.gflops)}
+            <span class="text-sm font-normal text-gray-500">GFLOPs</span>
+          </div>
+          <div class="text-xs text-gray-500">
+            Time: {formatNumber(res.time * 1000)}ms
+          </div>
+          <div class="text-[10px] text-gray-400 mt-2 font-mono">
+            Max error: {res.maxDiff.toExponential(2)}
+          </div>
         </div>
       {/each}
     </div>
@@ -559,7 +685,8 @@
     border-collapse: collapse;
     margin-top: 1rem;
   }
-  th, td {
+  th,
+  td {
     text-align: left;
     padding: 0.75rem;
     border-bottom: 1px solid #eee;
