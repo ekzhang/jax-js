@@ -10,8 +10,9 @@ suite("linalg.cholesky()", () => {
     const L = linalg.cholesky(x, { lower: true });
 
     // L should be lower triangular
-    expect(L.js()[0][1]).toBeCloseTo(0);
-    expect(L.js()[1][0]).not.toBe(0);
+    const LData = L.ref.js();
+    expect(LData[0][1]).toBeCloseTo(0);
+    expect(LData[1][0]).not.toBe(0);
 
     // Verify: L @ L^T should equal x
     const reconstructed = np.matmul(L, L.ref.transpose());
@@ -26,8 +27,9 @@ suite("linalg.cholesky()", () => {
     const L = linalg.cholesky(x); // lower=true is default
 
     // L should be lower triangular
-    expect(L.js()[0][1]).toBeCloseTo(0);
-    expect(L.js()[1][0]).not.toBe(0);
+    const LData = L.ref.js();
+    expect(LData[0][1]).toBeCloseTo(0);
+    expect(LData[1][0]).not.toBe(0);
 
     // Verify: L @ L^T should equal x
     const reconstructed = np.matmul(L, L.ref.transpose());
