@@ -2,6 +2,8 @@
 
 import { type Array, type ArrayLike, fudgeArray } from "../frontend/array";
 import * as core from "../frontend/core";
+// Import custom ops to ensure they're registered
+import "../custom-ops/cholesky.js";
 
 /**
  * Compute the Cholesky decomposition of a matrix.
@@ -44,15 +46,14 @@ export function cholesky(
   { lower = true }: { lower?: boolean } = {},
 ): Array {
   a = fudgeArray(a);
-  // The core.cholesky primitive always returns lower triangular L
-  const L = core.cholesky(a) as Array;
 
-  if (lower) {
-    return L;
-  } else {
-    // For upper triangular, return transpose of L
-    return L.transpose();
-  }
+  // Use CustomOp primitive to dispatch to backend-specific implementation
+  const result = core.bind1(core.Primitive.CustomOp, [a], {
+    name: "linalg.cholesky",
+    lower,
+  }) as Array;
+
+  return result;
 }
 
 /**

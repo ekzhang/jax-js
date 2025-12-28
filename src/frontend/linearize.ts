@@ -1,6 +1,7 @@
 /** @file Implementations of vjp() and partial evaluation. */
 
 import { AluOp, isFloatDtype } from "../alu";
+import { customOpRegistry } from "../custom-ops/registry.js";
 import {
   dispose as treeDispose,
   flatten as treeFlatten,
@@ -869,13 +870,6 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
     let i = 0;
     return undefPrimals.map((isUndef) => (isUndef ? outs[i++] : null));
   },
-  [Primitive.Cholesky]([ct], [x]) {
-    // Cholesky is a nonlinear operation, so if x is UndefPrimal (tangent),
-    // we cannot compute the transpose directly.
-    // This should not happen in practice because Cholesky uses primal values only.
-    if (!(x instanceof UndefPrimal)) throw new NonlinearError(Primitive.Cholesky);
-    throw new NonlinearError(Primitive.Cholesky);
-  },
   [Primitive.TriangularSolve](
     [ct],
     [a, b],
@@ -912,6 +906,13 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
     });
 
     return [null, ct_b];
+  },
+  [Primitive.CustomOp](cotangents, args, params) {
+    const impl = customOpRegistry.get(params.name);
+    if (!impl?.vjp) {
+      throw new Error(`VJP not implemented for custom op: ${params.name}`);
+    }
+    return impl.vjp(cotangents, args, params);
   },
 };
 

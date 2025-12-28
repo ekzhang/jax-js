@@ -1,6 +1,7 @@
 import { byteWidth, DType, isFloatDtype } from "../alu";
 import { PPrint } from "../pprint";
 import { type Pair } from "../shape";
+import { customOpRegistry } from "../custom-ops/registry.js";
 import {
   JsTreeDef,
   MapJsTree,
@@ -902,17 +903,6 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     }
     return outTypes;
   },
-  [Primitive.Cholesky]([x]) {
-    if (x.ndim !== 2) {
-      throw new TypeError(`cholesky: input must be 2D, got ${x.ndim}D`);
-    }
-    if (x.shape[0] !== x.shape[1]) {
-      throw new TypeError(
-        `cholesky: matrix must be square, got ${x.shape[0]}x${x.shape[1]}`,
-      );
-    }
-    return [new ShapedArray(x.shape, x.dtype, x.weakType)];
-  },
   [Primitive.TriangularSolve]([a, b], { leftSide }) {
     if (a.ndim !== 2) {
       throw new TypeError(`triangular_solve: a must be 2D, got ${a.ndim}D`);
@@ -924,6 +914,15 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     }
     // Output shape is same as b
     return [new ShapedArray(b.shape, b.dtype, b.weakType)];
+  },
+  [Primitive.CustomOp](inputs, params) {
+    const impl = customOpRegistry.get(params.name);
+    if (!impl?.abstractEval) {
+      // Default: use first input shape/dtype
+      return [inputs[0]];
+    }
+    const result = impl.abstractEval(inputs, params);
+    return Array.isArray(result) ? result : [result];
   },
 };
 

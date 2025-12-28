@@ -71,8 +71,8 @@ export enum Primitive {
   Pad = "pad",
   Gather = "gather",
   Jit = "jit",
-  Cholesky = "cholesky",
   TriangularSolve = "triangular_solve",
+  CustomOp = "custom_op",
 }
 
 interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
@@ -101,6 +101,10 @@ interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
     lower: boolean;
     transposeA: boolean;
     unitDiagonal: boolean;
+  };
+  [Primitive.CustomOp]: {
+    name: string;
+    [key: string]: any;
   };
 }
 
@@ -369,13 +373,6 @@ export function pad(x: TracerValue, width: number | Pair | Pair[]) {
     throw new Error(`Invalid pad(): expected ${nd} axes, got ${width.length}`);
   }
   return bind1(Primitive.Pad, [x], { width });
-}
-
-/**
- * Cholesky decomposition. Returns lower triangular L where A = L @ L^T.
- */
-export function cholesky(x: TracerValue) {
-  return bind1(Primitive.Cholesky, [x]);
 }
 
 /**

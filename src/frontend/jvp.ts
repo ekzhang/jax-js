@@ -5,6 +5,7 @@ import {
   unflatten as treeUnflatten,
 } from "../tree";
 import { unzip2, zip } from "../utils";
+import { customOpRegistry } from "../custom-ops/registry.js";
 import { array, pureArray, zerosLike } from "./array";
 import {
   AbstractValue,
@@ -298,40 +299,6 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     const [primalsOut, tangentsOut] = [outs.slice(0, n), outs.slice(n)];
     return [primalsOut, tangentsOut];
   },
-  [Primitive.Cholesky]([a], [da]) {
-    // Cholesky JVP based on https://arxiv.org/pdf/1602.07527.pdf
-    // L_dot = L @ phi(L^{-1} @ da @ L^{-T})
-    // where phi(X) takes lower triangular and divides diagonal by 2
-    const L = cholesky(a);
-    const n = L.shape[0];
-
-    // Compute L^{-1} @ da using triangular_solve(L, da, left_side=true)
-    const tmp1 = triangularSolve(L.ref, da, {
-      leftSide: true,
-      lower: true,
-      transposeA: false,
-      unitDiagonal: false,
-    });
-
-    // Compute tmp1 @ L^{-T} using triangular_solve(L, tmp1^T, left_side=true, transpose_a=true)^T
-    // Equivalently: triangular_solve(L, tmp1, left_side=false, transpose_a=true)
-    const tmp2 = triangularSolve(L.ref, tmp1, {
-      leftSide: false,
-      lower: true,
-      transposeA: true,
-      unitDiagonal: false,
-    });
-
-    // phi function: take lower triangular, divide diagonal by 2
-    // This is: tril(X) - 0.5 * diag(diag(X))
-    // Implemented as: where(i > j, X, where(i == j, X/2, 0))
-    const phi = phiLowerHalfDiag(tmp2, n);
-
-    // L_dot = L @ phi - using matmul helper
-    const L_dot = matmul2d(L.ref, phi, n);
-
-    return [[L], [L_dot]];
-  },
   [Primitive.TriangularSolve](
     [a, b],
     [da, db],
@@ -379,6 +346,13 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     });
 
     return [[x], [dx]];
+  },
+  [Primitive.CustomOp](primals, tangents, params) {
+    const impl = customOpRegistry.get(params.name);
+    if (!impl?.jvp) {
+      throw new Error(`JVP not implemented for custom op: ${params.name}`);
+    }
+    return impl.jvp(primals, tangents, params);
   },
 };
 
