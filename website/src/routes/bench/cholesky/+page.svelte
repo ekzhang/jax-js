@@ -4,7 +4,9 @@
   import { fade } from "svelte/transition";
   import { LoaderCircle, SquareMousePointerIcon, CheckCircle2, AlertCircle } from "@lucide/svelte";
 
-  const n = 128;
+  // Test multiple matrix sizes
+  const matrixSizes = [128, 256, 512];
+  let selectedSize = $state(128);
   const numRuns = 3;
 
   type Result = {
@@ -54,22 +56,32 @@
     return matrix;
   }
 
-  // Pure JS Cholesky for comparison
-  function choleskyPureJS(A: number[][]): number[][] {
+  // Pure JS Cholesky for comparison (using Float32Array to match JAX-JS precision)
+  function choleskyPureJS(A: number[][]): Float32Array {
     const n = A.length;
-    const L: number[][] = Array.from({ length: n }, () => Array(n).fill(0));
+    // Flatten input to Float32Array (row-major)
+    const aFlat = new Float32Array(n * n);
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        aFlat[i * n + j] = A[i][j];
+      }
+    }
+
+    const lFlat = new Float32Array(n * n);
+
+    // Same Cholesky-Crout algorithm, just using flat arrays
     for (let i = 0; i < n; i++) {
       for (let j = 0; j <= i; j++) {
         let sum = 0;
         for (let k = 0; k < j; k++) {
-          sum += L[i][k] * L[j][k];
+          sum += lFlat[i * n + k] * lFlat[j * n + k];
         }
-        L[i][j] = i === j
-          ? Math.sqrt(Math.max(A[i][i] - sum, 1e-10))
-          : (A[i][j] - sum) / L[j][j];
+        lFlat[i * n + j] = i === j
+          ? Math.sqrt(Math.max(aFlat[i * n + i] - sum, 1e-10))
+          : (aFlat[i * n + j] - sum) / lFlat[j * n + j];
       }
     }
-    return L;
+    return lFlat;
   }
 
   async function benchPureJS(): Promise<Result> {
@@ -82,7 +94,7 @@
       console.log(`[js] ${step}`);
     };
 
-    const pdMatrix = generatePositiveDefinite(n);
+    const pdMatrix = generatePositiveDefinite(selectedSize);
 
     for (let i = 0; i < numRuns; i++) {
       setStep(`Run ${i + 1}/${numRuns}: Running pure JS cholesky...`);
@@ -98,11 +110,11 @@
       if (i === numRuns - 1) {
         setStep(`Run ${i + 1}/${numRuns}: Verifying result...`);
         let maxDiff = 0;
-        for (let r = 0; r < n; r++) {
-          for (let c = 0; c < n; c++) {
+        for (let r = 0; r < selectedSize; r++) {
+          for (let c = 0; c < selectedSize; c++) {
             let reconstructed = 0;
             for (let k = 0; k <= Math.min(r, c); k++) {
-              reconstructed += L[r][k] * L[c][k];
+              reconstructed += L[r * selectedSize + k] * L[c * selectedSize + k];
             }
             maxDiff = Math.max(maxDiff, Math.abs(pdMatrix[r][c] - reconstructed));
           }
@@ -112,7 +124,7 @@
     }
 
     const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
-    const gflops = ((1 / 3) * n * n * n) / 1e9 / avgTime;
+    const gflops = ((1 / 3) * selectedSize * selectedSize * selectedSize) / 1e9 / avgTime;
 
     return {
       device: "js",
@@ -138,7 +150,7 @@
     setStep("Backend initialized");
 
     // Generate SPD matrix once (same for all runs)
-    const pdMatrix = generatePositiveDefinite(n);
+    const pdMatrix = generatePositiveDefinite(selectedSize);
 
     for (let i = 0; i < numRuns; i++) {
       setStep(`Run ${i + 1}/${numRuns}: Creating SPD matrix...`);
@@ -176,8 +188,8 @@
 
         setStep(`Run ${i + 1}/${numRuns}: Computing max difference...`);
         let maxDiff = 0;
-        for (let r = 0; r < n; r++) {
-          for (let c = 0; c < n; c++) {
+        for (let r = 0; r < selectedSize; r++) {
+          for (let c = 0; c < selectedSize; c++) {
             maxDiff = Math.max(maxDiff, Math.abs(A_js[r][c] - recon_js[r][c]));
           }
         }
@@ -192,7 +204,7 @@
 
     const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
     // Cholesky complexity: ~ (1/3) * n^3 FLOPs
-    const gflops = ( (1/3) * n * n * n ) / 1e9 / avgTime;
+    const gflops = ( (1/3) * selectedSize * selectedSize * selectedSize ) / 1e9 / avgTime;
 
     return {
       device,
@@ -284,7 +296,7 @@
   <div class="text-center mb-8">
     <h1 class="text-4xl font-bold mb-4">Cholesky Decomposition</h1>
     <p class="text-gray-600 text-lg max-w-2xl mx-auto">
-      Benchmarking performance of {n}x{n} matrix factorization across CPU, WASM, and WebGPU backends.
+      Benchmarking performance of {selectedSize}×{selectedSize} matrix factorization across CPU, WASM, and WebGPU backends.
     </p>
   </div>
 
@@ -385,6 +397,29 @@
       </div>
 
       <div class="mt-12 flex flex-col items-center gap-4">
+        <!-- Matrix Size Selector -->
+        <div class="mb-4">
+          <p class="text-sm font-semibold text-gray-700 mb-3 text-center">Matrix Size</p>
+          <div class="flex gap-3 justify-center">
+            {#each matrixSizes as size}
+              <button
+                onclick={() => selectedSize = size}
+                disabled={isRunning}
+                class="px-6 py-2 rounded-lg font-semibold transition-all {selectedSize === size
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'} {isRunning ? 'opacity-50 cursor-not-allowed' : ''}"
+              >
+                {size}×{size}
+              </button>
+            {/each}
+          </div>
+          <div class="mt-3 text-center">
+            <p class="text-sm text-gray-600">
+              Selected: <span class="font-bold text-blue-600">N = {selectedSize}</span>
+            </p>
+          </div>
+        </div>
+
         <button
           onclick={runBenchmark}
           disabled={isRunning}
