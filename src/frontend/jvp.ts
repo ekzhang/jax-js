@@ -279,7 +279,7 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
   [Primitive.Pad]: linearTangentsJvp(Primitive.Pad),
   [Primitive.Sort]([x], [dx]) {
     // Propagate both primals and derivatives along the sorted order.
-    const idx = argsort(x);
+    const idx = argsort(x.ref);
     return [[gather(x, [idx.ref], [-1], -1)], [gather(dx, [idx], [-1], -1)]];
   },
   [Primitive.Argsort]: zeroTangentsJvp(Primitive.Argsort),
