@@ -18,6 +18,7 @@ import {
   cast,
   cholesky,
   cos,
+  dot,
   erf,
   erfc,
   exp,
@@ -137,6 +138,14 @@ function zeroTangentsJvp<P extends Primitive>(primitive: P): JvpRule<P> {
     const ys = bind(primitive, primals, params);
     return [ys, ys.map((y) => zerosLike(y.ref))];
   };
+}
+
+/** Compute matmul(a, b.T), batched to last two axes. */
+function batchMatmulTransposed(a: Tracer, b: Tracer): Tracer {
+  return dot(
+    a.reshape(a.shape.toSpliced(-1, 0, 1)),
+    b.reshape(b.shape.toSpliced(-2, 0, 1)),
+  );
 }
 
 const jvpRules: { [P in Primitive]: JvpRule<P> } = {
@@ -291,13 +300,9 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     // So: a @ dx.T = db.T - da @ x.T
     // Therefore: dx.T = triangular_solve(a, db.T - da @ x.T)
     const x = triangularSolve(a.ref, b, { unitDiagonal });
-    // dx = triangular_solve(a, db.T - dax)
-    const dax = bind1(Primitive.Dot, [
-      da.reshape(da.shape.toSpliced(-1, 0, 1)),
-      x.ref,
-    ]);
-    const rhs = db.sub(dax);
-    const dx = triangularSolve(a, rhs, { unitDiagonal });
+    const daxT = batchMatmulTransposed(da, x.ref);
+    const rhs = moveaxis(db, -2, -1).sub(daxT);
+    const dx = triangularSolve(a, moveaxis(rhs, -2, -1), { unitDiagonal });
     return [[x], [dx]];
   },
   [Primitive.Cholesky]([a], [da]) {
@@ -305,14 +310,15 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     // dL = L @ tril(S - 0.5 * diag(S)),
     //   where S = L^{-1} @ dA @ L^{-T}
     const L = cholesky(a.ref);
-    const W = triangularSolve(L.ref, da, { lower: true }); // L^{-1} @ dA
+    da = da.ref.add(moveaxis(da, -1, -2)).mul(0.5); // Symmetrize dA for grad
+    const W = triangularSolve(L.ref, da, { lower: true }); // dA.T @ L^{-T}
     const S = triangularSolve(L.ref, moveaxis(W, -1, -2), { lower: true });
-    const dL = bind1(Primitive.Dot, [
-      L.ref.reshape(L.shape.toSpliced(-1, 0, 1)),
+    const dL = batchMatmulTransposed(
+      L.ref,
       triu(S.ref as any, 1)
         .add(triu(S as any))
         .mul(0.5),
-    ]);
+    );
     return [[L], [dL]];
   },
   [Primitive.Jit](primals, tangents, { name, jaxpr }) {

@@ -850,13 +850,16 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
     return [shrink(ct, slice)];
   },
   [Primitive.TriangularSolve]([ct], [a, b], { unitDiagonal }) {
-    // TriangularSolve: a @ x.T = b.T => x = triangular_solve(a, b)
     if (a instanceof UndefPrimal || !(b instanceof UndefPrimal))
       throw new NonlinearError(Primitive.TriangularSolve);
-    // The adjoint of solving A @ x.T = b.T for x, when differentiating w.r.t. b:
-    // If forward is: x.T = A^{-1} @ b.T
-    // Then adjoint is: ct_b.T = A^{-T} @ ct_x.T, so we just transpose A
-    const ctB = triangularSolve(moveaxis(a, -2, -1), ct, { unitDiagonal });
+    // The adjoint of solving a @ x.T = b.T for x, when differentiating w.r.t. b:
+    //   If forward is: x.T = a^{-1} @ b.T
+    //   Then adjoint is: ct_b.T = a^{-T} @ ct_x.T, so we just transpose A
+    // Note: The primitive always operates on upper triangular a, so a^T is lower.
+    const ctB = triangularSolve(moveaxis(a, -2, -1), ct, {
+      lower: true,
+      unitDiagonal,
+    });
     return [null, ctB];
   },
   [Primitive.Jit](cts, args, { name, jaxpr }) {
