@@ -62,12 +62,12 @@ suite.each(["cpu", "wasm"] as Device[])("device:%s", (device) => {
         [2, 0],
         [1, 3],
       ]);
-      const b = np.array([[4, 7]]);
+      const b = np.array([4, 7]).reshape([2, 1]);
       const x = lax.linalg.triangularSolve(L, b, {
         leftSide: true,
         lower: true,
       });
-      expect(x).toBeAllclose([[2, 5 / 3]]);
+      expect(x.flatten()).toBeAllclose([2, 5 / 3]);
     });
   });
 });

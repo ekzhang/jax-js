@@ -49,11 +49,11 @@ export function cholesky(
  * import { lax, numpy as np } from "@jax-js/jax";
  *
  * const L = np.array([[2., 0.], [1., 3.]]);
- * const b = np.array([[4., 7.]]);
+ * const b = np.array([4., 7.]).reshape([2, 1]);
  *
  * // Solve L @ x = b
  * const x = lax.linalg.triangularSolve(L, b, { leftSide: true, lower: true });
- * // x = [[2., 5./3.]]
+ * // x = [[2.], [5./3.]]
  * ```
  */
 export function triangularSolve(
