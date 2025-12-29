@@ -610,14 +610,14 @@ export class Array extends Tracer {
   static #routine(
     routine: Routine,
     arrays: Array[],
-    outputAvals: ShapedArray[],
+    outputWeakType: boolean[],
   ): Array[] {
     const { backend, committed } = Array.#computeBackend(routine.name, arrays);
     for (const ar of arrays) ar.#realize();
 
     const inputs = arrays.map((ar) => ar.#source as Slot);
-    const outputs = outputAvals.map((sa) =>
-      backend.malloc(byteWidth(sa.dtype) * sa.size),
+    const outputs = routine.type.outputDtypes.map((dtype, i) =>
+      backend.malloc(byteWidth(dtype) * prod(routine.type.outputShapes[i])),
     );
     const pending = arrays.flatMap((ar) => ar.#pending);
     for (const exe of pending) exe.updateRc(+outputs.length);
@@ -629,9 +629,9 @@ export class Array extends Tracer {
       (output, i) =>
         new Array({
           source: output,
-          st: ShapeTracker.fromShape(outputAvals[i].shape),
-          dtype: outputAvals[i].dtype,
-          weakType: outputAvals[i].weakType,
+          st: ShapeTracker.fromShape(routine.type.outputShapes[i]),
+          dtype: routine.type.outputDtypes[i],
+          weakType: outputWeakType[i],
           backend,
           committed,
           pending,
@@ -1024,13 +1024,22 @@ export class Array extends Tracer {
         return [x.#reshape(x.#st.pad(width))];
       },
       [Primitive.Sort]([x]) {
-        const routine = new Routine(Routines.Sort, [x.aval]);
-        return Array.#routine(routine, [x], [x.aval]);
+        const routine = new Routine(Routines.Sort, {
+          inputShapes: [x.aval.shape],
+          inputDtypes: [x.aval.dtype],
+          outputShapes: [x.aval.shape],
+          outputDtypes: [x.aval.dtype],
+        });
+        return Array.#routine(routine, [x], [x.#weakType]);
       },
       [Primitive.Argsort]([x]) {
-        const routine = new Routine(Routines.Argsort, [x.aval]);
-        const outputAval = new ShapedArray(x.shape, DType.Int32, false);
-        return Array.#routine(routine, [x], [outputAval]);
+        const routine = new Routine(Routines.Argsort, {
+          inputShapes: [x.aval.shape],
+          inputDtypes: [x.aval.dtype],
+          outputShapes: [x.aval.shape],
+          outputDtypes: [DType.Int32],
+        });
+        return Array.#routine(routine, [x], [false]);
       },
       [Primitive.Jit](args, { jaxpr }) {
         if (jaxpr.inBinders.length !== args.length) {

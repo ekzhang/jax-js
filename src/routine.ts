@@ -1,7 +1,6 @@
 // Custom lowering for advanced operations that don't fit into AluExp.
 
-import { DataArray, dtypedArray } from "./alu";
-import { ShapedArray } from "./frontend/core";
+import { DataArray, DType } from "./alu";
 
 /**
  * Advanced operations that don't fit into the `AluExp` compiler representation.
@@ -22,8 +21,8 @@ export class Routine {
   constructor(
     /** The name of the routine. */
     readonly name: Routines,
-    /** Shapes and types of the arguments. */
-    readonly avals: ShapedArray[],
+    /** Dtype and shape of the inputs and outputs. */
+    readonly type: RoutineType,
     /** Extra parameters specific to the routine. */
     readonly params?: any,
   ) {}
@@ -40,45 +39,56 @@ export enum Routines {
   Cholesky = "Cholesky",
 }
 
+export interface RoutineType {
+  inputShapes: number[][];
+  inputDtypes: DType[];
+  outputShapes: number[][];
+  outputDtypes: DType[];
+}
+
 // Reference implementation of each routine in CPU is below.
 //
 // The remaining backends implement these routines within their own folders, to
 // allow for code splitting between backends. This is encapsulation.
 
-export function runSort([x]: DataArray[], [xs]: ShapedArray[]): DataArray[] {
-  if (xs.ndim === 0) throw new Error("sort: cannot sort a scalar");
-  const n = xs.shape[xs.shape.length - 1];
-  const y = x.slice();
+export function runSort(type: RoutineType, [x]: DataArray[], [y]: DataArray[]) {
+  const xs = type.inputShapes[0];
+  if (xs.length === 0) throw new Error("sort: cannot sort a scalar");
+  const n = xs[xs.length - 1];
+  y.set(x);
   for (let i = 0; i < y.length; i += n) {
     y.subarray(i, i + n).sort(); // In-place
   }
-  return [y];
 }
 
-export function runArgsort([x]: DataArray[], [xs]: ShapedArray[]): DataArray[] {
-  if (xs.ndim === 0) throw new Error("argsort: cannot sort a scalar");
-  const n = xs.shape[xs.shape.length - 1];
-  const y = new Int32Array(x.length);
+export function runArgsort(
+  type: RoutineType,
+  [x]: DataArray[],
+  [y]: DataArray[],
+) {
+  const xs = type.inputShapes[0];
+  if (xs.length === 0) throw new Error("argsort: cannot sort a scalar");
+  const n = xs[xs.length - 1];
   for (let offset = 0; offset < y.length; offset += n) {
     const ar = x.subarray(offset, offset + n);
     const out = y.subarray(offset, offset + n);
     for (let i = 0; i < n; i++) out[i] = i;
     out.sort((a, b) => ar[a] - ar[b]);
   }
-  return [y];
 }
 
 export function runCholesky(
+  type: RoutineType,
   [x]: DataArray[],
-  [xs]: ShapedArray[],
-): DataArray[] {
-  if (xs.ndim < 2) throw new Error("cholesky: input must be at least 2D");
-  const n = xs.shape[xs.shape.length - 2];
-  const m = xs.shape[xs.shape.length - 1];
+  [y]: DataArray[],
+) {
+  const xs = type.inputShapes[0];
+  if (xs.length < 2) throw new Error("cholesky: input must be at least 2D");
+  const n = xs[xs.length - 2];
+  const m = xs[xs.length - 1];
   if (n !== m)
     throw new Error(`cholesky: input must be square, got [${n}, ${m}]`);
 
-  const y = dtypedArray(xs.dtype, new Uint8Array(x.byteLength));
   for (let offset = 0; offset < y.length; offset += n * n) {
     const ar = x.subarray(offset, offset + n * n);
     const out = y.subarray(offset, offset + n * n);
@@ -94,5 +104,4 @@ export function runCholesky(
       }
     }
   }
-  return [y];
 }

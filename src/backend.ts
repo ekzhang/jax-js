@@ -12,7 +12,7 @@
 import { AluOp, DType, Kernel } from "./alu";
 import { CpuBackend } from "./backend/cpu";
 import { WasmBackend } from "./backend/wasm";
-import { Routine } from "./routine";
+import { Routine, Routines } from "./routine";
 
 export type Device = "cpu" | "wasm" | "webgpu";
 export const devices: Device[] = ["cpu", "wasm", "webgpu"];
@@ -208,5 +208,11 @@ export class UnsupportedOpError extends Error {
     let msg = `${op || ""}<${dtype}> not supported in ${device} backend`;
     if (arg !== undefined) msg += ` with arg ${JSON.stringify(arg)}`;
     super(msg);
+  }
+}
+
+export class UnsupportedRoutineError extends Error {
+  constructor(name: Routines, device: Device) {
+    super(`${name}: routine not supported in ${device} backend`);
   }
 }

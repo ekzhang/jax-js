@@ -294,7 +294,12 @@ export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
       // routine are "imm" (black node, dispatched) and so is itself.
       const routine = new Routine(
         routinePrimitives.get(eqn.primitive)!,
-        eqn.inputs.map((x) => x.aval),
+        {
+          inputShapes: eqn.inputs.map((x) => x.aval.shape),
+          inputDtypes: eqn.inputs.map((x) => x.aval.dtype),
+          outputShapes: eqn.outBinders.map((x) => x.aval.shape),
+          outputDtypes: eqn.outBinders.map((x) => x.aval.dtype),
+        },
         eqn.params as any,
       );
       const inputs: JitId[] = [];
