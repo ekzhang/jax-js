@@ -1,7 +1,6 @@
 // Linear algebra functions, mirroring `jax.numpy.linalg` and `jax.scipy.linalg`.
 
 import { Array, type ArrayLike, fudgeArray } from "../frontend/array";
-import { Routines } from "../routine";
 
 /**
  * Compute the Cholesky decomposition of a symmetric positive-definite matrix.
@@ -15,16 +14,16 @@ import { Routines } from "../routine";
  *
  * @example
  * ```ts
- * import { numpy as np } from "@jax-js/jax";
+ * import { lax, numpy as np } from "@jax-js/jax";
  *
  * const x = np.array([[2., 1.], [1., 2.]]);
  *
  * // Lower Cholesky factorization (default):
- * const L = np.linalg.cholesky(x);
+ * const L = lax.linalg.cholesky(x);
  * // L ≈ [[1.4142135, 0], [0.70710677, 1.2247449]]
  *
  * // Upper Cholesky factorization:
- * const U = np.linalg.cholesky(x, { upper: true });
+ * const U = lax.linalg.cholesky(x, { upper: true });
  * // U ≈ [[1.4142135, 0.70710677], [0, 1.2247449]]
  * ```
  */

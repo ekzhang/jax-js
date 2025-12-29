@@ -895,20 +895,29 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
       throw new TypeError("argsort: requires at least 1D input");
     return [new ShapedArray(x.shape, DType.Int32, false)];
   },
-  [Primitive.TriangularSolve]([a, b], { leftSide }) {
-    if (a.ndim !== 2) {
-      throw new TypeError(`triangular_solve: a must be 2D, got ${a.ndim}D`);
-    }
-    // Output shape is same as b
-    return [new ShapedArray(b.shape, b.dtype, b.weakType)];
+  [Primitive.TriangularSolve]([a, b]) {
+    if (a.ndim < 2)
+      throw new TypeError(`triangular_solve: a must be at least 2D, got ${a}`);
+    if (b.ndim < 2)
+      throw new TypeError(`triangular_solve: b must be at least 2D, got ${b}`);
+    // Solve a @ x.T = b.T
+    // [n, n] @ [batch, n].T -> [batch, n].T
+    const [m, n] = a.shape.slice(-2);
+    const [_batch, q] = b.shape.slice(-2);
+    if (
+      !deepEqual(a.shape.slice(0, -2), b.shape.slice(0, -2)) ||
+      a.dtype !== b.dtype ||
+      m !== n ||
+      n !== q
+    )
+      throw new TypeError(`triangular_solve: mismatch ${a} vs ${b}`);
+    return [new ShapedArray(b.shape, b.dtype, a.weakType && b.weakType)];
   },
   [Primitive.Cholesky]([a]) {
-    if (a.ndim < 2) throw new TypeError("cholesky: requires at least 2D input");
-    if (a.shape[a.ndim - 2] !== a.shape[a.ndim - 1]) {
-      throw new TypeError(
-        `cholesky: innermost two dimensions must be square, got ${JSON.stringify(a.shape.slice(-2))}`,
-      );
-    }
+    if (a.ndim < 2)
+      throw new TypeError(`cholesky: requires at least 2D input, got ${a}`);
+    if (a.shape[a.ndim - 2] !== a.shape[a.ndim - 1])
+      throw new TypeError(`cholesky: must be square, got ${a}`);
     return [ShapedArray.fromAval(a)];
   },
   [Primitive.Jit](args, { jaxpr }) {

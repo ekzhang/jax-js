@@ -1,13 +1,13 @@
-import { linalg, numpy as np } from "@jax-js/jax";
+import { lax, numpy as np } from "@jax-js/jax";
 import { expect, suite, test } from "vitest";
 
-suite("jax.numpy.linalg.cholesky()", () => {
+suite("jax.lax.linalg.cholesky()", () => {
   test("computes lower Cholesky decomposition for 2x2 matrix", () => {
     const x = np.array([
       [2.0, 1.0],
       [1.0, 2.0],
     ]);
-    const L = linalg.cholesky(x);
+    const L = lax.linalg.cholesky(x);
 
     // L should be lower triangular
     const LData = L.ref.js();
@@ -25,7 +25,7 @@ suite("jax.numpy.linalg.cholesky()", () => {
       [2.0, 5.0, 3.0],
       [1.0, 3.0, 6.0],
     ]);
-    const L = linalg.cholesky(x);
+    const L = lax.linalg.cholesky(x);
 
     // Verify: L @ L^T should equal x
     const reconstructed = np.matmul(L.ref, L.transpose());
@@ -37,11 +37,11 @@ suite("jax.numpy.linalg.cholesky()", () => {
       [1.0, 2.0, 3.0],
       [4.0, 5.0, 6.0],
     ]);
-    expect(() => linalg.cholesky(x)).toThrow();
+    expect(() => lax.linalg.cholesky(x)).toThrow();
   });
 
   test("throws on non-2D array", () => {
     const x = np.array([1.0, 2.0, 3.0]);
-    expect(() => linalg.cholesky(x)).toThrow();
+    expect(() => lax.linalg.cholesky(x)).toThrow();
   });
 });

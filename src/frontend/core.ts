@@ -84,8 +84,8 @@ export enum Primitive {
   // Routines (custom lowering)
   Sort = "sort", // sort(x, axis=-1)
   Argsort = "argsort", // argsort(x, axis=-1)
-  TriangularSolve = "triangular_solve",
-  Cholesky = "cholesky",
+  TriangularSolve = "triangular_solve", // upper triangular, U x = b
+  Cholesky = "cholesky", // returns lower triangular, L L^T
 
   // JIT compilation
   Jit = "jit",
@@ -112,12 +112,7 @@ interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
   [Primitive.Shrink]: { slice: Pair[] };
   [Primitive.Pad]: { width: Pair[] };
   [Primitive.Jit]: { name: string; jaxpr: Jaxpr; numConsts: number };
-  [Primitive.TriangularSolve]: {
-    leftSide: boolean;
-    lower: boolean;
-    transposeA: boolean;
-    unitDiagonal: boolean;
-  };
+  [Primitive.TriangularSolve]: { unitDiagonal: boolean };
 }
 
 /** Type of parameters taken by each primitive. */
@@ -422,24 +417,9 @@ export function pad(x: TracerValue, width: number | Pair | Pair[]) {
 export function triangularSolve(
   a: TracerValue,
   b: TracerValue,
-  {
-    leftSide = true,
-    lower = true,
-    transposeA = false,
-    unitDiagonal = false,
-  }: {
-    leftSide?: boolean;
-    lower?: boolean;
-    transposeA?: boolean;
-    unitDiagonal?: boolean;
-  } = {},
+  { unitDiagonal = false }: { unitDiagonal?: boolean } = {},
 ) {
-  return bind1(Primitive.TriangularSolve, [a, b], {
-    leftSide,
-    lower,
-    transposeA,
-    unitDiagonal,
-  });
+  return bind1(Primitive.TriangularSolve, [a, b], { unitDiagonal });
 }
 
 export function sort(x: TracerValue) {
@@ -1052,6 +1032,10 @@ export class ShapedArray implements AbstractValue {
 
   static fromAval(aval: AbstractValue) {
     return new ShapedArray(aval.shape, aval.dtype, aval.weakType);
+  }
+
+  static scalarLike(aval: AbstractValue) {
+    return new ShapedArray([], aval.dtype, aval.weakType);
   }
 
   get ndim() {

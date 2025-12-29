@@ -1041,18 +1041,27 @@ export class Array extends Tracer {
         });
         return Array.#routine(routine, [x], [false]);
       },
-      [Primitive.TriangularSolve](
-        [a, b],
-        { leftSide, lower, transposeA, unitDiagonal },
-      ) {
-        return [
-          triangularSolveBlocked(a as Array, b as Array, {
-            leftSide,
-            lower,
-            transposeA,
-            unitDiagonal,
-          }),
-        ];
+      [Primitive.TriangularSolve]([a, b], { unitDiagonal }) {
+        const routine = new Routine(
+          Routines.TriangularSolve,
+          {
+            inputShapes: [a.aval.shape, b.aval.shape],
+            inputDtypes: [a.aval.dtype, b.aval.dtype],
+            outputShapes: [b.aval.shape],
+            outputDtypes: [b.aval.dtype],
+          },
+          { unitDiagonal },
+        );
+        return Array.#routine(routine, [a, b], [a.#weakType && b.#weakType]);
+      },
+      [Primitive.Cholesky]([a]) {
+        const routine = new Routine(Routines.Cholesky, {
+          inputShapes: [a.aval.shape],
+          inputDtypes: [a.aval.dtype],
+          outputShapes: [a.aval.shape],
+          outputDtypes: [a.aval.dtype],
+        });
+        return Array.#routine(routine, [a], [a.#weakType]);
       },
       [Primitive.Jit](args, { jaxpr }) {
         if (jaxpr.inBinders.length !== args.length) {

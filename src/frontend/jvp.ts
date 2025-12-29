@@ -288,6 +288,21 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     return [[gather(x, [idx.ref], [-1], -1)], [gather(dx, [idx], [-1], -1)]];
   },
   [Primitive.Argsort]: zeroTangentsJvp(Primitive.Argsort),
+  [Primitive.TriangularSolve]([a, b], [da, db], { unitDiagonal }) {
+    // a @ x.T = b.T  =>  da @ x.T + a @ dx.T = db.T
+    // So: a @ dx.T = db.T - da @ x.T
+    // Therefore: dx.T = triangular_solve(a, db.T - da @ x.T)
+    const x = triangularSolve(a.ref, b.ref, { unitDiagonal });
+
+    // dx = triangular_solve(a, db - dax)
+    const rhs = db.sub(dax);
+    const dx = triangularSolve(a, rhs, { unitDiagonal });
+
+    return [[x], [dx]];
+  },
+  [Primitive.Cholesky]([a], [da]) {
+    // XXX
+  },
   [Primitive.Jit](primals, tangents, { name, jaxpr }) {
     const newJaxpr = jvpJaxpr(jaxpr);
     const outs = bind(
@@ -305,79 +320,7 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     const [primalsOut, tangentsOut] = [outs.slice(0, n), outs.slice(n)];
     return [primalsOut, tangentsOut];
   },
-  [Primitive.TriangularSolve](
-    [a, b],
-    [da, db],
-    { leftSide, lower, transposeA, unitDiagonal },
-  ) {
-    // For left_side=true: a @ x = b, so x = triangular_solve(a, b)
-    // Taking derivative: da @ x + a @ dx = db
-    // So: a @ dx = db - da @ x
-    // Therefore: dx = triangular_solve(a, db - da @ x)
-    const x = triangularSolve(a.ref, b.ref, {
-      leftSide,
-      lower,
-      transposeA,
-      unitDiagonal,
-    });
-
-    // Compute da @ x (for left_side) or x @ da (for right_side)
-    const n = a.shape[0];
-    let dax: Tracer;
-    if (leftSide) {
-      // da @ x: need matrix multiply
-      if (x.ndim === 1) {
-        // Matrix-vector multiply
-        dax = matvec2d(da, x.ref, n);
-      } else {
-        dax = matmul2d(da, x.ref, n);
-      }
-    } else {
-      // x @ da
-      if (x.ndim === 1) {
-        // Vector-matrix multiply: x^T @ da
-        dax = matvec2d(da.transpose(), x.ref, n);
-      } else {
-        dax = matmul2d(x.ref, da, n);
-      }
-    }
-
-    // dx = triangular_solve(a, db - dax)
-    const rhs = db.sub(dax);
-    const dx = triangularSolve(a, rhs, {
-      leftSide,
-      lower,
-      transposeA,
-      unitDiagonal,
-    });
-
-    return [[x], [dx]];
-  },
 };
-
-// Helper: 2D matrix multiply using broadcast + mul + reduce
-// For A (n, n) @ B (n, n) -> (n, n)
-function matmul2d(a: Tracer, b: Tracer, n: number): Tracer {
-  // Broadcast a to (n, n, n) by adding axis at end
-  const aExp = broadcast(a, [n, n, n], [2]);
-  // Broadcast b to (n, n, n) by transposing then adding axis at start
-  // b: (n, n) -> b^T: (n, n) -> (n, n, n) with broadcast at axis 0
-  const bT = b.transpose();
-  const bExp = broadcast(bT, [n, n, n], [0]);
-  // Multiply and reduce along axis 1
-  const prod = aExp.mul(bExp);
-  return reduce(prod, AluOp.Add, [1]);
-}
-
-// Helper: matrix-vector multiply A (n, n) @ v (n,) -> (n,)
-function matvec2d(a: Tracer, v: Tracer, n: number): Tracer {
-  // Broadcast a to (n, n) - already is
-  // Broadcast v to (n, n) by adding axis at start
-  const vExp = broadcast(v, [n, n], [0]);
-  // Multiply and reduce along axis 1
-  const prod = a.mul(vExp);
-  return reduce(prod, AluOp.Add, [1]);
-}
 
 // Helper: phi function for Cholesky JVP
 // Takes lower triangular part and divides diagonal by 2

@@ -59,21 +59,19 @@ export function runCpuRoutine(
   outputs: Uint8Array<ArrayBuffer>[],
 ) {
   const { name, type } = routine;
-  const inputArrays = inputs.map((buf, i) =>
-    dtypedArray(type.inputDtypes[i], buf),
-  );
-  const outputArrays = outputs.map((buf, i) =>
+  const inputAr = inputs.map((buf, i) => dtypedArray(type.inputDtypes[i], buf));
+  const outputAr = outputs.map((buf, i) =>
     dtypedArray(type.outputDtypes[i], buf),
   );
   switch (name) {
     case Routines.Sort:
-      return runSort(type, inputArrays, outputArrays);
+      return runSort(type, inputAr, outputAr);
     case Routines.Argsort:
-      return runArgsort(type, inputArrays, outputArrays);
+      return runArgsort(type, inputAr, outputAr);
     case Routines.TriangularSolve:
-      return runTriangularSolve(type, inputArrays, outputArrays);
+      return runTriangularSolve(type, inputAr, outputAr, routine.params);
     case Routines.Cholesky:
-      return runCholesky(type, inputArrays, outputArrays);
+      return runCholesky(type, inputAr, outputAr);
     default:
       name satisfies never; // Exhaustiveness check
   }
@@ -105,12 +103,40 @@ function runTriangularSolve(
   type: RoutineType,
   [a, b]: DataArray[],
   [x]: DataArray[],
+  { unitDiagonal }: { unitDiagonal: boolean },
 ) {
   const as = type.inputShapes[0];
   const bs = type.inputShapes[1];
-  if (as.length !== 2) throw new Error("triangular_solve: a must be 2D");
-  if (bs.length < 1 || bs.length > 2)
-    throw new Error("triangular_solve: b must be 1D or 2D");
+  if (as.length < 2)
+    throw new Error(`triangular_solve: a must be at least 2D, got ${as}`);
+  if (bs.length < 2)
+    throw new Error(`triangular_solve: b must be at least 2D, got ${bs}`);
+  // Assuming that a is square, solve for a @ x.T = b.T
+  const n = as[as.length - 2];
+  if (n !== as[as.length - 1] || n !== bs[bs.length - 1])
+    throw new Error(`triangular_solve: incompatible shapes a=${as}, b=${bs}`);
+  const batch = bs[bs.length - 2];
+  for (let counter = 0; counter < a.length / (n * n); counter++) {
+    const a1 = a.subarray(counter * n * n, (counter + 1) * n * n);
+    for (let t = 0; t < batch; t++) {
+      const b1 = b.subarray(
+        (counter * batch + t) * n,
+        (counter * batch + t + 1) * n,
+      );
+      const x1 = x.subarray(
+        (counter * batch + t) * n,
+        (counter * batch + t + 1) * n,
+      );
+      // Now solve matvec a1 @ x1 = b1 for x1, where a1 is upper-triangular.
+      for (let i = n - 1; i >= 0; i--) {
+        let sum = b1[i];
+        for (let j = i + 1; j < n; j++) {
+          sum -= a1[i * n + j] * x1[j];
+        }
+        x1[i] = unitDiagonal ? sum : sum / a1[i * n + i];
+      }
+    }
+  }
 }
 
 function runCholesky(type: RoutineType, [x]: DataArray[], [y]: DataArray[]) {

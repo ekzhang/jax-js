@@ -60,7 +60,7 @@ import {
   Var,
 } from "./jaxpr";
 import { jvp } from "./jvp";
-import { vmap } from "./vmap";
+import { moveaxis, vmap } from "./vmap";
 
 /** Array value that can either be known or unknown. */
 class PartialVal {
@@ -849,6 +849,16 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
     );
     return [shrink(ct, slice)];
   },
+  [Primitive.TriangularSolve]([ct], [a, b], { unitDiagonal }) {
+    // TriangularSolve: a @ x.T = b.T => x = triangular_solve(a, b)
+    if (a instanceof UndefPrimal || !(b instanceof UndefPrimal))
+      throw new NonlinearError(Primitive.TriangularSolve);
+    // The adjoint of solving A @ x.T = b.T for x, when differentiating w.r.t. b:
+    // If forward is: x.T = A^{-1} @ b.T
+    // Then adjoint is: ct_b.T = A^{-T} @ ct_x.T, so we just transpose A
+    const ctB = triangularSolve(moveaxis(a, -2, -1), ct, { unitDiagonal });
+    return [null, ctB];
+  },
   [Primitive.Jit](cts, args, { name, jaxpr }) {
     // We need this one because the jvp() rule for Jit generates a Jit
     // with the transformed Jaxpr. So grad-of-jit will result in a transposed
@@ -868,43 +878,6 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
     // Now pull cotangents back to the corresponding UndefPrimal inputs.
     let i = 0;
     return undefPrimals.map((isUndef) => (isUndef ? outs[i++] : null));
-  },
-  [Primitive.TriangularSolve](
-    [ct],
-    [a, b],
-    { leftSide, lower, transposeA, unitDiagonal },
-  ) {
-    // TriangularSolve: a @ x = b => x = triangular_solve(a, b)
-    // This is linear in b, so we can transpose it.
-    // If b is UndefPrimal: transpose of solve(A, b) w.r.t. b is solve(A^T, ct)
-
-    if (a instanceof UndefPrimal) {
-      // If a is the tangent, this is nonlinear
-      throw new NonlinearError(Primitive.TriangularSolve);
-    }
-
-    if (!(b instanceof UndefPrimal)) {
-      // If neither is UndefPrimal, this is a constant
-      throw new NonlinearError(Primitive.TriangularSolve);
-    }
-
-    // The adjoint of solving A @ x = b for x, when differentiating w.r.t. b:
-    // If forward is: x = A^{-1} @ b
-    // Then adjoint is: ct_b = A^{-T} @ ct_x
-    //
-    // For triangular_solve(a, b, leftSide=true, lower, transposeA):
-    // - Solves (possibly transposed A) @ x = b
-    // - Adjoint solves with transposed A^T
-
-    // The adjoint solve has transposeA flipped
-    const ct_b = triangularSolve(a as Tracer, ct, {
-      leftSide,
-      lower,
-      transposeA: !transposeA, // Flip the transpose flag
-      unitDiagonal,
-    });
-
-    return [null, ct_b];
   },
 };
 
