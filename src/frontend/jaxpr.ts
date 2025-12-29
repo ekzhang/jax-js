@@ -750,6 +750,8 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
   [Primitive.Mul]: binopAbstractEval,
   [Primitive.Idiv]: binopAbstractEval,
   [Primitive.Mod]: binopAbstractEval,
+  [Primitive.Min]: binopAbstractEval,
+  [Primitive.Max]: binopAbstractEval,
   [Primitive.Neg]: vectorizedUnopAbstractEval,
   [Primitive.Reciprocal]: vectorizedUnopAbstractEval,
   [Primitive.Floor]: vectorizedUnopAbstractEval,
@@ -769,20 +771,6 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     }
     return [new ShapedArray(x.shape, dtype, false)];
   },
-  [Primitive.RandomBits]([k0, k1]: ShapedArray[], { shape }) {
-    if (k0.dtype !== DType.Uint32 || k1.dtype !== DType.Uint32) {
-      throw new TypeError(
-        `RandomBits requires uint32 keys, got ${k0.dtype} and ${k1.dtype}`,
-      );
-    }
-    const keyShape = generalBroadcast(k0.shape, k1.shape);
-    if (!deepEqual(generalBroadcast(keyShape, shape), shape)) {
-      throw new TypeError(
-        `Keys of shapes ${k0.shape} and ${k1.shape} cannot be broadcast to shape ${shape}`,
-      );
-    }
-    return [new ShapedArray(shape, DType.Uint32, false)];
-  },
   [Primitive.Sin]: vectorizedUnopAbstractEval,
   [Primitive.Cos]: vectorizedUnopAbstractEval,
   [Primitive.Asin]: vectorizedUnopAbstractEval,
@@ -792,8 +780,6 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
   [Primitive.Erf]: vectorizedUnopAbstractEval,
   [Primitive.Erfc]: vectorizedUnopAbstractEval,
   [Primitive.Sqrt]: vectorizedUnopAbstractEval,
-  [Primitive.Min]: binopAbstractEval,
-  [Primitive.Max]: binopAbstractEval,
   [Primitive.Reduce]([x], { axis }) {
     const axisSet = new Set(axis);
     const newShape = x.shape.filter((_, i) => !axisSet.has(i));
@@ -835,6 +821,45 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     const shape = generalBroadcast(cond.shape, xy.shape);
     return [new ShapedArray(shape, xy.dtype, xy.weakType)];
   },
+  [Primitive.RandomBits]([k0, k1]: ShapedArray[], { shape }) {
+    if (k0.dtype !== DType.Uint32 || k1.dtype !== DType.Uint32) {
+      throw new TypeError(
+        `RandomBits requires uint32 keys, got ${k0.dtype} and ${k1.dtype}`,
+      );
+    }
+    const keyShape = generalBroadcast(k0.shape, k1.shape);
+    if (!deepEqual(generalBroadcast(keyShape, shape), shape)) {
+      throw new TypeError(
+        `Keys of shapes ${k0.shape} and ${k1.shape} cannot be broadcast to shape ${shape}`,
+      );
+    }
+    return [new ShapedArray(shape, DType.Uint32, false)];
+  },
+  [Primitive.Gather]([x, ...indices], { axis, outDim }) {
+    for (const a of indices)
+      if (a.dtype !== DType.Int32 && a.dtype !== DType.Uint32)
+        throw new TypeError(
+          `Gather indices must be Int32 or Uint32, got ${a.dtype}`,
+        );
+    if (axis.length !== indices.length)
+      throw new TypeError(`Gather: ${axis} axes but ${indices.length} indices`);
+    if (indices.length === 0)
+      throw new TypeError("Gather must have 1+ indices with same shape");
+    if (axis.some((a) => a < 0 || a >= x.shape.length))
+      throw new TypeError("Gather axis out of bounds");
+    if (outDim < 0 || outDim > x.shape.length - axis.length)
+      throw new TypeError("Gather outDim out of bounds");
+    const axisSet = new Set(axis);
+    if (axisSet.size !== axis.length)
+      throw new TypeError("Gather axes are not unique");
+    const gatherShape = indices.reduce<number[]>(
+      (shape, a) => generalBroadcast(shape, a.shape),
+      [],
+    );
+    const newShape = x.shape.filter((_, i) => !axisSet.has(i));
+    newShape.splice(outDim, 0, ...gatherShape);
+    return [new ShapedArray(newShape, x.dtype, x.weakType)];
+  },
   [Primitive.Transpose]([x], { perm }) {
     return [
       new ShapedArray(
@@ -861,30 +886,14 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     const newShape = x.shape.map((dim, i) => dim + width[i][0] + width[i][1]);
     return [new ShapedArray(newShape, x.dtype, x.weakType)];
   },
-  [Primitive.Gather]([x, ...indices], { axis, outDim }) {
-    for (const a of indices)
-      if (a.dtype !== DType.Int32 && a.dtype !== DType.Uint32)
-        throw new TypeError(
-          `Gather indices must be Int32 or Uint32, got ${a.dtype}`,
-        );
-    if (axis.length !== indices.length)
-      throw new TypeError(`Gather: ${axis} axes but ${indices.length} indices`);
-    if (indices.length === 0)
-      throw new TypeError("Gather must have 1+ indices with same shape");
-    if (axis.some((a) => a < 0 || a >= x.shape.length))
-      throw new TypeError("Gather axis out of bounds");
-    if (outDim < 0 || outDim > x.shape.length - axis.length)
-      throw new TypeError("Gather outDim out of bounds");
-    const axisSet = new Set(axis);
-    if (axisSet.size !== axis.length)
-      throw new TypeError("Gather axes are not unique");
-    const gatherShape = indices.reduce<number[]>(
-      (shape, a) => generalBroadcast(shape, a.shape),
-      [],
-    );
-    const newShape = x.shape.filter((_, i) => !axisSet.has(i));
-    newShape.splice(outDim, 0, ...gatherShape);
-    return [new ShapedArray(newShape, x.dtype, x.weakType)];
+  [Primitive.Sort]([x]) {
+    if (x.ndim === 0) throw new TypeError("sort: requires at least 1D input");
+    return [ShapedArray.fromAval(x)];
+  },
+  [Primitive.Argsort]([x]) {
+    if (x.ndim === 0)
+      throw new TypeError("argsort: requires at least 1D input");
+    return [new ShapedArray(x.shape, DType.Int32, false)];
   },
   [Primitive.Jit](args, { jaxpr }) {
     const { inTypes, outTypes } = typecheckJaxpr(jaxpr);

@@ -3,6 +3,7 @@ import { arange, eye, pureArray } from "./array";
 import {
   AbstractValue,
   add,
+  argsort,
   asin,
   atan,
   bind,
@@ -40,6 +41,7 @@ import {
   ShapedArray,
   shrink,
   sin,
+  sort,
   sqrt,
   stopGradient,
   Trace,
@@ -242,6 +244,8 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
   [Primitive.Mul]: broadcastBatcher(mul),
   [Primitive.Idiv]: broadcastBatcher(idiv),
   [Primitive.Mod]: broadcastBatcher(mod),
+  [Primitive.Min]: broadcastBatcher(min),
+  [Primitive.Max]: broadcastBatcher(max),
   [Primitive.Neg]: unopBatcher(neg),
   [Primitive.Reciprocal]: unopBatcher(reciprocal),
   [Primitive.Floor]: unopBatcher(floor),
@@ -249,7 +253,6 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
   [Primitive.StopGradient]: unopBatcher(stopGradient),
   [Primitive.Cast]: unopBatcher((x, { dtype }) => cast(x, dtype)),
   [Primitive.Bitcast]: unopBatcher((x, { dtype }) => bitcast(x, dtype)),
-  // TODO: random_bits
   [Primitive.Sin]: unopBatcher(sin),
   [Primitive.Cos]: unopBatcher(cos),
   [Primitive.Asin]: unopBatcher(asin),
@@ -259,8 +262,6 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
   [Primitive.Erf]: unopBatcher(erf),
   [Primitive.Erfc]: unopBatcher(erfc),
   [Primitive.Sqrt]: unopBatcher(sqrt),
-  [Primitive.Min]: broadcastBatcher(min),
-  [Primitive.Max]: broadcastBatcher(max),
   [Primitive.Reduce](axisSize, [x], [xBdim], { op, axis }) {
     assertNonNull(xBdim);
     const newAxis = axis.map((ax) => ax + (xBdim <= ax ? 1 : 0));
@@ -291,38 +292,7 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
     );
   },
   [Primitive.Where]: broadcastBatcher(where),
-  [Primitive.Transpose](axisSize, [x], [xBdim], { perm }) {
-    assertNonNull(xBdim);
-    const newPerm = perm.map((p) => p + (xBdim <= p ? 1 : 0));
-    newPerm.splice(xBdim, 0, xBdim); // Keep the batch dim in place.
-    return [[transpose(x, newPerm)], [xBdim]];
-  },
-  [Primitive.Broadcast](axisSize, [x], [xBdim], { shape, axis }) {
-    assertNonNull(xBdim);
-    const newShape = shape.toSpliced(xBdim, 0, axisSize);
-    const newAxis = axis.map((ax) => ax + (xBdim <= ax ? 1 : 0));
-    return [[broadcast(x, newShape, newAxis)], [xBdim]];
-  },
-  [Primitive.Reshape](axisSize, [x], [xBdim], { shape }) {
-    // Move xBdim to the front, so reshape can have contiguous axes.
-    x = moveBatchAxis(axisSize, xBdim, 0, x);
-    return [[reshape(x, [axisSize, ...shape])], [0]];
-  },
-  [Primitive.Flip](axisSize, [x], [xBdim], { axis }) {
-    assertNonNull(xBdim);
-    const newAxis = axis.map((ax) => ax + (xBdim <= ax ? 1 : 0));
-    return [[flip(x, newAxis)], [xBdim]];
-  },
-  [Primitive.Shrink](axisSize, [x], [xBdim], { slice }) {
-    assertNonNull(xBdim);
-    const newSlice = slice.toSpliced(xBdim, 0, [0, axisSize]);
-    return [[shrink(x, newSlice)], [xBdim]];
-  },
-  [Primitive.Pad](axisSize, [x], [xBdim], { width }) {
-    assertNonNull(xBdim);
-    const newWidth = width.toSpliced(xBdim, 0, [0, 0]);
-    return [[pad(x, newWidth)], [xBdim]];
-  },
+  // TODO: random_bits
   [Primitive.Gather](
     axisSize,
     [x, ...indices],
@@ -367,6 +337,48 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
       indices.splice(0, 0, extraBatchIndex);
       return [[gather(x, indices, newAxis, outDim)], [outDim]];
     }
+  },
+  [Primitive.Transpose](axisSize, [x], [xBdim], { perm }) {
+    assertNonNull(xBdim);
+    const newPerm = perm.map((p) => p + (xBdim <= p ? 1 : 0));
+    newPerm.splice(xBdim, 0, xBdim); // Keep the batch dim in place.
+    return [[transpose(x, newPerm)], [xBdim]];
+  },
+  [Primitive.Broadcast](axisSize, [x], [xBdim], { shape, axis }) {
+    assertNonNull(xBdim);
+    const newShape = shape.toSpliced(xBdim, 0, axisSize);
+    const newAxis = axis.map((ax) => ax + (xBdim <= ax ? 1 : 0));
+    return [[broadcast(x, newShape, newAxis)], [xBdim]];
+  },
+  [Primitive.Reshape](axisSize, [x], [xBdim], { shape }) {
+    // Move xBdim to the front, so reshape can have contiguous axes.
+    x = moveBatchAxis(axisSize, xBdim, 0, x);
+    return [[reshape(x, [axisSize, ...shape])], [0]];
+  },
+  [Primitive.Flip](axisSize, [x], [xBdim], { axis }) {
+    assertNonNull(xBdim);
+    const newAxis = axis.map((ax) => ax + (xBdim <= ax ? 1 : 0));
+    return [[flip(x, newAxis)], [xBdim]];
+  },
+  [Primitive.Shrink](axisSize, [x], [xBdim], { slice }) {
+    assertNonNull(xBdim);
+    const newSlice = slice.toSpliced(xBdim, 0, [0, axisSize]);
+    return [[shrink(x, newSlice)], [xBdim]];
+  },
+  [Primitive.Pad](axisSize, [x], [xBdim], { width }) {
+    assertNonNull(xBdim);
+    const newWidth = width.toSpliced(xBdim, 0, [0, 0]);
+    return [[pad(x, newWidth)], [xBdim]];
+  },
+  [Primitive.Sort](axisSize, [x], [xBdim]) {
+    assertNonNull(xBdim);
+    x = moveBatchAxis(axisSize, xBdim, 0, x);
+    return [[sort(x)], [0]];
+  },
+  [Primitive.Argsort](axisSize, [x], [xBdim]) {
+    assertNonNull(xBdim);
+    x = moveBatchAxis(axisSize, xBdim, 0, x);
+    return [[argsort(x)], [0]];
   },
   [Primitive.Jit](axisSize, args, dims, { name, jaxpr }) {
     const newJaxpr = vmapJaxpr(jaxpr, axisSize, dims);

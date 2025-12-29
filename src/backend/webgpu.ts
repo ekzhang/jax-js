@@ -1,4 +1,4 @@
-import { AluExp, AluGroup, AluOp, dtypedArray, DType, isFloatDtype, Kernel } from "../alu";
+import { AluExp, AluGroup, AluOp, DType, isFloatDtype, Kernel } from "../alu";
 import {
   Backend,
   Device,
@@ -6,8 +6,9 @@ import {
   Slot,
   SlotError,
   UnsupportedOpError,
+  UnsupportedRoutineError,
 } from "../backend";
-import { Routine, Routines, runCholesky, runSort, runArgsort } from "../routine";
+import { Routine } from "../routine";
 import { tuneWebgpu } from "../tuner";
 import { DEBUG, findPow2, FpHash, mapSetUnion, prod, strip1 } from "../utils";
 import { erfSrc, threefrySrc } from "./webgpu/builtins";
@@ -170,11 +171,11 @@ export class WebGPUBackend implements Backend {
   }
 
   async prepareRoutine(routine: Routine): Promise<Executable> {
-    return this.prepareRoutineSync(routine);
+    throw new UnsupportedRoutineError(routine.name, this.type);
   }
 
   prepareRoutineSync(routine: Routine): Executable {
-    return new Executable(routine, undefined);
+    throw new UnsupportedRoutineError(routine.name, this.type);
   }
 
   dispatch(
@@ -182,22 +183,6 @@ export class WebGPUBackend implements Backend {
     inputs: Slot[],
     outputs: Slot[],
   ): void {
-    // Handle routines with custom GPU implementations
-    if (exe.source instanceof Routine) {
-      const routine = exe.source;
-
-      switch (routine.name) {
-        case Routines.Cholesky:
-          this.#dispatchCholesky(inputs[0], outputs[0], routine);
-          return;
-        case Routines.Sort:
-        case Routines.Argsort:
-          throw new Error(`WebGPU routine ${routine.name} not yet implemented. Please use CPU or WASM backend.`);
-        default:
-          throw new Error(`Unknown routine: ${routine.name}`);
-      }
-    }
-
     if (inputs.length !== exe.data.nargs) {
       throw new Error(
         `webgpu: dispatch with ${inputs.length} inputs, expected ${exe.data.nargs}`,
@@ -358,7 +343,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       for (let i = 0; i < batchCount; i++) {
         const passEncoder = commandEncoder.beginComputePass();
         passEncoder.setPipeline(pipeline);
-        passEncoder.setBindGroup(0, bindGroups[uniformBuffers.length - batchCount + i]);
+        passEncoder.setBindGroup(
+          0,
+          bindGroups[uniformBuffers.length - batchCount + i],
+        );
         passEncoder.dispatchWorkgroups(numWorkgroups);
         passEncoder.end();
       }

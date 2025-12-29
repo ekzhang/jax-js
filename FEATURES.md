@@ -134,9 +134,9 @@ Most operations behave the same way as they do in JAX.
 | `arctanh`             | 🟢      |                                         |
 | `argmax`              | 🟢      |                                         |
 | `argmin`              | 🟢      |                                         |
-| `argpartition`        | 🔴      | sorting                                 |
-| `argsort`             | 🔴      | sorting                                 |
-| `argwhere`            | 🔴      | sorting                                 |
+| `argpartition`        | 🟠      | sorting                                 |
+| `argsort`             | 🟢      | sorting                                 |
+| `argwhere`            | 🟠      | sorting                                 |
 | `around`              | ⚪️      | alias of `round`                        |
 | `array`               | 🟢      |                                         |
 | `array_equal`         | 🔴      |                                         |
@@ -156,7 +156,7 @@ Most operations behave the same way as they do in JAX.
 | `atleast_3d`          | ⚪️      | confusing, use `reshape`                |
 | `average`             | 🟠      | `mean` is supported                     |
 | `bartlett`            | 🟠      |                                         |
-| `bincount`            | 🔴      | sorting                                 |
+| `bincount`            | 🟠      |                                         |
 | `bitwise_and`         | 🔴      |                                         |
 | `bitwise_count`       | 🔴      |                                         |
 | `bitwise_invert`      | 🔴      |                                         |
@@ -319,7 +319,7 @@ Most operations behave the same way as they do in JAX.
 | `max`                 | 🟢      |                                         |
 | `maximum`             | 🟢      |                                         |
 | `mean`                | 🟢      |                                         |
-| `median`              | 🔴      | sorting                                 |
+| `median`              | 🟠      | sorting                                 |
 | `meshgrid`            | 🟢      |                                         |
 | `mgrid`               | ⚪️      | Python-specific                         |
 | `min`                 | 🟢      |                                         |
@@ -335,11 +335,11 @@ Most operations behave the same way as they do in JAX.
 | `nancumsum`           | 🟠      |                                         |
 | `nanmax`              | 🟠      |                                         |
 | `nanmean`             | 🟠      |                                         |
-| `nanmedian`           | 🔴      | sorting                                 |
+| `nanmedian`           | 🟠      | sorting                                 |
 | `nanmin`              | 🟠      |                                         |
-| `nanpercentile`       | 🔴      | sorting                                 |
+| `nanpercentile`       | 🟠      | sorting                                 |
 | `nanprod`             | 🟠      |                                         |
-| `nanquantile`         | 🔴      | sorting                                 |
+| `nanquantile`         | 🟠      | sorting                                 |
 | `nanstd`              | 🟠      |                                         |
 | `nansum`              | 🟠      |                                         |
 | `nanvar`              | 🟠      |                                         |
@@ -347,7 +347,7 @@ Most operations behave the same way as they do in JAX.
 | `ndim`                | 🟢      |                                         |
 | `negative`            | 🟢      |                                         |
 | `nextafter`           | 🔴      |                                         |
-| `nonzero`             | 🔴      | sorting                                 |
+| `nonzero`             | 🔴      |                                         |
 | `not_equal`           | 🟢      |                                         |
 | `ogrid`               | ⚪️      | Python-specific                         |
 | `ones`                | 🟢      |                                         |
@@ -355,8 +355,8 @@ Most operations behave the same way as they do in JAX.
 | `outer`               | 🟢      |                                         |
 | `packbits`            | ⚪️      | no uint8 support                        |
 | `pad`                 | 🟢      |                                         |
-| `partition`           | 🔴      | sorting                                 |
-| `percentile`          | 🔴      | sorting                                 |
+| `partition`           | 🟠      | sorting                                 |
+| `percentile`          | 🟠      | sorting                                 |
 | `permute_dims`        | 🟢      |                                         |
 | `piecewise`           | 🔴      | `lax.switch` control flow               |
 | `place`               | 🔴      |                                         |
@@ -378,7 +378,7 @@ Most operations behave the same way as they do in JAX.
 | `ptp`                 | 🟢      |                                         |
 | `put`                 | 🟠      |                                         |
 | `put_along_axis`      | 🟠      |                                         |
-| `quantile`            | 🔴      | sorting                                 |
+| `quantile`            | 🟠      | sorting                                 |
 | `r_`                  | ⚪️      | Python-specific                         |
 | `rad2deg`             | 🟢      |                                         |
 | `radians`             | 🟢      |                                         |
@@ -413,7 +413,7 @@ Most operations behave the same way as they do in JAX.
 | `sinc`                | 🟠      |                                         |
 | `sinh`                | 🟢      |                                         |
 | `size`                | 🟢      |                                         |
-| `sort`                | 🔴      | sorting                                 |
+| `sort`                | 🟢      | sorting                                 |
 | `sort_complex`        | ⚪️      | complex numbers                         |
 | `spacing`             | 🔴      |                                         |
 | `split`               | 🟠      | `Array.slice` is supported              |

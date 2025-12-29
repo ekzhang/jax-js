@@ -8,6 +8,7 @@ import { unzip2, zip } from "../utils";
 import { array, pureArray, zerosLike } from "./array";
 import {
   AbstractValue,
+  argsort,
   asin,
   atan,
   bind,
@@ -158,6 +159,12 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     const q = idiv(x.ref, y.ref);
     return [[mod(x, y)], [dx.sub(dy.mul(q))]];
   },
+  [Primitive.Min]([x, y], [dx, dy]) {
+    return [[min(x.ref, y.ref)], [where(less(y, x), dy, dx)]];
+  },
+  [Primitive.Max]([x, y], [dx, dy]) {
+    return [[max(x.ref, y.ref)], [where(less(x, y), dy, dx)]];
+  },
   [Primitive.Neg]: linearTangentsJvp(Primitive.Neg),
   [Primitive.Reciprocal]([x], [dx]) {
     // d(1/x) = -x^-2 * dx
@@ -182,7 +189,6 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     dx.dispose(); // Non-differentiable operation.
     return [[bitcast(x.ref, dtype)], [zerosLike(x)]];
   },
-  [Primitive.RandomBits]: zeroTangentsJvp(Primitive.RandomBits),
   [Primitive.Sin]([x], [dx]) {
     return [[sin(x.ref)], [cos(x).mul(dx)]];
   },
@@ -225,12 +231,6 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     const z = sqrt(x);
     return [[z.ref], [reciprocal(z.mul(2)).mul(dx)]];
   },
-  [Primitive.Min]([x, y], [dx, dy]) {
-    return [[min(x.ref, y.ref)], [where(less(y, x), dy, dx)]];
-  },
-  [Primitive.Max]([x, y], [dx, dy]) {
-    return [[max(x.ref, y.ref)], [where(less(x, y), dy, dx)]];
-  },
   [Primitive.Reduce]([x], [dx], { op, axis }) {
     if (op === AluOp.Add) {
       return [[reduce(x, op, axis)], [reduce(dx, op, axis)]];
@@ -266,12 +266,7 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     dcond.dispose();
     return [[where(cond.ref, x, y)], [where(cond, dx, dy)]];
   },
-  [Primitive.Transpose]: linearTangentsJvp(Primitive.Transpose),
-  [Primitive.Broadcast]: linearTangentsJvp(Primitive.Broadcast),
-  [Primitive.Reshape]: linearTangentsJvp(Primitive.Reshape),
-  [Primitive.Flip]: linearTangentsJvp(Primitive.Flip),
-  [Primitive.Shrink]: linearTangentsJvp(Primitive.Shrink),
-  [Primitive.Pad]: linearTangentsJvp(Primitive.Pad),
+  [Primitive.RandomBits]: zeroTangentsJvp(Primitive.RandomBits),
   [Primitive.Gather]([x, ...indices], [dx, ..._], { axis, outDim }) {
     // d(gather(x, indices)) = gather(dx, indices).
     // Note: We ignore the tangents for indices, since they are not differentiable.
@@ -281,6 +276,18 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
       [gather(dx, indicesRef, axis, outDim)],
     ];
   },
+  [Primitive.Transpose]: linearTangentsJvp(Primitive.Transpose),
+  [Primitive.Broadcast]: linearTangentsJvp(Primitive.Broadcast),
+  [Primitive.Reshape]: linearTangentsJvp(Primitive.Reshape),
+  [Primitive.Flip]: linearTangentsJvp(Primitive.Flip),
+  [Primitive.Shrink]: linearTangentsJvp(Primitive.Shrink),
+  [Primitive.Pad]: linearTangentsJvp(Primitive.Pad),
+  [Primitive.Sort]([x], [dx]) {
+    // Propagate both primals and derivatives along the sorted order.
+    const idx = argsort(x.ref);
+    return [[gather(x, [idx.ref], [-1], -1)], [gather(dx, [idx], [-1], -1)]];
+  },
+  [Primitive.Argsort]: zeroTangentsJvp(Primitive.Argsort),
   [Primitive.Jit](primals, tangents, { name, jaxpr }) {
     const newJaxpr = jvpJaxpr(jaxpr);
     const outs = bind(

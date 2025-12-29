@@ -3,7 +3,6 @@ import {
   AluGroup,
   AluOp,
   byteWidth,
-  dtypedArray,
   DType,
   isFloatDtype,
   Kernel,
@@ -15,8 +14,9 @@ import {
   Slot,
   SlotError,
   UnsupportedOpError,
+  UnsupportedRoutineError,
 } from "../backend";
-import { Routine, Routines, runCholesky, runSort, runArgsort } from "../routine";
+import { Routine } from "../routine";
 import { tuneNullopt } from "../tuner";
 import { DEBUG, FpHash, mapSetUnion, rep, runWithCache } from "../utils";
 import { WasmAllocator } from "./wasm/allocator";
@@ -129,7 +129,7 @@ export class WasmBackend implements Backend {
   }
 
   prepareRoutineSync(routine: Routine): Executable {
-    return new Executable(routine, undefined);
+    throw new UnsupportedRoutineError(routine.name, this.type);
   }
 
   dispatch(
@@ -137,36 +137,6 @@ export class WasmBackend implements Backend {
     inputs: Slot[],
     outputs: Slot[],
   ): void {
-    // Handle routines - delegate to CPU implementations (same pure JS code)
-    if (exe.source instanceof Routine) {
-      const routine = exe.source;
-      const inputBuffers = inputs.map((slot) => this.#getBuffer(slot));
-      const outputBuffers = outputs.map((slot) => this.#getBuffer(slot));
-
-      const inputArrays = inputBuffers.map((buf) => dtypedArray(routine.avals[0].dtype, buf));
-
-      // Dispatch to the appropriate routine
-      let result: any[];
-      switch (routine.name) {
-        case Routines.Cholesky:
-          result = runCholesky(inputArrays, routine.avals, routine.params);
-          break;
-        case Routines.Sort:
-          result = runSort(inputArrays, routine.avals);
-          break;
-        case Routines.Argsort:
-          result = runArgsort(inputArrays, routine.avals);
-          break;
-        default:
-          throw new Error(`Unknown routine: ${routine.name}`);
-      }
-
-      // Copy result to output buffer
-      const outputArray = dtypedArray(routine.avals[0].dtype, outputBuffers[0]);
-      outputArray.set(result[0]);
-      return;
-    }
-
     const instance = new WebAssembly.Instance(exe.data.module, {
       env: { memory: this.#memory },
     });

@@ -1,6 +1,19 @@
 import { AluOp, dtypedArray, Kernel } from "../alu";
-import { Backend, Device, Executable, Slot, SlotError } from "../backend";
-import { Routine, Routines, runCholesky, runSort, runArgsort } from "../routine";
+import {
+  Backend,
+  Device,
+  Executable,
+  Slot,
+  SlotError,
+  UnsupportedRoutineError,
+} from "../backend";
+import {
+  Routine,
+  Routines,
+  runArgsort,
+  runCholesky,
+  runSort,
+} from "../routine";
 import { tuneNullopt } from "../tuner";
 
 /** Most basic implementation of `Backend` for testing. */
@@ -82,32 +95,23 @@ export class CpuBackend implements Backend {
 
   dispatch(exe: Executable<void>, inputs: Slot[], outputs: Slot[]): void {
     if (exe.source instanceof Routine) {
-      const routine = exe.source;
-      const inputBuffers = inputs.map((slot) => this.#getBuffer(slot));
-      const outputBuffers = outputs.map((slot) => this.#getBuffer(slot));
-
-      const inputArrays = inputBuffers.map((buf) => dtypedArray(routine.avals[0].dtype, buf));
-
-      // Dispatch to the appropriate routine
-      let result: any[];
-      switch (routine.name) {
-        case Routines.Cholesky:
-          result = runCholesky(inputArrays, routine.avals, routine.params);
-          break;
+      const { name, type } = exe.source;
+      const inputArrays = inputs.map((slot, i) =>
+        dtypedArray(type.inputDtypes[i], this.#getBuffer(slot)),
+      );
+      const outputArrays = outputs.map((slot, i) =>
+        dtypedArray(type.outputDtypes[i], this.#getBuffer(slot)),
+      );
+      switch (name) {
         case Routines.Sort:
-          result = runSort(inputArrays, routine.avals);
-          break;
+          return runSort(type, inputArrays, outputArrays);
         case Routines.Argsort:
-          result = runArgsort(inputArrays, routine.avals);
-          break;
+          return runArgsort(type, inputArrays, outputArrays);
+        case Routines.Cholesky:
+          return runCholesky(type, inputArrays, outputArrays);
         default:
-          throw new Error(`Unknown routine: ${routine.name}`);
+          throw new UnsupportedRoutineError(name, this.type);
       }
-
-      // Copy result to output buffer
-      const outputArray = dtypedArray(routine.avals[0].dtype, outputBuffers[0]);
-      outputArray.set(result[0]);
-      return;
     }
 
     const kernel = exe.source as Kernel;
