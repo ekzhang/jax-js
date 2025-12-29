@@ -14,9 +14,8 @@ import {
   Slot,
   SlotError,
   UnsupportedOpError,
-  UnsupportedRoutineError,
 } from "../backend";
-import { Routine } from "../routine";
+import { Routine, runCpuRoutine } from "../routine";
 import { tuneNullopt } from "../tuner";
 import { DEBUG, FpHash, mapSetUnion, rep, runWithCache } from "../utils";
 import { WasmAllocator } from "./wasm/allocator";
@@ -124,12 +123,14 @@ export class WasmBackend implements Backend {
     return new Executable(kernel, { module });
   }
 
-  async prepareRoutine(routine: Routine): Promise<Executable> {
+  async prepareRoutine(routine: Routine): Promise<Executable<WasmProgram>> {
     return this.prepareRoutineSync(routine);
   }
 
-  prepareRoutineSync(routine: Routine): Executable {
-    throw new UnsupportedRoutineError(routine.name, this.type);
+  prepareRoutineSync(routine: Routine): Executable<WasmProgram> {
+    // Currently, Wasm routines fall back to the CPU reference implementation
+    // implementation. We may optimize this in the future.
+    return new Executable(routine, undefined as any);
   }
 
   dispatch(
@@ -137,6 +138,14 @@ export class WasmBackend implements Backend {
     inputs: Slot[],
     outputs: Slot[],
   ): void {
+    if (exe.source instanceof Routine) {
+      return runCpuRoutine(
+        exe.source,
+        inputs.map((slot) => this.#getBuffer(slot)),
+        outputs.map((slot) => this.#getBuffer(slot)),
+      );
+    }
+
     const instance = new WebAssembly.Instance(exe.data.module, {
       env: { memory: this.#memory },
     });

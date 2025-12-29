@@ -1,19 +1,6 @@
 import { AluOp, dtypedArray, Kernel } from "../alu";
-import {
-  Backend,
-  Device,
-  Executable,
-  Slot,
-  SlotError,
-  UnsupportedRoutineError,
-} from "../backend";
-import {
-  Routine,
-  Routines,
-  runArgsort,
-  runCholesky,
-  runSort,
-} from "../routine";
+import { Backend, Device, Executable, Slot, SlotError } from "../backend";
+import { Routine, runCpuRoutine } from "../routine";
 import { tuneNullopt } from "../tuner";
 
 /** Most basic implementation of `Backend` for testing. */
@@ -95,23 +82,11 @@ export class CpuBackend implements Backend {
 
   dispatch(exe: Executable<void>, inputs: Slot[], outputs: Slot[]): void {
     if (exe.source instanceof Routine) {
-      const { name, type } = exe.source;
-      const inputArrays = inputs.map((slot, i) =>
-        dtypedArray(type.inputDtypes[i], this.#getBuffer(slot)),
+      return runCpuRoutine(
+        exe.source,
+        inputs.map((slot) => this.#getBuffer(slot)),
+        outputs.map((slot) => this.#getBuffer(slot)),
       );
-      const outputArrays = outputs.map((slot, i) =>
-        dtypedArray(type.outputDtypes[i], this.#getBuffer(slot)),
-      );
-      switch (name) {
-        case Routines.Sort:
-          return runSort(type, inputArrays, outputArrays);
-        case Routines.Argsort:
-          return runArgsort(type, inputArrays, outputArrays);
-        case Routines.Cholesky:
-          return runCholesky(type, inputArrays, outputArrays);
-        default:
-          throw new UnsupportedRoutineError(name, this.type);
-      }
     }
 
     const kernel = exe.source as Kernel;

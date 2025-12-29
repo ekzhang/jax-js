@@ -1,6 +1,6 @@
 // Custom lowering for advanced operations that don't fit into AluExp.
 
-import { DataArray, DType } from "./alu";
+import { DataArray, DType, dtypedArray } from "./alu";
 
 /**
  * Advanced operations that don't fit into the `AluExp` compiler representation.
@@ -49,9 +49,33 @@ export interface RoutineType {
 // Reference implementation of each routine in CPU is below.
 //
 // The remaining backends implement these routines within their own folders, to
-// allow for code splitting between backends. This is encapsulation.
+// allow for code splitting between backends. This is for encapsulation.
 
-export function runSort(type: RoutineType, [x]: DataArray[], [y]: DataArray[]) {
+export function runCpuRoutine(
+  routine: Routine,
+  inputs: Uint8Array<ArrayBuffer>[],
+  outputs: Uint8Array<ArrayBuffer>[],
+) {
+  const { name, type } = routine;
+  const inputArrays = inputs.map((buf, i) =>
+    dtypedArray(type.inputDtypes[i], buf),
+  );
+  const outputArrays = outputs.map((buf, i) =>
+    dtypedArray(type.outputDtypes[i], buf),
+  );
+  switch (name) {
+    case Routines.Sort:
+      return runSort(type, inputArrays, outputArrays);
+    case Routines.Argsort:
+      return runArgsort(type, inputArrays, outputArrays);
+    case Routines.Cholesky:
+      return runCholesky(type, inputArrays, outputArrays);
+    default:
+      name satisfies never; // Exhaustiveness check
+  }
+}
+
+function runSort(type: RoutineType, [x]: DataArray[], [y]: DataArray[]) {
   const xs = type.inputShapes[0];
   if (xs.length === 0) throw new Error("sort: cannot sort a scalar");
   const n = xs[xs.length - 1];
@@ -61,11 +85,7 @@ export function runSort(type: RoutineType, [x]: DataArray[], [y]: DataArray[]) {
   }
 }
 
-export function runArgsort(
-  type: RoutineType,
-  [x]: DataArray[],
-  [y]: DataArray[],
-) {
+function runArgsort(type: RoutineType, [x]: DataArray[], [y]: DataArray[]) {
   const xs = type.inputShapes[0];
   if (xs.length === 0) throw new Error("argsort: cannot sort a scalar");
   const n = xs[xs.length - 1];
@@ -77,11 +97,7 @@ export function runArgsort(
   }
 }
 
-export function runCholesky(
-  type: RoutineType,
-  [x]: DataArray[],
-  [y]: DataArray[],
-) {
+function runCholesky(type: RoutineType, [x]: DataArray[], [y]: DataArray[]) {
   const xs = type.inputShapes[0];
   if (xs.length < 2) throw new Error("cholesky: input must be at least 2D");
   const n = xs[xs.length - 2];
