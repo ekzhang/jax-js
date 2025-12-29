@@ -886,6 +886,15 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     const newShape = x.shape.map((dim, i) => dim + width[i][0] + width[i][1]);
     return [new ShapedArray(newShape, x.dtype, x.weakType)];
   },
+  [Primitive.Sort]([x]) {
+    if (x.ndim === 0) throw new TypeError("sort: requires at least 1D input");
+    return [ShapedArray.fromAval(x)];
+  },
+  [Primitive.Argsort]([x]) {
+    if (x.ndim === 0)
+      throw new TypeError("argsort: requires at least 1D input");
+    return [new ShapedArray(x.shape, DType.Int32, false)];
+  },
   [Primitive.Jit](args, { jaxpr }) {
     const { inTypes, outTypes } = typecheckJaxpr(jaxpr);
     if (args.length !== inTypes.length) {

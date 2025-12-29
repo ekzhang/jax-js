@@ -8,6 +8,7 @@ import { unzip2, zip } from "../utils";
 import { pureArray, zerosLike } from "./array";
 import {
   AbstractValue,
+  argsort,
   asin,
   atan,
   bind,
@@ -276,6 +277,12 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
   [Primitive.Flip]: linearTangentsJvp(Primitive.Flip),
   [Primitive.Shrink]: linearTangentsJvp(Primitive.Shrink),
   [Primitive.Pad]: linearTangentsJvp(Primitive.Pad),
+  [Primitive.Sort]([x], [dx]) {
+    // Propagate both primals and derivatives along the sorted order.
+    const idx = argsort(x);
+    return [[gather(x, [idx.ref], [-1], -1)], [gather(dx, [idx], [-1], -1)]];
+  },
+  [Primitive.Argsort]: zeroTangentsJvp(Primitive.Argsort),
   [Primitive.Jit](primals, tangents, { name, jaxpr }) {
     const newJaxpr = jvpJaxpr(jaxpr);
     const outs = bind(

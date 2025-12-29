@@ -1,8 +1,10 @@
+// Custom lowering for advanced operations that don't fit into AluExp.
+
 import { DataArray, dtypedArray } from "./alu";
 import { ShapedArray } from "./frontend/core";
 
 /**
- * Advanced operations that don't fit into the "AluExp" compiler representation.
+ * Advanced operations that don't fit into the `AluExp` compiler representation.
  *
  * Some routines like iterative matrix algorithms, FFTs, or sorting may not be
  * easy to express efficiently as a `Kernel` object. These also tend to be

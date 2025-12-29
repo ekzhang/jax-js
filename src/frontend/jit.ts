@@ -1,8 +1,17 @@
 // Handle Jit operations by translating Jaxprs into dispatched Kernels.
 
-import { AluExp, AluOp, AluVar, DType, Kernel, Reduction } from "../alu";
+import {
+  AluExp,
+  AluOp,
+  AluVar,
+  byteWidth,
+  DType,
+  Kernel,
+  Reduction,
+} from "../alu";
 import { Backend, Slot } from "../backend";
 import { PPrint } from "../pprint";
+import { Routine, Routines } from "../routine";
 import { ShapeTracker, unravelAlu } from "../shape";
 import {
   DEBUG,
@@ -18,12 +27,19 @@ import { pool, poolTranspose, prepareConv } from "./convolution";
 import { Primitive, PrimitiveParams, promoteAvals, ShapedArray } from "./core";
 import { Jaxpr, Lit, Var } from "./jaxpr";
 
+// These primitives are handled via `Routine` instead of `Kernel` and are not
+// compatible with operator fusion.
+const routinePrimitives = new Map([
+  [Primitive.Sort, Routines.Sort],
+  [Primitive.Argsort, Routines.Argsort],
+]);
+
 export type JitId = number;
 
 export type JitStep =
   | {
       type: "execute";
-      kernel: Kernel;
+      source: Kernel | Routine;
       inputs: JitId[]; // mapped to backend Slot
       outputs: JitId[]; // mapped to backend Slot
     }
@@ -58,9 +74,17 @@ export class JitProgram {
             .map((id, i) => `${i}: %${id}`)
             .join(", ");
           const outputsNice = step.outputs.map((id) => `%${id}`).join(", ");
-          return PPrint.pp(
-            `execute (${inputsNice}) -> ${outputsNice}, kernel`,
-          ).concat(step.kernel.pprint().indent(2));
+          const executeText = `execute (${inputsNice}) -> ${outputsNice}`;
+          if (step.source instanceof Kernel) {
+            return PPrint.pp(`${executeText}, kernel`).concat(
+              step.source.pprint().indent(2),
+            );
+          } else if (step.source instanceof Routine) {
+            return PPrint.pp(`${executeText}, routine ${step.source.name}`);
+          } else {
+            step.source satisfies never; // static check
+            return PPrint.pp(executeText);
+          }
         }
         case "malloc":
           return PPrint.pp(`%${step.output} = malloc <${step.size} bytes>`);
@@ -108,7 +132,7 @@ export class JitProgram {
             throw new Error(`internal: JitProgram scope undefined`);
           }
           pending.push(
-            new PendingExecute(this.backend, step.kernel, inputs, outputs),
+            new PendingExecute(this.backend, step.source, inputs, outputs),
           );
           break;
         }
@@ -153,26 +177,40 @@ class JitProgramBuilder {
   pushLit(lit: Lit): JitId {
     const kernel = new Kernel(
       0,
-      prod(lit.aval.shape),
+      lit.aval.size,
       AluExp.const(lit.dtype, lit.value),
     );
     return this.pushKernel(kernel, []);
   }
 
-  pushKernel(kernel: Kernel, inputs: JitId[]): JitId {
+  pushBuffer(size: number): JitId {
     const id = this.#nextId++;
     this.steps.push({
       type: "malloc",
-      size: kernel.bytes,
+      size,
       output: id,
     });
+    return id;
+  }
+
+  pushKernel(kernel: Kernel, inputs: JitId[]): JitId {
+    const id = this.pushBuffer(kernel.bytes);
     this.steps.push({
       type: "execute",
-      kernel,
+      source: kernel,
       inputs,
       outputs: [id],
     });
     return id;
+  }
+
+  pushRoutine(routine: Routine, inputs: JitId[], outputs: JitId[]): void {
+    this.steps.push({
+      type: "execute",
+      source: routine,
+      inputs,
+      outputs,
+    });
   }
 
   pushIncref(id: JitId): void {
@@ -249,6 +287,41 @@ export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
   // Now run each primitive through a set of rules, mirroring implRules.
   for (let i = 0; i < jaxpr.eqns.length; i++) {
     const eqn = jaxpr.eqns[i];
+
+    // If this is a routine, construct and dispatch the routine.
+    if (routinePrimitives.has(eqn.primitive)) {
+      // The rest of the code collaborates to make sure that all inputs to a
+      // routine are "imm" (black node, dispatched) and so is itself.
+      const routine = new Routine(
+        routinePrimitives.get(eqn.primitive)!,
+        eqn.inputs.map((x) => x.aval),
+        eqn.params as any,
+      );
+      const inputs: JitId[] = [];
+      for (const input of eqn.inputs) {
+        if (input instanceof Var) {
+          const jv = ctx.get(input)!;
+          if (jv.type !== "imm") {
+            throw new Error(
+              `jit: routine primitive ${eqn.primitive} input is not imm`,
+            );
+          }
+          inputs.push(jv.arg);
+        } else if (input instanceof Lit) {
+          inputs.push(builder.pushLit(input));
+        }
+      }
+      const outputs: JitId[] = [];
+      for (const outVar of eqn.outBinders) {
+        const outId = builder.pushBuffer(
+          outVar.aval.size * byteWidth(outVar.aval.dtype),
+        );
+        outputs.push(outId);
+        ctx.set(outVar, { type: "imm", arg: outId });
+      }
+      builder.pushRoutine(routine, inputs, outputs);
+      continue;
+    }
 
     // Transform each input into an AluExp to start, and normalize any arguments
     // as needed.
@@ -334,7 +407,7 @@ export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
     const outVar = eqn.outBinders[0];
     if (blackNodes.has(outVar)) {
       const nargs = inputArgs.length;
-      const size = prod(outVar.aval.shape);
+      const size = outVar.aval.size;
       const kernel = new Kernel(nargs, size, exp, reduction);
       const outId = builder.pushKernel(kernel, inputArgs);
       ctx.set(outVar, { type: "imm", arg: outId });
@@ -481,6 +554,12 @@ function reshapeJit<P extends Primitive>(
 ): JitRule<P> {
   return ([a], [_as], params) => {
     return { exp: reshapeViews(a, (st) => fn(st, params)) };
+  };
+}
+
+function routineNoJit<P extends Primitive>(): JitRule<P> {
+  return () => {
+    throw new Error("jit: rule is not implemented for routines");
   };
 }
 
@@ -645,6 +724,8 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   }),
   [Primitive.Shrink]: reshapeJit((st, { slice }) => st.shrink(slice)),
   [Primitive.Pad]: reshapeJit((st, { width }) => st.pad(width)),
+  [Primitive.Sort]: routineNoJit(),
+  [Primitive.Argsort]: routineNoJit(),
   [Primitive.Jit]() {
     throw new Error(
       "internal: Jit should have been flattened before JIT compilation",
@@ -791,6 +872,7 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
     if (
       reductionEndpointEqns.has(i) ||
       heterogeneousViewPrimitives.includes(eqn.primitive) ||
+      routinePrimitives.has(eqn.primitive) ||
       eqn.outBinders.some((v) => blackNodes.has(v))
     ) {
       for (const v of eqn.outBinders) {
@@ -803,7 +885,10 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
     let needsCleanOutput = false;
     outer: for (const v of eqn.outBinders) {
       for (const j of varToUsages.get(v) ?? []) {
-        if (needsCleanShapePrimitives.includes(jaxpr.eqns[j].primitive)) {
+        if (
+          needsCleanShapePrimitives.includes(jaxpr.eqns[j].primitive) ||
+          routinePrimitives.has(jaxpr.eqns[j].primitive)
+        ) {
           needsCleanOutput = true;
           break outer;
         }

@@ -1663,4 +1663,26 @@ suite.each(devices)("device:%s", (device) => {
       expect(conv.js()).toEqual([4, 13, 26, 31, 26, 13, 4]);
     });
   });
+
+  suite("jax.numpy.sort()", () => {
+    test("sorts 1D array", () => {});
+
+    test("sorts 2D array along axis", () => {});
+
+    test("sorts NaN to the end", () => {});
+
+    test("works with jvp", () => {});
+
+    test("works with grad", () => {});
+
+    test("works inside a jit function", () => {});
+  });
+
+  suite("jax.numpy.argsort()", () => {
+    test("stably argsorts 1D array", () => {});
+
+    test("argsorts 2D array", () => {});
+
+    test("produces zero gradient", () => {});
+  });
 });

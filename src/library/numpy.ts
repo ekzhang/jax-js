@@ -709,6 +709,28 @@ export function trace(a: ArrayLike, offset = 0, axis1 = 0, axis2 = 1): Array {
   return diagonal(a, offset, axis1, axis2).sum(-1);
 }
 
+/**
+ * Return a sorted copy of an array.
+ *
+ * The array is sorted along a specified axis (the last by default). This always
+ * uses a stable sort, and it dispatches to device-specific implementation.
+ */
+export function sort(a: ArrayLike, axis: number = -1): Array {
+  return fudgeArray(a).sort(axis);
+}
+
+/**
+ * Return indices that would sort an array. This is a stable sorting algorithm;
+ * it preserves order of indices in case of a tie.
+ *
+ * Returns an array of `int32` indices.
+ *
+ * The array is sorted along a specified axis (the last by default).
+ */
+export function argsort(a: ArrayLike, axis: number = -1): Array {
+  return fudgeArray(a).argsort(axis);
+}
+
 /** Return if two arrays are element-wise equal within a tolerance. */
 export function allclose(
   actual: Parameters<typeof array>[0],

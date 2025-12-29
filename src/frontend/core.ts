@@ -11,6 +11,7 @@ import {
   checkAxis,
   DEBUG,
   generalBroadcast,
+  invertPermutation,
   isNumberPair,
   isPermutation,
   normalizeAxis,
@@ -79,6 +80,10 @@ export enum Primitive {
   Flip = "flip",
   Shrink = "shrink",
   Pad = "pad",
+
+  // Routines (custom lowering)
+  Sort = "sort", // sort(x, axis=-1)
+  Argsort = "argsort", // argsort(x, axis=-1)
 
   // JIT compilation
   Jit = "jit",
@@ -400,6 +405,18 @@ export function pad(x: TracerValue, width: number | Pair | Pair[]) {
   return bind1(Primitive.Pad, [x], { width });
 }
 
+export function sort(x: TracerValue) {
+  const nd = ndim(x);
+  if (nd === 0) throw new Error("sort: requires at least 1D input");
+  return bind1(Primitive.Sort, [x]);
+}
+
+export function argsort(x: TracerValue) {
+  const nd = ndim(x);
+  if (nd === 0) throw new Error("argsort: requires at least 1D input");
+  return bind1(Primitive.Argsort, [x]);
+}
+
 export function bind1<P extends Primitive>(
   prim: P,
   args: TracerValue[],
@@ -702,7 +719,7 @@ export abstract class Tracer {
     return idiv(this, other) as this;
   }
 
-  /** Return specified diagonals. See `numpy.diagonal` for full docs. */
+  /** Return specified diagonals. See `jax.numpy.diagonal` for full docs. */
   diagonal(offset = 0, axis1 = 0, axis2 = 1): this {
     if (!Number.isInteger(offset))
       throw new TypeError(`offset must be an integer, got ${offset}`);
@@ -779,6 +796,40 @@ export abstract class Tracer {
       yield this.ref.slice(i);
     }
     this.dispose();
+  }
+
+  /**
+   * Return a sorted copy of an array in ascending order.
+   *
+   * See `jax.numpy.sort` for full docs.
+   */
+  sort(axis: number = -1): this {
+    axis = checkAxis(axis, this.ndim);
+    if (this.shape[axis] <= 1) return this;
+    if (axis === this.ndim - 1) return sort(this) as this;
+    const perm = range(this.ndim);
+    perm.splice(axis, 1);
+    perm.push(axis);
+    return sort(this.transpose(perm)).transpose(
+      invertPermutation(perm),
+    ) as this;
+  }
+
+  /**
+   * Return the indices that would sort an array. This is a stable sorting
+   * algorithm; it preserves order of indices in case of a tie.
+   *
+   * See `jax.numpy.argsort` for full docs.
+   */
+  argsort(axis: number = -1): this {
+    axis = checkAxis(axis, this.ndim);
+    if (axis === this.ndim - 1) return argsort(this) as this;
+    const perm = range(this.ndim);
+    perm.splice(axis, 1);
+    perm.push(axis);
+    return argsort(this.transpose(perm)).transpose(
+      invertPermutation(perm),
+    ) as this;
   }
 
   /**
@@ -968,6 +1019,10 @@ export class ShapedArray implements AbstractValue {
 
   get ndim() {
     return this.shape.length;
+  }
+
+  get size() {
+    return prod(this.shape);
   }
 
   toString() {

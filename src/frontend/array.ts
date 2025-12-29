@@ -13,6 +13,7 @@ import {
   Reduction,
 } from "../alu";
 import { Backend, Device, Executable, getBackend, Slot } from "../backend";
+import { Routine, Routines } from "../routine";
 import { ShapeTracker, unravelAlu } from "../shape";
 import {
   deepEqual,
@@ -70,7 +71,7 @@ export class PendingExecute {
 
   constructor(
     readonly backend: Backend,
-    readonly kernel: Kernel,
+    readonly source: Kernel | Routine,
     readonly inputs: Slot[],
     readonly outputs: Slot[],
   ) {
@@ -99,14 +100,22 @@ export class PendingExecute {
       return;
     }
     this.#promise = (async () => {
-      this.prepared = await this.backend.prepareKernel(this.kernel);
+      if (this.source instanceof Kernel) {
+        this.prepared = await this.backend.prepareKernel(this.source);
+      } else {
+        this.prepared = await this.backend.prepareRoutine(this.source);
+      }
     })();
     await this.#promise;
   }
 
   prepareSync() {
     if (this.prepared) return;
-    this.prepared = this.backend.prepareKernelSync(this.kernel);
+    if (this.source instanceof Kernel) {
+      this.prepared = this.backend.prepareKernelSync(this.source);
+    } else {
+      this.prepared = this.backend.prepareRoutineSync(this.source);
+    }
   }
 
   submit() {
@@ -597,6 +606,39 @@ export class Array extends Tracer {
     });
   }
 
+  /** Apply an operation with custom lowering to this array. */
+  static #routine(
+    routine: Routine,
+    arrays: Array[],
+    outputAvals: ShapedArray[],
+  ): Array[] {
+    const { backend, committed } = Array.#computeBackend(routine.name, arrays);
+    for (const ar of arrays) ar.#realize();
+
+    const inputs = arrays.map((ar) => ar.#source as Slot);
+    const outputs = outputAvals.map((sa) =>
+      backend.malloc(byteWidth(sa.dtype) * sa.size),
+    );
+    const pending = arrays.flatMap((ar) => ar.#pending);
+    for (const exe of pending) exe.updateRc(+outputs.length);
+    pending.push(new PendingExecute(backend, routine, inputs, outputs));
+    pending[pending.length - 1].updateRc(+outputs.length - 1);
+
+    arrays.forEach((ar) => ar.dispose()); // Dispose of inputs after creating PendingExecute.
+    return outputs.map(
+      (output, i) =>
+        new Array({
+          source: output,
+          st: ShapeTracker.fromShape(outputAvals[i].shape),
+          dtype: outputAvals[i].dtype,
+          weakType: outputAvals[i].weakType,
+          backend,
+          committed,
+          pending,
+        }),
+    );
+  }
+
   /**
    * Normalizes this array into one backed by a `Slot`.
    *
@@ -980,6 +1022,15 @@ export class Array extends Tracer {
       },
       [Primitive.Pad]([x], { width }) {
         return [x.#reshape(x.#st.pad(width))];
+      },
+      [Primitive.Sort]([x]) {
+        const routine = new Routine(Routines.Sort, [x.aval]);
+        return Array.#routine(routine, [x], [x.aval]);
+      },
+      [Primitive.Argsort]([x]) {
+        const routine = new Routine(Routines.Argsort, [x.aval]);
+        const outputAval = new ShapedArray(x.shape, DType.Int32, false);
+        return Array.#routine(routine, [x], [outputAval]);
       },
       [Primitive.Jit](args, { jaxpr }) {
         if (jaxpr.inBinders.length !== args.length) {

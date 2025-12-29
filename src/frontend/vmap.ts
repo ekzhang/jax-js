@@ -3,6 +3,7 @@ import { arange, eye, pureArray } from "./array";
 import {
   AbstractValue,
   add,
+  argsort,
   asin,
   atan,
   bind,
@@ -40,6 +41,7 @@ import {
   ShapedArray,
   shrink,
   sin,
+  sort,
   sqrt,
   stopGradient,
   Trace,
@@ -367,6 +369,16 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
     assertNonNull(xBdim);
     const newWidth = width.toSpliced(xBdim, 0, [0, 0]);
     return [[pad(x, newWidth)], [xBdim]];
+  },
+  [Primitive.Sort](axisSize, [x], [xBdim]) {
+    assertNonNull(xBdim);
+    x = moveBatchAxis(axisSize, xBdim, 0, x);
+    return [[sort(x)], [0]];
+  },
+  [Primitive.Argsort](axisSize, [x], [xBdim]) {
+    assertNonNull(xBdim);
+    x = moveBatchAxis(axisSize, xBdim, 0, x);
+    return [[argsort(x)], [0]];
   },
   [Primitive.Jit](axisSize, args, dims, { name, jaxpr }) {
     const newJaxpr = vmapJaxpr(jaxpr, axisSize, dims);
