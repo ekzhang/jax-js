@@ -1664,8 +1664,8 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
-  // sort/argsort are only implemented for CPU backend so far.
-  if (device === "cpu") {
+  // sort/argsort are only implemented for CPU & WebGPU backends so far.
+  if (device === "cpu" || device === "webgpu") {
     suite("jax.numpy.sort()", () => {
       test("sorts 1D array", () => {
         const x = np.array([3, 1, 4, 1, 5, 9, 2, 6]);
@@ -1716,6 +1716,26 @@ suite.each(devices)("device:%s", (device) => {
         const f = jit((x: np.Array) => np.sort(x));
         const y = f(x);
         expect(y.js()).toEqual([1, 2, 5, 8]);
+      });
+
+      test("works for int and bool dtypes", () => {
+        for (const dtype of [np.int32, np.uint32]) {
+          const x = np.array([3, 1, 4, 1, 5], { dtype });
+          const y = np.sort(x);
+          expect(y.js()).toEqual([1, 1, 3, 4, 5]);
+          expect(y.dtype).toBe(dtype);
+        }
+        const x = np.array([true, false, true, false, true]);
+        const y = np.sort(x);
+        expect(y.js()).toEqual([false, false, true, true, true]);
+        expect(y.dtype).toBe(np.bool);
+      });
+
+      test("handles zero-sized arrays", () => {
+        const x = np.array([[], [], []], { dtype: np.float32 });
+        const y = np.sort(x);
+        expect(y.shape).toEqual([3, 0]);
+        expect(y.dtype).toBe(np.float32);
       });
     });
 

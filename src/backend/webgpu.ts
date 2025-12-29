@@ -6,19 +6,19 @@ import {
   Slot,
   SlotError,
   UnsupportedOpError,
-  UnsupportedRoutineError,
 } from "../backend";
 import { Routine } from "../routine";
 import { tuneWebgpu } from "../tuner";
 import { DEBUG, findPow2, FpHash, mapSetUnion, prod, strip1 } from "../utils";
 import { erfSrc, threefrySrc } from "./webgpu/builtins";
+import {
+  constToWgsl,
+  dtypeToWgsl,
+  headerWgsl,
+  ShaderInfo,
+} from "./webgpu/codegen";
 import { SyncReader } from "./webgpu/reader";
-
-interface ShaderInfo {
-  shader: string; // WGSL shader source code.
-  grid: [number, number]; // Grid size (number of workgroups) in x and y.
-  nargs: number; // Number of input arguments.
-}
+import { createRoutineShader } from "./webgpu/routines";
 
 interface ShaderDispatch extends ShaderInfo {
   pipeline: GPUComputePipeline; // Compiled pipeline for the shader.
@@ -158,37 +158,45 @@ export class WebGPUBackend implements Backend {
     return result;
   }
 
-  async prepareKernel(kernel: Kernel): Promise<Executable<ShaderDispatch>> {
+  async prepareKernel(kernel: Kernel): Promise<Executable<ShaderDispatch[]>> {
     const shaderInfo = this.#cachedShader(kernel);
     const pipeline = await this.pipelines.prepare(shaderInfo.shader);
-    return new Executable(kernel, { ...shaderInfo, pipeline });
+    return new Executable(kernel, [{ ...shaderInfo, pipeline }]);
   }
 
-  prepareKernelSync(kernel: Kernel): Executable<ShaderDispatch> {
+  prepareKernelSync(kernel: Kernel): Executable<ShaderDispatch[]> {
     const shaderInfo = this.#cachedShader(kernel);
     const pipeline = this.pipelines.prepareSync(shaderInfo.shader);
-    return new Executable(kernel, { ...shaderInfo, pipeline });
+    return new Executable(kernel, [{ ...shaderInfo, pipeline }]);
   }
 
-  async prepareRoutine(routine: Routine): Promise<Executable> {
-    throw new UnsupportedRoutineError(routine.name, this.type);
+  async prepareRoutine(
+    routine: Routine,
+  ): Promise<Executable<ShaderDispatch[]>> {
+    const shaderInfo = createRoutineShader(this.device, routine);
+    const dispatches = await Promise.all(
+      shaderInfo.map(async (info) => {
+        const pipeline = await this.pipelines.prepare(info.shader);
+        return { ...info, pipeline };
+      }),
+    );
+    return new Executable(routine, dispatches);
   }
 
-  prepareRoutineSync(routine: Routine): Executable {
-    throw new UnsupportedRoutineError(routine.name, this.type);
+  prepareRoutineSync(routine: Routine): Executable<ShaderDispatch[]> {
+    const shaderInfo = createRoutineShader(this.device, routine);
+    const dispatches = shaderInfo.map((info) => {
+      const pipeline = this.pipelines.prepareSync(info.shader);
+      return { ...info, pipeline };
+    });
+    return new Executable(routine, dispatches);
   }
 
   dispatch(
-    exe: Executable<ShaderDispatch>,
+    exe: Executable<ShaderDispatch[]>,
     inputs: Slot[],
     outputs: Slot[],
   ): void {
-    if (inputs.length !== exe.data.nargs) {
-      throw new Error(
-        `webgpu: dispatch with ${inputs.length} inputs, expected ${exe.data.nargs}`,
-      );
-    }
-    if (prod(exe.data.grid) === 0) return; // Nothing to do
     const inputBuffers = inputs.map((slot) => this.#getBuffer(slot).buffer);
     const outputBuffers = outputs.map((slot) => this.#getBuffer(slot).buffer);
     pipelineSubmit(this.device, exe.data, inputBuffers, outputBuffers);
@@ -360,41 +368,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 }
 
-function dtypeToWgsl(dtype: DType, storage: boolean = false): string {
-  switch (dtype) {
-    case DType.Bool:
-      return storage ? "i32" : "bool"; // WebGPU does not support bools in buffers.
-    case DType.Int32:
-      return "i32";
-    case DType.Uint32:
-      return "u32"; // WebGPU supports uint32 in buffers.
-    case DType.Float32:
-      return "f32";
-    case DType.Float16:
-      return "f16";
-    default:
-      throw new Error(`Unsupported dtype for WebGPU: ${dtype}`);
-  }
-}
-
-function constToWgsl(dtype: DType, value: any): string {
-  if (dtype === DType.Bool) return value ? "true" : "false";
-  if (dtype === DType.Int32) return value.toString();
-  if (dtype === DType.Uint32) return value.toString() + "u"; // WebGPU uses 'u' suffix for uint32.
-  if (dtype === DType.Float32) {
-    if (Number.isNaN(value)) return "nan()";
-    if (!Number.isFinite(value)) return value > 0 ? "inf()" : "-inf()";
-    return "f32(" + value.toString() + ")";
-  }
-  if (dtype === DType.Float16) {
-    if (Number.isNaN(value)) return "f16(nan())";
-    if (!Number.isFinite(value))
-      return value > 0 ? "f16(inf())" : "f16(-inf())";
-    return "f16(" + value.toString() + ")";
-  }
-  throw new Error(`Unsupported const dtype: ${dtype}`);
-}
-
 /**
  * Compiles an expression into WebGPU shader source code.
  *
@@ -434,13 +407,9 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
     emit("enable f16;");
   }
 
-  // Global functions at the start of the shader..
-  emit(
-    // Const-folded infinity and NaN result in compile errors.
-    "fn nan() -> f32 { let bits = 0xffffffffu; return bitcast<f32>(bits); }",
-    "fn inf() -> f32 { let bits = 0x7f800000u; return bitcast<f32>(bits); }",
-  );
+  emit(headerWgsl);
 
+  // Global functions at the start of the shader..
   const distinctOps = mapSetUnion(
     tune.exp.distinctOps(),
     tune.epilogue?.distinctOps(),
@@ -721,13 +690,12 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
   return {
     shader: shader.join("\n"),
     grid: [gridX, gridY],
-    nargs,
   };
 }
 
 function pipelineSubmit(
   device: GPUDevice,
-  { pipeline, grid }: ShaderDispatch,
+  pipelines: ShaderDispatch[],
   inputs: GPUBuffer[],
   outputs: GPUBuffer[],
 ) {
@@ -745,22 +713,26 @@ function pipelineSubmit(
     );
   }
 
-  const bindGroup = device.createBindGroup({
-    layout: pipeline.getBindGroupLayout(0),
-    entries: [
-      ...inputs.map((buffer, i) => {
-        return { binding: i, resource: { buffer } };
-      }),
-      { binding: inputs.length, resource: { buffer: outputs[0] } },
-    ],
-  });
-
   const commandEncoder = device.createCommandEncoder();
-  const passEncoder = commandEncoder.beginComputePass();
-  passEncoder.setPipeline(pipeline);
-  passEncoder.setBindGroup(0, bindGroup);
-  passEncoder.dispatchWorkgroups(grid[0], grid[1]);
-  passEncoder.end();
+  for (const { pipeline, grid } of pipelines) {
+    if (prod(grid) === 0) continue; // No work to do.
+
+    const bindGroup = device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        ...inputs.map((buffer, i) => {
+          return { binding: i, resource: { buffer } };
+        }),
+        { binding: inputs.length, resource: { buffer: outputs[0] } },
+      ],
+    });
+
+    const passEncoder = commandEncoder.beginComputePass();
+    passEncoder.setPipeline(pipeline);
+    passEncoder.setBindGroup(0, bindGroup);
+    passEncoder.dispatchWorkgroups(grid[0], grid[1]);
+    passEncoder.end();
+  }
   device.queue.submit([commandEncoder.finish()]);
 }
 
