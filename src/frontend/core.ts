@@ -408,18 +408,28 @@ export function pad(x: TracerValue, width: number | Pair | Pair[]) {
   return bind1(Primitive.Pad, [x], { width });
 }
 
-/**
- * Solve a triangular linear system.
- *
- * Solves `a @ x = b` (if leftSide=true) or `x @ a = b` (if leftSide=false)
- * where `a` is a triangular matrix.
- */
 export function triangularSolve(
   a: TracerValue,
   b: TracerValue,
-  { unitDiagonal = false }: { unitDiagonal?: boolean } = {},
+  {
+    lower = false,
+    unitDiagonal = false,
+  }: { lower?: boolean; unitDiagonal?: boolean } = {},
 ) {
-  return bind1(Primitive.TriangularSolve, [a, b], { unitDiagonal });
+  // Solve a triangular linear system `a @ x.T = b.T`, transposed for speed.
+  if (lower) {
+    // Convert lower-triangular solve into upper-triangular solve by
+    // flipping the matrices.
+    a = flip(a, [-2, -1]);
+    b = flip(b, [-1]);
+  }
+  let x = bind1(Primitive.TriangularSolve, [a, b], { unitDiagonal });
+  if (lower) x = flip(x, [-1]);
+  return x;
+}
+
+export function cholesky(x: TracerValue) {
+  return bind1(Primitive.Cholesky, [x]);
 }
 
 export function sort(x: TracerValue) {

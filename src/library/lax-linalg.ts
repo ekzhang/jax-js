@@ -1,6 +1,8 @@
-// Linear algebra functions, mirroring `jax.numpy.linalg` and `jax.scipy.linalg`.
+// Linear algebra functions, mirroring `jax.lax.linalg`.
 
+import { moveaxis } from "./numpy";
 import { Array, type ArrayLike, fudgeArray } from "../frontend/array";
+import * as core from "../frontend/core";
 
 /**
  * Compute the Cholesky decomposition of a symmetric positive-definite matrix.
@@ -11,6 +13,7 @@ import { Array, type ArrayLike, fudgeArray } from "../frontend/array";
  * - A = U^T @ U  (for upper=true)
  *
  * where `L` is a lower-triangular matrix and `U` is an upper-triangular matrix.
+ * The input matrix must be symmetric and positive-definite.
  *
  * @example
  * ```ts
@@ -31,11 +34,8 @@ export function cholesky(
   a: ArrayLike,
   { upper = false }: { upper?: boolean } = {},
 ): Array {
-  a = fudgeArray(a);
-
-  // XXX
-
-  return result;
+  const L = core.cholesky(a) as Array;
+  return upper ? moveaxis(L, -2, -1) : L;
 }
 
 /**
@@ -44,36 +44,24 @@ export function cholesky(
  * Solves `a @ x = b` (if leftSide=true) or `x @ a = b` (if leftSide=false)
  * where `a` is a triangular matrix.
  *
- * Args:
- *   a: input array, representing a triangular matrix. Must have shape ``(N, N)``.
- *   b: input array, the right-hand side. Shape ``(N,)`` or ``(N, M)``.
- *   leftSide: if true (default), solve a @ x = b. if false, solve x @ a = b.
- *   lower: if true (default), a is lower triangular. if false, a is upper triangular.
- *   transposeA: if true, solve with the transpose of a. Default false.
- *   unitDiagonal: if true, assume diagonal elements of a are 1. Default false.
- *
- * Returns:
- *   array of same shape as b, the solution x.
- *
  * @example
  * ```ts
- * import { array } from "@jax-js/jax";
- * import { triangular_solve } from "@jax-js/jax/linalg";
+ * import { lax, numpy as np } from "@jax-js/jax";
  *
- * const L = array([[2., 0.], [1., 3.]]);
- * const b = array([4., 7.]);
+ * const L = np.array([[2., 0.], [1., 3.]]);
+ * const b = np.array([[4., 7.]]);
  *
  * // Solve L @ x = b
- * const x = triangular_solve(L, b);
- * // x = [2., 5./3.]
+ * const x = lax.linalg.triangularSolve(L, b, { leftSide: true, lower: true });
+ * // x = [[2., 5./3.]]
  * ```
  */
-export function triangular_solve(
+export function triangularSolve(
   a: ArrayLike,
   b: ArrayLike,
   {
-    leftSide = true,
-    lower = true,
+    leftSide = false,
+    lower = false,
     transposeA = false,
     unitDiagonal = false,
   }: {
@@ -85,16 +73,16 @@ export function triangular_solve(
 ): Array {
   a = fudgeArray(a);
   b = fudgeArray(b);
-  return core.triangularSolve(a, b, {
-    leftSide,
-    lower,
-    transposeA,
-    unitDiagonal,
-  }) as Array;
+  if (!leftSide) {
+    // Transpose everything so it becomes a left-side solve.
+    // Note that the `TriangularSolve` primitive automatically transposes the
+    // b and x (output) values.
+    transposeA = !transposeA;
+  } else {
+    b = moveaxis(b, -2, -1);
+  }
+  if (transposeA) a = moveaxis(a, -2, -1);
+  let x = core.triangularSolve(a, b, { lower, unitDiagonal }) as Array;
+  if (leftSide) x = moveaxis(x, -2, -1);
+  return x;
 }
-
-// Alias for scipy.linalg compatibility
-export { triangular_solve as solve_triangular };
-
-// Re-export commonly used functions from numpy for convenience
-export { tril, triu } from "./numpy";

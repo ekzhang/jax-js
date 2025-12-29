@@ -7,6 +7,7 @@ import {
   asin,
   atan,
   bind,
+  bind1,
   bitcast,
   broadcast,
   cast,
@@ -379,6 +380,32 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
     assertNonNull(xBdim);
     x = moveBatchAxis(axisSize, xBdim, 0, x);
     return [[argsort(x)], [0]];
+  },
+  [Primitive.TriangularSolve](
+    axisSize,
+    [a, b],
+    [aBdim, bBdim],
+    { unitDiagonal },
+  ) {
+    if (aBdim === null) {
+      // If only vmapping over b, we can just call TriangularSolve directly.
+      b = moveBatchAxis(axisSize, bBdim, -3, b);
+      const [s, m, n] = b.shape.slice(-3);
+      b = b.reshape([...b.shape.slice(0, -3), s * m, n]);
+      let x = bind1(Primitive.TriangularSolve, [a, b], { unitDiagonal });
+      x = x.reshape([...b.shape.slice(0, -2), s, m, n]);
+      return [[x], [x.ndim - 3]];
+    }
+    a = moveBatchAxis(axisSize, aBdim, 0, a);
+    b = moveBatchAxis(axisSize, bBdim, 0, b);
+    const x = bind1(Primitive.TriangularSolve, [a, b], { unitDiagonal });
+    return [[x], [0]];
+  },
+  [Primitive.Cholesky](axisSize, [x], [xBdim]) {
+    assertNonNull(xBdim);
+    x = moveBatchAxis(axisSize, xBdim, 0, x);
+    const L = bind1(Primitive.Cholesky, [x]);
+    return [[L], [0]];
   },
   [Primitive.Jit](axisSize, args, dims, { name, jaxpr }) {
     const newJaxpr = vmapJaxpr(jaxpr, axisSize, dims);

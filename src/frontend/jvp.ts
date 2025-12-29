@@ -5,7 +5,7 @@ import {
   unflatten as treeUnflatten,
 } from "../tree";
 import { unzip2, zip } from "../utils";
-import { array, pureArray, zerosLike } from "./array";
+import { pureArray, triu, zerosLike } from "./array";
 import {
   AbstractValue,
   argsort,
@@ -18,14 +18,12 @@ import {
   cast,
   cholesky,
   cos,
-  equal,
   erf,
   erfc,
   exp,
   flattenFun,
   fullRaise,
   gather,
-  greaterEqual,
   idiv,
   less,
   log,
@@ -39,7 +37,6 @@ import {
   PrimitiveParams,
   reciprocal,
   reduce,
-  reshape,
   sin,
   sqrt,
   Trace,
@@ -50,6 +47,7 @@ import {
   where,
 } from "./core";
 import { ClosedJaxpr, Jaxpr, jaxprAsFun, makeJaxpr } from "./jaxpr";
+import { moveaxis } from "./vmap";
 
 class JVPTracer extends Tracer {
   constructor(
@@ -292,16 +290,30 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     // a @ x.T = b.T  =>  da @ x.T + a @ dx.T = db.T
     // So: a @ dx.T = db.T - da @ x.T
     // Therefore: dx.T = triangular_solve(a, db.T - da @ x.T)
-    const x = triangularSolve(a.ref, b.ref, { unitDiagonal });
-
-    // dx = triangular_solve(a, db - dax)
+    const x = triangularSolve(a.ref, b, { unitDiagonal });
+    // dx = triangular_solve(a, db.T - dax)
+    const dax = bind1(Primitive.Dot, [
+      da.reshape(da.shape.toSpliced(-1, 0, 1)),
+      x.ref,
+    ]);
     const rhs = db.sub(dax);
     const dx = triangularSolve(a, rhs, { unitDiagonal });
-
     return [[x], [dx]];
   },
   [Primitive.Cholesky]([a], [da]) {
-    // XXX
+    // If L = cholesky(A), so that A = L L^T, then
+    // dL = L @ tril(S - 0.5 * diag(S)),
+    //   where S = L^{-1} @ dA @ L^{-T}
+    const L = cholesky(a.ref);
+    const W = triangularSolve(L.ref, da, { lower: true }); // L^{-1} @ dA
+    const S = triangularSolve(L.ref, moveaxis(W, -1, -2), { lower: true });
+    const dL = bind1(Primitive.Dot, [
+      L.ref.reshape(L.shape.toSpliced(-1, 0, 1)),
+      triu(S.ref as any, 1)
+        .add(triu(S as any))
+        .mul(0.5),
+    ]);
+    return [[L], [dL]];
   },
   [Primitive.Jit](primals, tangents, { name, jaxpr }) {
     const newJaxpr = jvpJaxpr(jaxpr);
@@ -321,37 +333,6 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     return [primalsOut, tangentsOut];
   },
 };
-
-// Helper: phi function for Cholesky JVP
-// Takes lower triangular part and divides diagonal by 2
-// phi(X) = tril(X) with diagonal multiplied by 0.5
-function phiLowerHalfDiag(x: Tracer, n: number): Tracer {
-  // For phi: result[i,j] = x[i,j] if i > j, x[i,j]/2 if i == j, 0 if i < j
-  // phi(X) = where(lowerMask, where(diagMask, X/2, X), 0)
-
-  // Create index arrays using array() which works at concrete level
-  const indices = new Float32Array(n);
-  for (let i = 0; i < n; i++) indices[i] = i;
-  const idxArr = array(indices);
-
-  // Row indices: (n,) -> (n, 1) -> broadcast to (n, n)
-  const rowIdx = broadcast(reshape(idxArr.ref, [n, 1]), [n, n], [1]);
-
-  // Col indices: (n,) -> (1, n) -> broadcast to (n, n)
-  const colIdx = broadcast(reshape(idxArr, [1, n]), [n, n], [0]);
-
-  // Lower triangular mask: row >= col
-  const lowerMask = greaterEqual(rowIdx.ref, colIdx.ref);
-
-  // Diagonal mask: row == col
-  const diagMask = equal(rowIdx, colIdx);
-
-  // phi(X) = where(lowerMask, where(diagMask, X/2, X), 0)
-  const xHalf = x.ref.mul(0.5);
-  const phiResult = where(lowerMask, where(diagMask, xHalf, x), 0);
-
-  return phiResult;
-}
 
 const jvpJaxprCache = new Map<Jaxpr, ClosedJaxpr>();
 

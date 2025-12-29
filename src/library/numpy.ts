@@ -6,7 +6,6 @@ import {
   Array,
   array,
   type ArrayLike,
-  type DTypeAndDevice,
   eye,
   fudgeArray,
   full,
@@ -15,6 +14,9 @@ import {
   linspace,
   ones,
   onesLike as onesLikeTracer,
+  tri,
+  tril,
+  triu,
   zeros,
   zerosLike as zerosLikeTracer,
 } from "../frontend/array";
@@ -51,6 +53,9 @@ export {
   linspace,
   ones,
   promoteTypes,
+  tri,
+  tril,
+  triu,
   zeros,
 };
 
@@ -1134,55 +1139,6 @@ export function meshgrid(
         ...range(i + 1, xs.length),
       ]) as Array,
   );
-}
-
-/**
- * Return an array with ones on and below the diagonal and zeros elsewhere.
- *
- * If `k` is provided, it specifies the sub-diagonal on and below which the
- * array is filled with ones. `k=0` is the main diagonal, `k<0` is below it, and
- * `k>0` is above it.
- */
-export function tri(
-  n: number,
-  m?: number,
-  k: number = 0,
-  { dtype, device }: DTypeAndDevice = {},
-): Array {
-  m ??= n;
-  dtype ??= DType.Float32;
-  if (!Number.isInteger(n) || n < 0) {
-    throw new Error(`tri: n must be a non-negative integer, got ${n}`);
-  }
-  if (!Number.isInteger(m) || m < 0) {
-    throw new Error(`tri: m must be a non-negative integer, got ${m}`);
-  }
-  if (!Number.isInteger(k)) {
-    throw new Error(`tri: k must be an integer, got ${k}`);
-  }
-  const rows = arange(k, n + k, 1, { dtype: DType.Int32, device });
-  const cols = arange(0, m, 1, { dtype: DType.Int32, device });
-  return rows.reshape([n, 1]).greaterEqual(cols).astype(dtype);
-}
-
-/** Return the lower triangle of an array. Must be of dimension >= 2. */
-export function tril(a: ArrayLike, k: number = 0): Array {
-  if (ndim(a) < 2) {
-    throw new Error(`tril: input array must be at least 2D, got ${ndim(a)}D`);
-  }
-  a = fudgeArray(a);
-  const [n, m] = a.shape.slice(-2);
-  return where(tri(n, m, k, { dtype: bool }), a.ref, zerosLike(a)) as Array;
-}
-
-/** Return the upper triangle of an array. Must be of dimension >= 2. */
-export function triu(a: ArrayLike, k: number = 0): Array {
-  if (ndim(a) < 2) {
-    throw new Error(`tril: input array must be at least 2D, got ${ndim(a)}D`);
-  }
-  a = fudgeArray(a);
-  const [n, m] = a.shape.slice(-2);
-  return where(tri(n, m, k - 1, { dtype: bool }), zerosLike(a.ref), a) as Array;
 }
 
 /**
