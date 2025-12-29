@@ -14,6 +14,7 @@ import {
   Slot,
   SlotError,
   UnsupportedOpError,
+  UnsupportedRoutineError,
 } from "../backend";
 import { Routine } from "../routine";
 import { tuneNullopt } from "../tuner";
@@ -127,8 +128,8 @@ export class WasmBackend implements Backend {
     return this.prepareRoutineSync(routine);
   }
 
-  prepareRoutineSync(_routine: Routine): Executable {
-    throw new Error("Routines are not implemented yet");
+  prepareRoutineSync(routine: Routine): Executable {
+    throw new UnsupportedRoutineError(routine.name, this.type);
   }
 
   dispatch(

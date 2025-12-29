@@ -6,6 +6,7 @@ import {
   Slot,
   SlotError,
   UnsupportedOpError,
+  UnsupportedRoutineError,
 } from "../backend";
 import { Routine } from "../routine";
 import { tuneWebgpu } from "../tuner";
@@ -169,12 +170,12 @@ export class WebGPUBackend implements Backend {
     return new Executable(kernel, { ...shaderInfo, pipeline });
   }
 
-  async prepareRoutine(_routine: Routine): Promise<Executable> {
-    throw new Error("Routines are not implemented yet");
+  async prepareRoutine(routine: Routine): Promise<Executable> {
+    throw new UnsupportedRoutineError(routine.name, this.type);
   }
 
-  prepareRoutineSync(_routine: Routine): Executable {
-    throw new Error("Routines are not implemented yet");
+  prepareRoutineSync(routine: Routine): Executable {
+    throw new UnsupportedRoutineError(routine.name, this.type);
   }
 
   dispatch(
@@ -182,10 +183,6 @@ export class WebGPUBackend implements Backend {
     inputs: Slot[],
     outputs: Slot[],
   ): void {
-    if (exe.source instanceof Routine) {
-      throw new Error("Routines are not implemented yet");
-    }
-
     if (inputs.length !== exe.data.nargs) {
       throw new Error(
         `webgpu: dispatch with ${inputs.length} inputs, expected ${exe.data.nargs}`,

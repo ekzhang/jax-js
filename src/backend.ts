@@ -213,6 +213,6 @@ export class UnsupportedOpError extends Error {
 
 export class UnsupportedRoutineError extends Error {
   constructor(name: Routines, device: Device) {
-    super(`${name}: routine not supported in ${device} backend`);
+    super(`routine '${name}' is not supported in ${device} backend`);
   }
 }
