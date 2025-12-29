@@ -55,6 +55,7 @@ export {
 };
 
 export * as fft from "./numpy-fft";
+export * as linalg from "./numpy-linalg";
 
 export const float32 = DType.Float32;
 export const int32 = DType.Int32;

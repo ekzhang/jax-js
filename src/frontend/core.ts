@@ -84,10 +84,11 @@ export enum Primitive {
   // Routines (custom lowering)
   Sort = "sort", // sort(x, axis=-1)
   Argsort = "argsort", // argsort(x, axis=-1)
+  TriangularSolve = "triangular_solve",
+  Cholesky = "cholesky",
 
   // JIT compilation
   Jit = "jit",
-  TriangularSolve = "triangular_solve",
 }
 
 interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {

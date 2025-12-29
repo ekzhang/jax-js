@@ -4,49 +4,37 @@ import { Array, type ArrayLike, fudgeArray } from "../frontend/array";
 import { Routines } from "../routine";
 
 /**
- * Compute the Cholesky decomposition of a matrix.
+ * Compute the Cholesky decomposition of a symmetric positive-definite matrix.
  *
  * The Cholesky decomposition of a matrix `A` is:
  *
- * A = L @ L^T  (for lower=true, default)
- * A = U^T @ U  (for lower=false)
+ * - A = L @ L^T  (for upper=false, default)
+ * - A = U^T @ U  (for upper=true)
  *
  * where `L` is a lower-triangular matrix and `U` is an upper-triangular matrix.
  *
- * Args:
- *   a: input array, representing a positive-definite hermitian matrix.
- *      Must have shape ``(N, N)``.
- *   lower: if true (default), compute the lower Cholesky decomposition `L`.
- *          if false, compute the upper Cholesky decomposition `U`.
- *
- * Returns:
- *   array of shape ``(N, N)`` representing the cholesky decomposition
- *   of the input.
- *
  * @example
  * ```ts
- * import { array } from "@jax-js/jax";
- * import { cholesky } from "@jax-js/jax/linalg";
+ * import { numpy as np } from "@jax-js/jax";
  *
- * const x = array([[2., 1.], [1., 2.]]);
+ * const x = np.array([[2., 1.], [1., 2.]]);
  *
  * // Lower Cholesky factorization (default):
- * const L = cholesky(x);
+ * const L = np.linalg.cholesky(x);
  * // L ≈ [[1.4142135, 0], [0.70710677, 1.2247449]]
  *
  * // Upper Cholesky factorization:
- * const U = cholesky(x, { lower: false });
+ * const U = np.linalg.cholesky(x, { upper: true });
  * // U ≈ [[1.4142135, 0.70710677], [0, 1.2247449]]
  * ```
  */
 export function cholesky(
   a: ArrayLike,
-  { lower = true }: { lower?: boolean } = {},
+  { upper = false }: { upper?: boolean } = {},
 ): Array {
   a = fudgeArray(a);
 
-  // Dispatch to Routine implementation
-  const result = Array.dispatchRoutine(Routines.Cholesky, [a], { lower });
+  // XXX
 
   return result;
 }

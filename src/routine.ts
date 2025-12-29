@@ -35,6 +35,8 @@ export enum Routines {
   /** Returns `int32` indices of the stably sorted array. */
   Argsort = "Argsort",
 
+  /** Solve a triangular system of questions. */
+  TriangularSolve = "TriangularSolve",
   /** Cholesky decomposition of 2D positive semi-definite matrices. */
   Cholesky = "Cholesky",
 }
@@ -68,6 +70,8 @@ export function runCpuRoutine(
       return runSort(type, inputArrays, outputArrays);
     case Routines.Argsort:
       return runArgsort(type, inputArrays, outputArrays);
+    case Routines.TriangularSolve:
+      return runTriangularSolve(type, inputArrays, outputArrays);
     case Routines.Cholesky:
       return runCholesky(type, inputArrays, outputArrays);
     default:
@@ -95,6 +99,18 @@ function runArgsort(type: RoutineType, [x]: DataArray[], [y]: DataArray[]) {
     for (let i = 0; i < n; i++) out[i] = i;
     out.sort((a, b) => ar[a] - ar[b]);
   }
+}
+
+function runTriangularSolve(
+  type: RoutineType,
+  [a, b]: DataArray[],
+  [x]: DataArray[],
+) {
+  const as = type.inputShapes[0];
+  const bs = type.inputShapes[1];
+  if (as.length !== 2) throw new Error("triangular_solve: a must be 2D");
+  if (bs.length < 1 || bs.length > 2)
+    throw new Error("triangular_solve: b must be 1D or 2D");
 }
 
 function runCholesky(type: RoutineType, [x]: DataArray[], [y]: DataArray[]) {

@@ -32,6 +32,8 @@ import { Jaxpr, Lit, Var } from "./jaxpr";
 const routinePrimitives = new Map([
   [Primitive.Sort, Routines.Sort],
   [Primitive.Argsort, Routines.Argsort],
+  [Primitive.TriangularSolve, Routines.TriangularSolve],
+  [Primitive.Cholesky, Routines.Cholesky],
 ]);
 
 export type JitId = number;
@@ -731,15 +733,11 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   [Primitive.Pad]: reshapeJit((st, { width }) => st.pad(width)),
   [Primitive.Sort]: routineNoJit(),
   [Primitive.Argsort]: routineNoJit(),
+  [Primitive.TriangularSolve]: routineNoJit(),
+  [Primitive.Cholesky]: routineNoJit(),
   [Primitive.Jit]() {
     throw new Error(
       "internal: Jit should have been flattened before JIT compilation",
-    );
-  },
-  [Primitive.TriangularSolve]() {
-    throw new Error(
-      "Triangular solve cannot be JIT compiled (uses recursive blocked algorithm). " +
-        "Use outside of jit() or wrap in a custom_vjp.",
     );
   },
 };
