@@ -843,8 +843,8 @@ export abstract class Tracer {
   }
 
   /**
-   * Return the indices that would sort an array. This is a stable sorting
-   * algorithm; it preserves order of indices in case of a tie.
+   * Return the indices that would sort an array. This may not be a stable
+   * sorting algorithm; it need not preserve order of indices in ties.
    *
    * See `jax.numpy.argsort` for full docs.
    */

@@ -725,16 +725,16 @@ export function trace(a: ArrayLike, offset = 0, axis1 = 0, axis2 = 1): Array {
 /**
  * Return a sorted copy of an array.
  *
- * The array is sorted along a specified axis (the last by default). This always
- * uses a stable sort, and it dispatches to device-specific implementation.
+ * The array is sorted along a specified axis (the last by default). This may be
+ * an unstable sort, and it dispatches to device-specific implementation.
  */
 export function sort(a: ArrayLike, axis: number = -1): Array {
   return fudgeArray(a).sort(axis);
 }
 
 /**
- * Return indices that would sort an array. This is a stable sorting algorithm;
- * it preserves order of indices in case of a tie.
+ * Return indices that would sort an array. This may be an unstable sorting
+ * algorithm; it need not preserve order of indices in ties.
  *
  * Returns an array of `int32` indices.
  *
