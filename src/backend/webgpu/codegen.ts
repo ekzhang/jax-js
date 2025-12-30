@@ -6,7 +6,7 @@ export interface ShaderInfo {
   shader: string; // WGSL shader source code.
   passes: {
     grid: [number, number]; // Grid size (number of workgroups) in x and y.
-    uniform?: Uint8Array<ArrayBuffer>; // Optional uniform value (only order counts).
+    uniform?: Uint8Array<ArrayBuffer>; // Optional uniform value.
   }[];
 }
 
