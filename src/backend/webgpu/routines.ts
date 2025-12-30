@@ -132,7 +132,12 @@ ${
 }
 `.trim();
 
-  return [{ shader, grid: calculateGrid(batches) }];
+  return [
+    {
+      shader,
+      passes: [{ grid: calculateGrid(batches) }],
+    },
+  ];
 }
 
 function createSort(device: GPUDevice, type: RoutineType): ShaderInfo[] {

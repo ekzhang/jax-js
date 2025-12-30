@@ -43,6 +43,7 @@ export class WebGPUBackend implements Backend {
   nextSlot: number;
 
   #cachedShaderMap = new Map<bigint, ShaderInfo>();
+  #uniformBgl: GPUBindGroupLayout;
 
   constructor(readonly device: GPUDevice) {
     if (DEBUG >= 3 && device.adapterInfo) {
@@ -57,6 +58,16 @@ export class WebGPUBackend implements Backend {
     this.syncReader = new SyncReader(device);
     this.buffers = new Map();
     this.nextSlot = 1;
+
+    this.#uniformBgl = device.createBindGroupLayout({
+      entries: [
+        {
+          binding: 0, // @group(1) @binding(0) will be for uniform
+          buffer: { type: "uniform", hasDynamicOffset: true },
+          visibility: GPUShaderStage.COMPUTE,
+        },
+      ],
+    });
   }
 
   malloc(size: number, initialData?: Uint8Array<ArrayBuffer>): Slot {
@@ -200,7 +211,13 @@ export class WebGPUBackend implements Backend {
   ): void {
     const inputBuffers = inputs.map((slot) => this.#getBuffer(slot).buffer);
     const outputBuffers = outputs.map((slot) => this.#getBuffer(slot).buffer);
-    pipelineSubmit(this.device, exe.data, inputBuffers, outputBuffers);
+    pipelineSubmit(
+      this.device,
+      this.#uniformBgl,
+      exe.data,
+      inputBuffers,
+      outputBuffers,
+    );
   }
 
   #getBuffer(slot: Slot): { buffer: GPUBuffer; size: number } {
@@ -555,12 +572,13 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
   emit(popIndent, "}");
   return {
     shader: shader.join("\n"),
-    grid: [gridX, gridY],
+    passes: [{ grid: [gridX, gridY] }],
   };
 }
 
 function pipelineSubmit(
   device: GPUDevice,
+  uniformBgl: GPUBindGroupLayout,
   pipelines: ShaderDispatch[],
   inputs: GPUBuffer[],
   outputs: GPUBuffer[],
@@ -580,26 +598,83 @@ function pipelineSubmit(
   }
 
   const commandEncoder = device.createCommandEncoder();
-  for (const { pipeline, grid } of pipelines) {
-    if (prod(grid) === 0) continue; // No work to do.
+  for (const { pipeline, passes } of pipelines) {
+    const filteredPasses = passes.filter(({ grid }) => prod(grid) > 0);
+    if (filteredPasses.length === 0) continue; // No work to do.
 
     const bindGroup = device.createBindGroup({
       layout: pipeline.getBindGroupLayout(0),
       entries: [
-        ...inputs.map((buffer, i) => {
-          return { binding: i, resource: { buffer } };
-        }),
-        { binding: inputs.length, resource: { buffer: outputs[0] } },
+        ...inputs.map((buffer, i) => ({
+          binding: i,
+          resource: { buffer },
+        })),
+        ...outputs.map((buffer, i) => ({
+          binding: inputs.length + i,
+          resource: { buffer },
+        })),
       ],
     });
 
-    const passEncoder = commandEncoder.beginComputePass();
-    passEncoder.setPipeline(pipeline);
-    passEncoder.setBindGroup(0, bindGroup);
-    passEncoder.dispatchWorkgroups(grid[0], grid[1]);
-    passEncoder.end();
+    let uniformBindGroup: GPUBindGroup | null = null;
+    let uniformAlignedSize = 0;
+    if (filteredPasses[0].uniform) {
+      // This shader requires uniforms, create a shared buffer with uniform
+      // values for each pass of the shader (use dynamic offsets).
+      const uniforms = filteredPasses.map(({ uniform }) => uniform!);
+      const [uniformBuffer, alignedSize] = combineUniforms(device, uniforms);
+      uniformAlignedSize = alignedSize;
+      uniformBindGroup = device.createBindGroup({
+        layout: uniformBgl,
+        entries: [
+          {
+            binding: 0,
+            resource: { buffer: uniformBuffer, size: uniforms[0].byteLength },
+          },
+        ],
+      });
+    }
+
+    for (let i = 0; i < filteredPasses.length; i++) {
+      const { grid } = filteredPasses[i];
+      const passEncoder = commandEncoder.beginComputePass();
+      passEncoder.setPipeline(pipeline);
+      passEncoder.setBindGroup(0, bindGroup);
+      if (uniformBindGroup)
+        passEncoder.setBindGroup(1, uniformBindGroup, [i * uniformAlignedSize]);
+      passEncoder.dispatchWorkgroups(grid[0], grid[1]);
+      passEncoder.end();
+    }
   }
   device.queue.submit([commandEncoder.finish()]);
+}
+
+function combineUniforms(
+  device: GPUDevice,
+  uniforms: Uint8Array<ArrayBuffer>[],
+): [GPUBuffer, number] {
+  for (const buf of uniforms) {
+    if (
+      !buf ||
+      buf.byteLength === 0 ||
+      buf.byteLength !== uniforms[0].byteLength
+    ) {
+      throw new Error("webgpu: Uniform mismatch between shader passes");
+    }
+  }
+  const alignedSize = Math.ceil(
+    uniforms[0].byteLength / device.limits.minUniformBufferOffsetAlignment,
+  );
+  const buffer = device.createBuffer({
+    size: alignedSize * uniforms.length,
+    usage: GPUBufferUsage.UNIFORM,
+    mappedAtCreation: true,
+  });
+  const bufferMapped = new Uint8Array(buffer.getMappedRange());
+  for (let i = 0; i < uniforms.length; i++)
+    bufferMapped.set(uniforms[i], i * alignedSize);
+  buffer.unmap();
+  return [buffer, alignedSize];
 }
 
 /**
