@@ -1859,4 +1859,109 @@ suite.each(devices)("device:%s", (device) => {
       expect(ar).toEqual(Array.from({ length: 8191 }, (_, i) => 8190 - i));
     });
   });
+
+  suite("jax.numpy.round()", () => {
+    test("rounds to nearest integer", () => {
+      const x = np.array([1.2, 2.7, -0.3, -1.8]);
+      const y = np.round(x);
+      expect(y.js()).toBeAllclose([1, 3, 0, -2]);
+    });
+
+    test("banker's rounding for 0.5", () => {
+      // Round half to even: 0.5 -> 0, 1.5 -> 2, 2.5 -> 2, 3.5 -> 4
+      const x = np.array([0.5, 1.5, 2.5, 3.5, 4.5]);
+      const y = np.round(x);
+      expect(y.js()).toBeAllclose([0, 2, 2, 4, 4]);
+    });
+
+    test("rounds to specified decimals", () => {
+      const x = np.array([1.234, 2.567, -3.456]);
+      const y1 = np.round(x.ref, 1);
+      expect(y1.js()).toBeAllclose([1.2, 2.6, -3.5]);
+
+      const y2 = np.round(x, 2);
+      expect(y2.js()).toBeAllclose([1.23, 2.57, -3.46]);
+    });
+
+    test("around alias works", () => {
+      const x = np.array([1.5, 2.5]);
+      expect(np.around(x).js()).toBeAllclose([2, 2]);
+    });
+  });
+
+  suite("jax.numpy.copysign()", () => {
+    test("copies sign from y to x", () => {
+      const x = np.array([1, -2, 3, -4]);
+      const y = np.array([-1, 1, -1, 1]);
+      const result = np.copysign(x, y);
+      expect(result.js()).toBeAllclose([-1, 2, -3, 4]);
+    });
+
+    test("works with scalar", () => {
+      const x = np.array([1, -2, 3]);
+      const y = np.array([-1, -1, -1]);
+      const result = np.copysign(x, y);
+      expect(result.js()).toBeAllclose([-1, -2, -3]);
+    });
+
+    test("handles zero correctly", () => {
+      const x = np.array([5, -5, 0]);
+      const y = np.array([1, -1, -1]);
+      const result = np.copysign(x, y);
+      expect(result.js()).toBeAllclose([5, -5, 0]);
+    });
+  });
+
+  suite("jax.numpy.logaddexp()", () => {
+    test("computes log(exp(x) + exp(y))", () => {
+      const x1 = np.array([0, 1, 2]);
+      const x2 = np.array([0, 1, 2]);
+      const result = np.logaddexp(x1.ref, x2);
+      // log(2 * exp(x)) = x + log(2)
+      const expected = np.add(x1, Math.log(2));
+      expect(result.js()).toBeAllclose(expected.js());
+    });
+
+    test("handles large difference in inputs", () => {
+      // When one input is much larger, result should be approximately the larger one
+      const x1 = np.array([100]);
+      const x2 = np.array([0]);
+      const result = np.logaddexp(x1, x2);
+      expect(result.js()).toBeAllclose([100], { atol: 1e-5 });
+    });
+
+    test("is commutative", () => {
+      const x1 = np.array([1, 2, 3]);
+      const x2 = np.array([4, 5, 6]);
+      const r1 = np.logaddexp(x1.ref, x2.ref);
+      const r2 = np.logaddexp(x2, x1);
+      expect(r1.js()).toBeAllclose(r2.js());
+    });
+  });
+
+  suite("jax.numpy.logaddexp2()", () => {
+    test("computes log2(2^x + 2^y)", () => {
+      const x1 = np.array([0, 1, 2]);
+      const x2 = np.array([0, 1, 2]);
+      const result = np.logaddexp2(x1.ref, x2);
+      // log2(2 * 2^x) = x + 1
+      const expected = np.add(x1, 1);
+      expect(result.js()).toBeAllclose(expected.js());
+    });
+
+    test("handles large difference in inputs", () => {
+      const x1 = np.array([50]);
+      const x2 = np.array([0]);
+      const result = np.logaddexp2(x1, x2);
+      expect(result.js()).toBeAllclose([50], { atol: 1e-5 });
+    });
+
+    test("is commutative", () => {
+      const x1 = np.array([1, 2, 3]);
+      const x2 = np.array([4, 5, 6]);
+      const r1 = np.logaddexp2(x1.ref, x2.ref);
+      const r2 = np.logaddexp2(x2, x1);
+      expect(r1.js()).toBeAllclose(r2.js());
+    });
+  });
 });

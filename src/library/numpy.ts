@@ -1632,3 +1632,105 @@ export const isfinite = jit(function isfinite(x: Array): Array {
   if (!isFloatDtype(x.dtype)) return fullLike(x, true);
   return isnan(x.ref).add(isinf(x)).notEqual(true);
 });
+
+/**
+ * Round an array to the given number of decimals.
+ *
+ * Uses "round half to even" (banker's rounding) strategy, matching NumPy.
+ * For values exactly halfway between rounded decimal values, round to the
+ * nearest even value.
+ *
+ * @param a - Input array.
+ * @param decimals - Number of decimal places to round to (default: 0).
+ * @returns Rounded array with same dtype as input.
+ */
+export function round(a: ArrayLike, decimals: number = 0): Array {
+  // Use jit with staticArgnums for the decimals parameter
+  const roundImpl = jit(function roundImpl(arr: Array): Array {
+    // Scale factor for rounding to decimals
+    const scale = 10 ** decimals;
+
+    // Scale, then apply banker's rounding, then unscale
+    const scaled = multiply(arr, scale);
+
+    // floor(x + 0.5) gives us "round half up"
+    // For banker's rounding, we need to adjust when exactly at 0.5
+    const floored = floor(scaled.ref);
+    const fraction = scaled.sub(floored.ref);
+
+    // Check if fraction is exactly 0.5
+    const isHalf = equal(fraction, 0.5);
+
+    // Check if floored value is odd (we should round up) or even (round down for half)
+    // odd means floored % 2 != 0
+    const isOdd = notEqual(fmod(floored.ref, 2), 0);
+
+    // Normal rounding: add 0.5 and floor
+    const normalRound = floor(scaled.add(0.5));
+
+    // For exact halves: if odd floor, round up; if even floor, keep floor
+    const bankerRound = where(isOdd, floored.ref.add(1), floored);
+
+    // Use banker's rounding for exact halves, normal rounding otherwise
+    const rounded = where(isHalf, bankerRound, normalRound);
+
+    return rounded.div(scale);
+  });
+  const result = roundImpl(fudgeArray(a));
+  roundImpl.dispose();
+  return result;
+}
+
+export { round as around };
+
+/**
+ * Change the sign of x to that of y, element-wise.
+ *
+ * If both arguments are arrays, they must be broadcastable.
+ * Returns values with magnitude of x and sign of y.
+ *
+ * @param x - Values to change the sign of.
+ * @param y - Values whose sign is used.
+ * @returns Array with magnitude of x and sign of y.
+ */
+export const copysign = jit(function copysign(x: Array, y: Array): Array {
+  const absX = absolute(x);
+  const signY = where(less(y, 0), -1, 1);
+  return absX.mul(signY);
+});
+
+/**
+ * Logarithm of the sum of exponentiations of the inputs.
+ *
+ * Calculates `log(exp(x1) + exp(x2))` in a numerically stable way.
+ *
+ * @param x1 - Input array.
+ * @param x2 - Input array.
+ * @returns Array with log(exp(x1) + exp(x2)).
+ */
+export const logaddexp = jit(function logaddexp(x1: Array, x2: Array): Array {
+  // For numerical stability: log(exp(x1) + exp(x2)) = max(x1, x2) + log1p(exp(-|x1 - x2|))
+  const maxVal = maximum(x1.ref, x2.ref);
+  const minVal = minimum(x1, x2);
+  const diff = minVal.sub(maxVal.ref);
+  return maxVal.add(log1p(exp(diff)));
+});
+
+/**
+ * Logarithm of the sum of exponentiations of the inputs in base-2.
+ *
+ * Calculates `log2(2**x1 + 2**x2)` in a numerically stable way.
+ *
+ * @param x1 - Input array.
+ * @param x2 - Input array.
+ * @returns Array with log2(2**x1 + 2**x2).
+ */
+export const logaddexp2 = jit(function logaddexp2(x1: Array, x2: Array): Array {
+  // log2(2^x1 + 2^x2) = logaddexp(x1 * ln2, x2 * ln2) / ln2
+  // = max(x1, x2) + log2(1 + 2^(-|x1 - x2|))
+  const maxVal = maximum(x1.ref, x2.ref);
+  const minVal = minimum(x1, x2);
+  const diff = minVal.sub(maxVal.ref); // This is <= 0
+  // log2(1 + 2^diff) = log(1 + 2^diff) / ln(2)
+  return maxVal.add(log1p(exp2(diff)).mul(Math.LOG2E));
+});
