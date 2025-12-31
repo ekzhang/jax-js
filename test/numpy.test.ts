@@ -1824,6 +1824,76 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.expandDims()", () => {
+    test("expands dims at position 0", () => {
+      const x = np.array([1, 2, 3]);
+      const y = np.expandDims(x, 0);
+      expect(y.shape).toEqual([1, 3]);
+      expect(y.js()).toEqual([[1, 2, 3]]);
+    });
+
+    test("expands dims at position 1", () => {
+      const x = np.array([1, 2, 3]);
+      const y = np.expandDims(x, 1);
+      expect(y.shape).toEqual([3, 1]);
+      expect(y.js()).toEqual([[1], [2], [3]]);
+    });
+
+    test("expands dims with negative axis", () => {
+      const x = np.array([1, 2, 3]);
+      const y = np.expandDims(x, -1);
+      expect(y.shape).toEqual([3, 1]);
+      expect(y.js()).toEqual([[1], [2], [3]]);
+    });
+
+    test("expands multiple dims at once", () => {
+      const x = np.array([1, 2]);
+      const y = np.expandDims(x, [0, 2]);
+      expect(y.shape).toEqual([1, 2, 1]);
+      expect(y.js()).toEqual([[[1], [2]]]);
+    });
+
+    test("expands dims on 2D array", () => {
+      const x = np.array([
+        [1, 2, 3],
+        [4, 5, 6],
+      ]);
+      const y = np.expandDims(x.ref, 0);
+      expect(y.shape).toEqual([1, 2, 3]);
+
+      const z = np.expandDims(x, 2);
+      expect(z.shape).toEqual([2, 3, 1]);
+    });
+
+    test("throws on out of bounds axis", () => {
+      const x = np.array([1, 2, 3]);
+      expect(() => np.expandDims(x, 3)).toThrow(Error);
+      expect(() => np.expandDims(x, -4)).toThrow(Error);
+    });
+
+    test("throws on repeated axis", () => {
+      const x = np.array([1, 2, 3]);
+      expect(() => np.expandDims(x, [0, 0])).toThrow(Error);
+    });
+
+    test("works with jvp", () => {
+      const x = np.array([1, 2, 3]);
+      const [y, dy] = jvp(
+        (x: np.Array) => np.expandDims(x, 0),
+        [x],
+        [np.ones([3])],
+      );
+      expect(y.shape).toEqual([1, 3]);
+      expect(dy.shape).toEqual([1, 3]);
+    });
+
+    test("works with grad", () => {
+      const x = np.array([1, 2, 3]);
+      const dx = grad((x: np.Array) => np.expandDims(x, 0).sum())(x);
+      expect(dx.js()).toEqual([1, 1, 1]);
+    });
+  });
+
   suite("jax.numpy.argsort()", () => {
     test("argsorts 1D array", () => {
       const x = np.array([3, 1, 4, 2, 5]);

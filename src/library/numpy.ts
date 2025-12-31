@@ -607,6 +607,59 @@ export function squeeze(a: ArrayLike, axis: core.Axis = null): Array {
 }
 
 /**
+ * Expand the shape of an array by inserting new axes of length 1.
+ *
+ * @param a - Input array.
+ * @param axis - Position(s) in the expanded axes where the new axis (or axes)
+ *   is placed. Can be a single integer or an array of integers.
+ * @returns Array with the number of dimensions increased.
+ *
+ * @example
+ * ```ts
+ * const x = np.array([1, 2]);
+ * np.expand_dims(x, 0); // Shape [1, 2]
+ * np.expand_dims(x, 1); // Shape [2, 1]
+ * np.expand_dims(x, [0, 2]); // Shape [1, 2, 1]
+ * ```
+ */
+export function expandDims(a: ArrayLike, axis: number | number[]): Array {
+  const as = shape(a);
+  const axes = typeof axis === "number" ? [axis] : axis;
+  const ndimNew = as.length + axes.length;
+
+  // Normalize axes to positive values
+  const normalizedAxes = axes.map((ax) => {
+    if (ax < -ndimNew || ax >= ndimNew) {
+      throw new Error(
+        `expandDims: axis ${ax} is out of bounds for array with ${ndimNew} dimensions`,
+      );
+    }
+    return ax < 0 ? ax + ndimNew : ax;
+  });
+
+  // Check for duplicate axes
+  const uniqueAxes = new Set(normalizedAxes);
+  if (uniqueAxes.size !== normalizedAxes.length) {
+    throw new Error("expandDims: repeated axis");
+  }
+
+  // Build the new shape by inserting 1s at the specified positions
+  const newShape: number[] = [];
+  let srcIdx = 0;
+  for (let i = 0; i < ndimNew; i++) {
+    if (uniqueAxes.has(i)) {
+      newShape.push(1);
+    } else {
+      newShape.push(as[srcIdx++]);
+    }
+  }
+
+  return reshape(a, newShape);
+}
+
+export { expandDims as expand_dims };
+
+/**
  * Repeat each element of an array after themselves.
  *
  * If no axis is provided, use the flattened input array, and return a flat
