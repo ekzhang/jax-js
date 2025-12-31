@@ -1735,6 +1735,15 @@ suite.each(devices)("device:%s", (device) => {
       expect(y.shape).toEqual([3, 0]);
       expect(y.dtype).toBe(np.float32);
     });
+
+    test("can sort 8192 elements", async () => {
+      // If the maximum workgroup size is 1024, then only 2048 elements can fit
+      // into a single-workgroup sort. This test exercises multi-pass sorting in
+      // global memory for GPUs.
+      const x = np.linspace(0, 1, 8192);
+      const y = np.sort(np.flip(x.ref));
+      expect(y).toBeAllclose(x);
+    });
   });
 
   suite("jax.numpy.argsort()", () => {
@@ -1762,6 +1771,14 @@ suite.each(devices)("device:%s", (device) => {
       const f = (x: np.Array) => np.argsort(x).astype(np.float32).sum();
       const dx = grad(f)(x);
       expect(dx.js()).toEqual([0, 0, 0]);
+    });
+
+    test("can argsort 8191 elements", async () => {
+      // Testing 8191 as it's not exactly a power-of-two size.
+      const x = np.linspace(0, 1, 8191);
+      const y = np.argsort(np.flip(x));
+      const ar = y.js() as number[];
+      expect(ar).toEqual(Array.from({ length: 8191 }, (_, i) => 8190 - i));
     });
   });
 });
