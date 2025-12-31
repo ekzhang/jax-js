@@ -94,4 +94,52 @@ suite.each(devices)("device:%s", (device) => {
     expect(trues[0] / count).toBeCloseTo(0.25, 1);
     expect(trues[1] / count).toBeCloseTo(0.8, 1);
   });
+
+  test("cauchy distribution", () => {
+    const key = random.key(999);
+    const count = 10000;
+    const samples: number[] = random.cauchy(key, [count]).js();
+
+    // Cauchy has heavy tails, so we can't use mean/variance tests.
+    // Instead, check that the median is close to 0 and that quartiles
+    // are close to ±1 (since tan(π/4) = 1).
+    const sorted = samples.slice().sort((a, b) => a - b);
+    const q1 = sorted[Math.floor(count * 0.25)];
+    const median = sorted[Math.floor(count * 0.5)];
+    const q3 = sorted[Math.floor(count * 0.75)];
+
+    expect(median).toBeCloseTo(0, 0); // Median should be near 0
+    expect(q1).toBeCloseTo(-1, 0); // 25th percentile should be near -1
+    expect(q3).toBeCloseTo(1, 0); // 75th percentile should be near 1
+  });
+
+  test("laplace distribution", () => {
+    const key = random.key(888);
+    const count = 5000;
+    const samples: number[] = random.laplace(key, [count]).js();
+
+    // Laplace(0, 1) has mean 0 and variance 2
+    const mean = samples.reduce((a, b) => a + b, 0) / count;
+    const variance =
+      samples.reduce((a, b) => a + (b - mean) ** 2, 0) / (count - 1);
+
+    expect(mean).toBeCloseTo(0, 1);
+    expect(variance).toBeCloseTo(2, 0); // variance = 2 * scale^2 = 2
+  });
+
+  test("gumbel distribution", () => {
+    const key = random.key(777);
+    const count = 5000;
+    const samples: number[] = random.gumbel(key, [count]).js();
+
+    // Gumbel(0, 1) has mean = Euler-Mascheroni constant ≈ 0.5772
+    // and variance = π²/6 ≈ 1.6449
+    const eulerGamma = 0.5772156649;
+    const mean = samples.reduce((a, b) => a + b, 0) / count;
+    const variance =
+      samples.reduce((a, b) => a + (b - mean) ** 2, 0) / (count - 1);
+
+    expect(mean).toBeCloseTo(eulerGamma, 1);
+    expect(variance).toBeCloseTo(Math.PI ** 2 / 6, 0);
+  });
 });
