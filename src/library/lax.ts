@@ -10,6 +10,8 @@ import { moveaxis, vmap } from "../frontend/vmap";
 import { Pair } from "../shape";
 import { checkAxis, deepEqual, prod, range, rep, zipn } from "../utils";
 
+export * as linalg from "./lax-linalg";
+
 /**
  * Dimension numbers for general `dot()` primitive.
  *

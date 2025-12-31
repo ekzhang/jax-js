@@ -43,6 +43,7 @@ import {
   TracerValue,
   transpose,
   TreeMismatchError,
+  triangularSolve,
   UseAfterFreeError,
   where,
 } from "./core";
@@ -59,7 +60,7 @@ import {
   Var,
 } from "./jaxpr";
 import { jvp } from "./jvp";
-import { vmap } from "./vmap";
+import { moveaxis, vmap } from "./vmap";
 
 /** Array value that can either be known or unknown. */
 class PartialVal {
@@ -806,6 +807,15 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
     cond.dispose();
     return cts;
   },
+  [Primitive.Gather]([ct], [x, ...indices], { axis, outDim }) {
+    if (!(x instanceof UndefPrimal)) throw new NonlinearError(Primitive.Gather);
+    if (indices.some((i) => i instanceof UndefPrimal))
+      throw new NonlinearError(Primitive.Gather);
+    void [ct, axis, outDim];
+    throw new Error(
+      "Gather transpose rule is not yet implemented, requires complex Scatter sum operation",
+    );
+  },
   [Primitive.Transpose]([ct], [x], { perm }) {
     if (!(x instanceof UndefPrimal))
       throw new NonlinearError(Primitive.Transpose);
@@ -839,14 +849,18 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
     );
     return [shrink(ct, slice)];
   },
-  [Primitive.Gather]([ct], [x, ...indices], { axis, outDim }) {
-    if (!(x instanceof UndefPrimal)) throw new NonlinearError(Primitive.Gather);
-    if (indices.some((i) => i instanceof UndefPrimal))
-      throw new NonlinearError(Primitive.Gather);
-    void [ct, axis, outDim];
-    throw new Error(
-      "Gather transpose rule is not yet implemented, requires complex Scatter sum operation",
-    );
+  [Primitive.TriangularSolve]([ct], [a, b], { unitDiagonal }) {
+    if (a instanceof UndefPrimal || !(b instanceof UndefPrimal))
+      throw new NonlinearError(Primitive.TriangularSolve);
+    // The adjoint of solving a @ x.T = b.T for x, when differentiating w.r.t. b:
+    //   If forward is: x.T = a^{-1} @ b.T
+    //   Then adjoint is: ct_b.T = a^{-T} @ ct_x.T, so we just transpose A
+    // Note: The primitive always operates on upper triangular a, so a^T is lower.
+    const ctB = triangularSolve(moveaxis(a, -2, -1), ct, {
+      lower: true,
+      unitDiagonal,
+    });
+    return [null, ctB];
   },
   [Primitive.Jit](cts, args, { name, jaxpr }) {
     // We need this one because the jvp() rule for Jit generates a Jit

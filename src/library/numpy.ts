@@ -6,7 +6,6 @@ import {
   Array,
   array,
   type ArrayLike,
-  type DTypeAndDevice,
   eye,
   fudgeArray,
   full,
@@ -15,6 +14,9 @@ import {
   linspace,
   ones,
   onesLike as onesLikeTracer,
+  tri,
+  tril,
+  triu,
   zeros,
   zerosLike as zerosLikeTracer,
 } from "../frontend/array";
@@ -51,10 +53,14 @@ export {
   linspace,
   ones,
   promoteTypes,
+  tri,
+  tril,
+  triu,
   zeros,
 };
 
 export * as fft from "./numpy-fft";
+export * as linalg from "./numpy-linalg";
 
 export const float32 = DType.Float32;
 export const int32 = DType.Int32;
@@ -265,6 +271,38 @@ export function max(
   return core.reduce(a, AluOp.Max, axis, opts) as Array;
 }
 
+/**
+ * Test whether all array elements along a given axis evaluate to True.
+ *
+ * Returns a boolean array with the same shape as `a` with the specified axis
+ * removed. If axis is None, returns a scalar.
+ */
+export function all(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: core.ReduceOpts,
+): Array {
+  // Convert to boolean and use min reduction (all true = min is 1)
+  a = fudgeArray(a).astype(DType.Bool);
+  return min(a, axis, opts);
+}
+
+/**
+ * Test whether any array element along a given axis evaluates to True.
+ *
+ * Returns a boolean array with the same shape as `a` with the specified axis
+ * removed. If axis is None, returns a scalar.
+ */
+export function any(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: core.ReduceOpts,
+): Array {
+  // Convert to boolean and use max reduction (any true = max is 1)
+  a = fudgeArray(a).astype(DType.Bool);
+  return max(a, axis, opts);
+}
+
 /** Return the peak-to-peak range along a given axis (`max - min`). */
 export function ptp(
   a: ArrayLike,
@@ -366,8 +404,7 @@ export function cumsum(a: ArrayLike, axis?: number): Array {
   return moveaxis(tril(a).sum(-1), -1, axis);
 }
 
-/** @function Alternative name for `jax.numpy.cumsum()`. */
-export const cumulativeSum = cumsum;
+export { cumsum as cumulativeSum };
 
 /** Reverse the elements in an array along the given axes. */
 export function flip(x: ArrayLike, axis: core.Axis = null): Array {
@@ -539,8 +576,14 @@ export function fliplr(x: ArrayLike): Array {
   return flip(x, 1);
 }
 
-/** @function Alternative name for `numpy.transpose()`. */
-export const permuteDims = transpose;
+export { transpose as permuteDims };
+
+/** Transpose the last two dimensions of an array. */
+export function matrixTranspose(a: ArrayLike): Array {
+  if (ndim(a) < 2)
+    throw new Error(`matrixTranspose: input array must be at least 2D`);
+  return moveaxis(a, -1, -2);
+}
 
 /** Return a 1-D flattened array containing the elements of the input. */
 export function ravel(a: ArrayLike): Array {
@@ -709,6 +752,28 @@ export function diag(v: ArrayLike, k = 0): Array {
 /** Calculate the sum of the diagonal of an array along the given axes. */
 export function trace(a: ArrayLike, offset = 0, axis1 = 0, axis2 = 1): Array {
   return diagonal(a, offset, axis1, axis2).sum(-1);
+}
+
+/**
+ * Return a sorted copy of an array.
+ *
+ * The array is sorted along a specified axis (the last by default). This may be
+ * an unstable sort, and it dispatches to device-specific implementation.
+ */
+export function sort(a: ArrayLike, axis: number = -1): Array {
+  return fudgeArray(a).sort(axis);
+}
+
+/**
+ * Return indices that would sort an array. This may be an unstable sorting
+ * algorithm; it need not preserve order of indices in ties.
+ *
+ * Returns an array of `int32` indices.
+ *
+ * The array is sorted along a specified axis (the last by default).
+ */
+export function argsort(a: ArrayLike, axis: number = -1): Array {
+  return fudgeArray(a).argsort(axis);
 }
 
 /** Return if two arrays are element-wise equal within a tolerance. */
@@ -1117,55 +1182,6 @@ export function meshgrid(
 }
 
 /**
- * Return an array with ones on and below the diagonal and zeros elsewhere.
- *
- * If `k` is provided, it specifies the sub-diagonal on and below which the
- * array is filled with ones. `k=0` is the main diagonal, `k<0` is below it, and
- * `k>0` is above it.
- */
-export function tri(
-  n: number,
-  m?: number,
-  k: number = 0,
-  { dtype, device }: DTypeAndDevice = {},
-): Array {
-  m ??= n;
-  dtype ??= DType.Float32;
-  if (!Number.isInteger(n) || n < 0) {
-    throw new Error(`tri: n must be a non-negative integer, got ${n}`);
-  }
-  if (!Number.isInteger(m) || m < 0) {
-    throw new Error(`tri: m must be a non-negative integer, got ${m}`);
-  }
-  if (!Number.isInteger(k)) {
-    throw new Error(`tri: k must be an integer, got ${k}`);
-  }
-  const rows = arange(k, n + k, 1, { dtype: DType.Int32, device });
-  const cols = arange(0, m, 1, { dtype: DType.Int32, device });
-  return rows.reshape([n, 1]).greaterEqual(cols).astype(dtype);
-}
-
-/** Return the lower triangle of an array. Must be of dimension >= 2. */
-export function tril(a: ArrayLike, k: number = 0): Array {
-  if (ndim(a) < 2) {
-    throw new Error(`tril: input array must be at least 2D, got ${ndim(a)}D`);
-  }
-  a = fudgeArray(a);
-  const [n, m] = a.shape.slice(-2);
-  return where(tri(n, m, k, { dtype: bool }), a.ref, zerosLike(a)) as Array;
-}
-
-/** Return the upper triangle of an array. Must be of dimension >= 2. */
-export function triu(a: ArrayLike, k: number = 0): Array {
-  if (ndim(a) < 2) {
-    throw new Error(`tril: input array must be at least 2D, got ${ndim(a)}D`);
-  }
-  a = fudgeArray(a);
-  const [n, m] = a.shape.slice(-2);
-  return where(tri(n, m, k - 1, { dtype: bool }), zerosLike(a.ref), a) as Array;
-}
-
-/**
  * Clip (limit) the values in an array.
  *
  * Given an interval, values outside the interval are clipped to the interval
@@ -1195,8 +1211,7 @@ export function absolute(x: ArrayLike): Array {
   return where(less(x.ref, 0), x.ref.mul(-1), x);
 }
 
-/** @function Alias of `jax.numpy.absolute()`. */
-export const abs = absolute;
+export { absolute as abs };
 
 /** Return an element-wise indication of sign of the input. */
 export function sign(x: ArrayLike): Array {
@@ -1295,12 +1310,7 @@ export const atan2 = jit(function atan2(y: Array, x: Array) {
   return atan(numer.div(denom)).mul(2);
 });
 
-/** @function Alias of `jax.numpy.acos()`. */
-export const arccos = acos;
-/** @function Alias of `jax.numpy.atan()`. */
-export const arctan = atan;
-/** @function Alias of `jax.numpy.atan2()`. */
-export const arctan2 = atan2;
+export { asin as arcsin, acos as arccos, atan as arctan, atan2 as arctan2 };
 
 /** Element-wise subtraction, with broadcasting. */
 export function subtract(x: ArrayLike, y: ArrayLike): Array {
@@ -1320,6 +1330,8 @@ export function trueDivide(x: ArrayLike, y: ArrayLike): Array {
   return x.div(y);
 }
 
+export { trueDivide as divide };
+
 /**
  * @function
  * Calculate element-wise floating-point modulo operation.
@@ -1337,9 +1349,6 @@ export const remainder = jit(function remainder(x: Array, y: Array): Array {
   // This function must match the sign of y instead.
   return core.mod(core.mod(x, y.ref).add(y.ref), y) as Array;
 });
-
-/** @function Alias of `jax.numpy.trueDivide()`. */
-export const divide = trueDivide;
 
 /** Round input to the nearest integer towards zero. */
 export function trunc(x: ArrayLike): Array {
@@ -1364,13 +1373,13 @@ export function ldexp(x1: ArrayLike, x2: ArrayLike): Array {
  */
 export function frexp(x: ArrayLike): [Array, Array] {
   x = fudgeArray(x);
-  const absx = abs(x.ref);
+  const absx = absolute(x.ref);
   const exponent = where(
     equal(x.ref, 0),
     0,
     floor(log2(absx)).add(1).astype(DType.Int32),
   );
-  const mantissa = divide(x, exp2(exponent.ref.astype(x.dtype)));
+  const mantissa = x.div(exp2(exponent.ref.astype(x.dtype)));
   return [mantissa, exponent];
 }
 
@@ -1433,11 +1442,14 @@ export const power = jit(function power(x1: Array, x2: Array) {
     where(x1.ref.less(0), -1, 1),
     1,
   );
-  return where(shouldBeNaN, nan, exp(log(abs(x1)).mul(x2)).mul(resultSign));
+  return where(
+    shouldBeNaN,
+    nan,
+    exp(log(absolute(x1)).mul(x2)).mul(resultSign),
+  );
 });
 
-/** @function Alias of `jax.numpy.power()`. */
-export const pow = power;
+export { power as pow };
 
 /** @function Calculate the element-wise cube root of the input array. */
 export const cbrt = jit(function cbrt(x: Array) {
@@ -1514,12 +1526,7 @@ export const arctanh = jit(function arctanh(x: Array) {
   return log(add(1, x.ref).div(subtract(1, x))).mul(0.5);
 });
 
-/** @function Alias of `jax.numpy.arcsinh()`. */
-export const asinh = arcsinh;
-/** @function Alias of `jax.numpy.arccosh()`. */
-export const acosh = arccosh;
-/** @function Alias of `jax.numpy.arctanh()`. */
-export const atanh = arctanh;
+export { arcsinh as asinh, arccosh as acosh, arctanh as atanh };
 
 /**
  * Compute the variance of an array.

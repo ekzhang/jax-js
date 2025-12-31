@@ -170,11 +170,7 @@ export const valueAndGrad = linearizeModule.valueAndGrad as <
  */
 export const jacrev = linearizeModule.jacrev as typeof jacfwd;
 
-/**
- * @function
- * Compute the Jacobian with reverse-mode AD. Alias for `jacrev()`.
- */
-export const jacobian = jacrev;
+export { jacrev as jacobian };
 
 /**
  * Wait until all `Array` leaves are ready by calling `Array.blockUntilReady()`.

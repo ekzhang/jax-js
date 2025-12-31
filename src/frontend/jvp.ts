@@ -5,9 +5,10 @@ import {
   unflatten as treeUnflatten,
 } from "../tree";
 import { unzip2, zip } from "../utils";
-import { pureArray, zerosLike } from "./array";
+import { pureArray, triu, zerosLike } from "./array";
 import {
   AbstractValue,
+  argsort,
   asin,
   atan,
   bind,
@@ -15,7 +16,9 @@ import {
   bitcast,
   broadcast,
   cast,
+  cholesky,
   cos,
+  dot,
   erf,
   erfc,
   exp,
@@ -41,9 +44,11 @@ import {
   Tracer,
   TracerValue,
   TreeMismatchError,
+  triangularSolve,
   where,
 } from "./core";
 import { ClosedJaxpr, Jaxpr, jaxprAsFun, makeJaxpr } from "./jaxpr";
+import { moveaxis } from "./vmap";
 
 class JVPTracer extends Tracer {
   constructor(
@@ -135,6 +140,19 @@ function zeroTangentsJvp<P extends Primitive>(primitive: P): JvpRule<P> {
   };
 }
 
+/** Compute `a @ b.T`, batched to last two axes. */
+function batchMatmulT(a: Tracer, b: Tracer): Tracer {
+  return dot(
+    a.reshape(a.shape.toSpliced(-1, 0, 1)),
+    b.reshape(b.shape.toSpliced(-2, 0, 1)),
+  );
+}
+
+/** Batch matrix transpose. */
+function mT(a: Tracer): Tracer {
+  return moveaxis(a, -2, -1);
+}
+
 const jvpRules: { [P in Primitive]: JvpRule<P> } = {
   [Primitive.Add]: linearTangentsJvp(Primitive.Add),
   [Primitive.Mul]: bilinearTangentsJvp(Primitive.Mul),
@@ -152,6 +170,12 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     }
     const q = idiv(x.ref, y.ref);
     return [[mod(x, y)], [dx.sub(dy.mul(q))]];
+  },
+  [Primitive.Min]([x, y], [dx, dy]) {
+    return [[min(x.ref, y.ref)], [where(less(y, x), dy, dx)]];
+  },
+  [Primitive.Max]([x, y], [dx, dy]) {
+    return [[max(x.ref, y.ref)], [where(less(x, y), dy, dx)]];
   },
   [Primitive.Neg]: linearTangentsJvp(Primitive.Neg),
   [Primitive.Reciprocal]([x], [dx]) {
@@ -177,7 +201,6 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     dx.dispose(); // Non-differentiable operation.
     return [[bitcast(x.ref, dtype)], [zerosLike(x)]];
   },
-  [Primitive.RandomBits]: zeroTangentsJvp(Primitive.RandomBits),
   [Primitive.Sin]([x], [dx]) {
     return [[sin(x.ref)], [cos(x).mul(dx)]];
   },
@@ -220,12 +243,6 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     const z = sqrt(x);
     return [[z.ref], [reciprocal(z.mul(2)).mul(dx)]];
   },
-  [Primitive.Min]([x, y], [dx, dy]) {
-    return [[min(x.ref, y.ref)], [where(less(y, x), dy, dx)]];
-  },
-  [Primitive.Max]([x, y], [dx, dy]) {
-    return [[max(x.ref, y.ref)], [where(less(x, y), dy, dx)]];
-  },
   [Primitive.Reduce]([x], [dx], { op, axis }) {
     if (op === AluOp.Add) {
       return [[reduce(x, op, axis)], [reduce(dx, op, axis)]];
@@ -261,12 +278,7 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     dcond.dispose();
     return [[where(cond.ref, x, y)], [where(cond, dx, dy)]];
   },
-  [Primitive.Transpose]: linearTangentsJvp(Primitive.Transpose),
-  [Primitive.Broadcast]: linearTangentsJvp(Primitive.Broadcast),
-  [Primitive.Reshape]: linearTangentsJvp(Primitive.Reshape),
-  [Primitive.Flip]: linearTangentsJvp(Primitive.Flip),
-  [Primitive.Shrink]: linearTangentsJvp(Primitive.Shrink),
-  [Primitive.Pad]: linearTangentsJvp(Primitive.Pad),
+  [Primitive.RandomBits]: zeroTangentsJvp(Primitive.RandomBits),
   [Primitive.Gather]([x, ...indices], [dx, ..._], { axis, outDim }) {
     // d(gather(x, indices)) = gather(dx, indices).
     // Note: We ignore the tangents for indices, since they are not differentiable.
@@ -275,6 +287,50 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
       [gather(x, indices, axis, outDim)],
       [gather(dx, indicesRef, axis, outDim)],
     ];
+  },
+  [Primitive.Transpose]: linearTangentsJvp(Primitive.Transpose),
+  [Primitive.Broadcast]: linearTangentsJvp(Primitive.Broadcast),
+  [Primitive.Reshape]: linearTangentsJvp(Primitive.Reshape),
+  [Primitive.Flip]: linearTangentsJvp(Primitive.Flip),
+  [Primitive.Shrink]: linearTangentsJvp(Primitive.Shrink),
+  [Primitive.Pad]: linearTangentsJvp(Primitive.Pad),
+  [Primitive.Sort]([x], [dx]) {
+    // Propagate both primals and derivatives along the sorted order.
+    const [y, idx] = argsort(x);
+    return [[y], [gather(dx, [idx], [-1], -1)]];
+  },
+  [Primitive.Argsort]([x], [dx]) {
+    const [y, idx] = argsort(x);
+    return [
+      [y, idx.ref],
+      [gather(dx, [idx.ref], [-1], -1), zerosLike(idx)],
+    ];
+  },
+  [Primitive.TriangularSolve]([a, b], [da, db], { unitDiagonal }) {
+    // A @ X.T = B.T  =>  dA @ X.T + A @ dX.T = dB.T
+    // So: A @ dX.T = dB.T - dA @ X.T
+    // Therefore: dX.T = A^-1 @ (dB.T - dA @ X.T)
+    const x = triangularSolve(a.ref, b, { unitDiagonal }); // (A^-1 @ B.T).T
+    const dax = batchMatmulT(da, x.ref); // dA @ X.T
+    const rhsT = db.sub(mT(dax)); // (dB.T - dA @ X.T).T
+    const dx = triangularSolve(a, rhsT, { unitDiagonal });
+    return [[x], [dx]];
+  },
+  [Primitive.Cholesky]([a], [da]) {
+    // If L = cholesky(A), so that A = L @ L^T, then
+    // dL = L @ tril(S - 0.5 * diag(S)),
+    //   where S = L^{-1} @ dA @ L^{-T}
+    const L = cholesky(a.ref);
+    da = da.ref.add(mT(da)).mul(0.5); // Symmetrize dA for grad
+    const W = triangularSolve(L.ref, da, { lower: true }); // (L^-1 @ dA.T).T = dA @ L^-T
+    const ST = triangularSolve(L.ref, mT(W), { lower: true });
+    const dL = batchMatmulT(
+      L.ref,
+      triu(ST.ref as any, 1)
+        .add(triu(ST as any))
+        .mul(0.5),
+    );
+    return [[L], [dL]];
   },
   [Primitive.Jit](primals, tangents, { name, jaxpr }) {
     const newJaxpr = jvpJaxpr(jaxpr);

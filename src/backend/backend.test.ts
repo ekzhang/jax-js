@@ -41,7 +41,7 @@ suite.each(devices)("device:%s", (device) => {
       let arg1 = accessorGlobal(DType.Float32, 0, shape, [gidx]);
       let arg2 = accessorGlobal(DType.Float32, 1, shape.flip([true]), [gidx]);
 
-      const exe1 = await backend.prepare(
+      const exe1 = await backend.prepareKernel(
         new Kernel(2, 3, AluExp.mul(arg1, arg2)),
       );
       backend.dispatch(exe1, [a, b], [c]);
@@ -49,7 +49,7 @@ suite.each(devices)("device:%s", (device) => {
       const { buffer: buf } = await backend.read(c);
       expect(new Float32Array(buf)).toEqual(new Float32Array([6, 10, 12]));
 
-      const exe2 = await backend.prepare(
+      const exe2 = await backend.prepareKernel(
         new Kernel(2, 3, AluExp.add(arg1, arg2)),
       );
       backend.dispatch(exe2, [a, b], [c]);
@@ -59,7 +59,7 @@ suite.each(devices)("device:%s", (device) => {
       // Now try it with GlobalView.
       arg1 = AluExp.globalView(DType.Float32, 0, shape, [gidx]);
       arg2 = AluExp.globalView(DType.Float32, 1, shape.flip([true]), [gidx]);
-      const exe3 = await backend.prepare(
+      const exe3 = await backend.prepareKernel(
         new Kernel(2, 3, AluExp.mul(arg1, arg2)),
       );
       backend.dispatch(exe3, [a, b], [c]);
@@ -76,7 +76,7 @@ suite.each(devices)("device:%s", (device) => {
     const backend = getBackend(device);
     const a = backend.malloc(200 * 4);
     try {
-      const exe = await backend.prepare(
+      const exe = await backend.prepareKernel(
         new Kernel(0, 200, AluExp.cast(DType.Float32, AluVar.gidx)),
       );
       backend.dispatch(exe, [], [a]);
@@ -91,7 +91,7 @@ suite.each(devices)("device:%s", (device) => {
     const backend = getBackend(device);
     const a = backend.malloc(4 * 4);
     try {
-      const exe = backend.prepareSync(
+      const exe = backend.prepareKernelSync(
         new Kernel(0, 4, AluExp.cast(DType.Float32, AluVar.gidx)),
       );
       backend.dispatch(exe, [], [a]);
@@ -145,7 +145,7 @@ suite.each(devices)("device:%s", (device) => {
       let reduction = new Reduction(DType.Float32, AluOp.Add, 2);
       let kernel = new Kernel(1, 3, exp, reduction);
 
-      const exe = backend.prepareSync(kernel);
+      const exe = backend.prepareKernelSync(kernel);
       backend.dispatch(exe, [a], [output]);
 
       const buf = backend.readSync(output).buffer;
@@ -159,7 +159,7 @@ suite.each(devices)("device:%s", (device) => {
         AluExp.add(AluVar.acc(DType.Float32), AluExp.f32(1)),
       );
       kernel = new Kernel(1, 3, exp, reduction);
-      const exe2 = backend.prepareSync(kernel);
+      const exe2 = backend.prepareKernelSync(kernel);
       backend.dispatch(exe2, [a], [output]);
 
       const buf2 = backend.readSync(output).buffer;
@@ -193,7 +193,7 @@ suite.each(devices)("device:%s", (device) => {
       const reduction = new Reduction(DType.Float32, AluOp.Add, n);
       const kernel = new Kernel(1, n * n, exp, reduction);
 
-      const exe = await backend.prepare(kernel);
+      const exe = await backend.prepareKernel(kernel);
       backend.dispatch(exe, [a], [b]);
 
       const result = new Float32Array((await backend.read(b)).buffer);
