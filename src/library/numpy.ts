@@ -142,6 +142,70 @@ export const lessEqual = core.lessEqual as (
   x: ArrayLike,
   y: ArrayLike,
 ) => Array;
+
+/**
+ * Compute the truth value of x AND y element-wise.
+ *
+ * @param x - Input array.
+ * @param y - Input array.
+ * @returns Boolean array of the same shape.
+ */
+export function logicalAnd(x: ArrayLike, y: ArrayLike): Array {
+  // x AND y = NOT(NOT(x) OR NOT(y)) = NOT(x == 0 OR y == 0)
+  // Simpler: x != 0 AND y != 0, implemented as NOT((x == 0) OR (y == 0))
+  const xBool = notEqual(x, 0);
+  const yBool = notEqual(y, 0);
+  // AND: both must be true, so use where with explicit bools
+  return where(xBool, yBool, false).astype(DType.Bool);
+}
+
+export { logicalAnd as logical_and };
+
+/**
+ * Compute the truth value of x OR y element-wise.
+ *
+ * @param x - Input array.
+ * @param y - Input array.
+ * @returns Boolean array of the same shape.
+ */
+export function logicalOr(x: ArrayLike, y: ArrayLike): Array {
+  // x OR y: if x is truthy return true, else return y's truthiness
+  const xBool = notEqual(x, 0);
+  const yBool = notEqual(y, 0);
+  return where(xBool, true, yBool).astype(DType.Bool);
+}
+
+export { logicalOr as logical_or };
+
+/**
+ * Compute the truth value of NOT x element-wise.
+ *
+ * @param x - Input array.
+ * @returns Boolean array of the same shape.
+ */
+export function logicalNot(x: ArrayLike): Array {
+  // NOT x = x == 0
+  return equal(x, 0);
+}
+
+export { logicalNot as logical_not };
+
+/**
+ * Compute the truth value of x XOR y element-wise.
+ *
+ * @param x - Input array.
+ * @param y - Input array.
+ * @returns Boolean array of the same shape.
+ */
+export function logicalXor(x: ArrayLike, y: ArrayLike): Array {
+  // XOR is true when x and y differ in truthiness
+  const xBool = notEqual(x, 0);
+  const yBool = notEqual(y, 0);
+  return notEqual(xBool, yBool);
+}
+
+export { logicalXor as logical_xor };
+
 /** @function Element-wise ternary operator, evaluates to `x` if cond else `y`. */
 export const where = core.where as (
   cond: ArrayLike,
