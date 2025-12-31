@@ -20,3 +20,13 @@ export {
   trace,
   type TraceOptions,
 } from "./transform";
+export {
+  type NormOrd,
+  treeBiasCorrection,
+  treeMax,
+  treeNorm,
+  treeOnesLike,
+  treeSum,
+  treeUpdateMoment,
+  treeZerosLike,
+} from "./treeUtils";
