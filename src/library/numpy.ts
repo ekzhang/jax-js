@@ -617,9 +617,9 @@ export function squeeze(a: ArrayLike, axis: core.Axis = null): Array {
  * @example
  * ```ts
  * const x = np.array([1, 2]);
- * np.expand_dims(x, 0); // Shape [1, 2]
- * np.expand_dims(x, 1); // Shape [2, 1]
- * np.expand_dims(x, [0, 2]); // Shape [1, 2, 1]
+ * np.expandDims(x, 0); // Shape [1, 2]
+ * np.expandDims(x, 1); // Shape [2, 1]
+ * np.expandDims(x, [0, 2]); // Shape [1, 2, 1]
  * ```
  */
 export function expandDims(a: ArrayLike, axis: number | number[]): Array {
@@ -656,8 +656,6 @@ export function expandDims(a: ArrayLike, axis: number | number[]): Array {
 
   return reshape(a, newShape);
 }
-
-export { expandDims as expand_dims };
 
 /**
  * Repeat each element of an array after themselves.
