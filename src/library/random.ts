@@ -121,6 +121,21 @@ export function bernoulli(
 
 /**
  * @function
+ * Sample from a Cauchy distribution with location 0 and scale 1.
+ *
+ * Uses inverse transform sampling: `x = tan(π * (u - 0.5))` where u ~ Uniform(0, 1).
+ */
+export const cauchy = jit(
+  function cauchy(key: Array, shape: number[] = []): Array {
+    const u = uniform(key, shape);
+    // Inverse CDF of Cauchy: tan(π * (u - 0.5))
+    return tan(u.sub(0.5).mul(Math.PI));
+  },
+  { staticArgnums: [1] },
+);
+
+/**
+ * @function
  * Sample exponential random values according to `p(x) = exp(-x)`.
  */
 export const exponential = jit(
@@ -133,39 +148,16 @@ export const exponential = jit(
 
 /**
  * @function
- * Sample random values according to `p(x) = 1/sqrt(2pi) * exp(-x^2/2)`.
+ * Sample from a Gumbel distribution with location 0 and scale 1.
  *
- * Unlike JAX, this uses the Box-Muller transform. JAX uses the erf_inv primitive instead and
- * directly inverts the CDF, but we don't have support for that yet. Outputs will not be
- * bitwise identical to JAX.
+ * Uses inverse transform sampling: `x = -log(-log(u))` where u ~ Uniform(0, 1).
  */
-export const normal = jit(
-  function normal(key: Array, shape: number[] = []): Array {
-    // Box-Muller transform:
-    //   z0 = sqrt(-2 * log(u1)) * cos(2pi * u2)
-    //   z1 = sqrt(-2 * log(u1)) * sin(2pi * u2)
-    // We only use z0 for simplicity.
-    const [k1, k2] = split(key, 2);
-    const u1 = uniform(k1, shape);
-    const u2 = uniform(k2, shape);
-    const radius = sqrt(log1p(negative(u1)).mul(-2)); // taking 1-u1 to avoid log(0)
-    const theta = u2.mul(2 * Math.PI);
-    return radius.mul(cos(theta)) as Array;
-  },
-  { staticArgnums: [1] },
-);
-
-/**
- * @function
- * Sample from a Cauchy distribution with location 0 and scale 1.
- *
- * Uses inverse transform sampling: `x = tan(π * (u - 0.5))` where u ~ Uniform(0, 1).
- */
-export const cauchy = jit(
-  function cauchy(key: Array, shape: number[] = []): Array {
+export const gumbel = jit(
+  function gumbel(key: Array, shape: number[] = []): Array {
     const u = uniform(key, shape);
-    // Inverse CDF of Cauchy: tan(π * (u - 0.5))
-    return tan(u.sub(0.5).mul(Math.PI));
+    // Use -log(1-u) instead of -log(u) to avoid log(0) at u=0
+    // Then the formula becomes -log(-log(1-u))
+    return negative(log(negative(log1p(negative(u)))));
   },
   { staticArgnums: [1] },
 );
@@ -194,16 +186,24 @@ export const laplace = jit(
 
 /**
  * @function
- * Sample from a Gumbel distribution with location 0 and scale 1.
+ * Sample random values according to `p(x) = 1/sqrt(2pi) * exp(-x^2/2)`.
  *
- * Uses inverse transform sampling: `x = -log(-log(u))` where u ~ Uniform(0, 1).
+ * Unlike JAX, this uses the Box-Muller transform. JAX uses the erf_inv primitive instead and
+ * directly inverts the CDF, but we don't have support for that yet. Outputs will not be
+ * bitwise identical to JAX.
  */
-export const gumbel = jit(
-  function gumbel(key: Array, shape: number[] = []): Array {
-    const u = uniform(key, shape);
-    // Use -log(1-u) instead of -log(u) to avoid log(0) at u=0
-    // Then the formula becomes -log(-log(1-u))
-    return negative(log(negative(log1p(negative(u)))));
+export const normal = jit(
+  function normal(key: Array, shape: number[] = []): Array {
+    // Box-Muller transform:
+    //   z0 = sqrt(-2 * log(u1)) * cos(2pi * u2)
+    //   z1 = sqrt(-2 * log(u1)) * sin(2pi * u2)
+    // We only use z0 for simplicity.
+    const [k1, k2] = split(key, 2);
+    const u1 = uniform(k1, shape);
+    const u2 = uniform(k2, shape);
+    const radius = sqrt(log1p(negative(u1)).mul(-2)); // taking 1-u1 to avoid log(0)
+    const theta = u2.mul(2 * Math.PI);
+    return radius.mul(cos(theta)) as Array;
   },
   { staticArgnums: [1] },
 );

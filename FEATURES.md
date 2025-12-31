@@ -574,7 +574,7 @@ modeling their transcendental CDFs (e.g., normal via Box-Muller).
 | `binomial`             | 🟠      |       |
 | `bits`                 | 🟢      |       |
 | `categorical`          | 🟠      |       |
-| `cauchy`               | 🟠      |       |
+| `cauchy`               | 🟢      |       |
 | `chisquare`            | 🟠      |       |
 | `choice`               | 🟠      |       |
 | `dirichlet`            | 🟠      |       |
@@ -584,8 +584,8 @@ modeling their transcendental CDFs (e.g., normal via Box-Muller).
 | `gamma`                | 🟠      |       |
 | `generalized_normal`   | 🟠      |       |
 | `geometric`            | 🟠      |       |
-| `gumbel`               | 🟠      |       |
-| `laplace`              | 🟠      |       |
+| `gumbel`               | 🟢      |       |
+| `laplace`              | 🟢      |       |
 | `loggamma`             | 🟠      |       |
 | `logistic`             | 🟠      |       |
 | `lognormal`            | 🟠      |       |

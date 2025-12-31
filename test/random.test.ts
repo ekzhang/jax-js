@@ -97,7 +97,7 @@ suite.each(devices)("device:%s", (device) => {
 
   test("cauchy distribution", () => {
     const key = random.key(999);
-    const count = 10000;
+    const count = 50000;
     const samples: number[] = random.cauchy(key, [count]).js();
 
     // Cauchy has heavy tails, so we can't use mean/variance tests.
@@ -108,14 +108,14 @@ suite.each(devices)("device:%s", (device) => {
     const median = sorted[Math.floor(count * 0.5)];
     const q3 = sorted[Math.floor(count * 0.75)];
 
-    expect(median).toBeCloseTo(0, 0); // Median should be near 0
-    expect(q1).toBeCloseTo(-1, 0); // 25th percentile should be near -1
-    expect(q3).toBeCloseTo(1, 0); // 75th percentile should be near 1
+    expect(median).toBeCloseTo(0, 1); // Median should be near 0
+    expect(q1).toBeCloseTo(-1, 1); // 25th percentile should be near -1
+    expect(q3).toBeCloseTo(1, 1); // 75th percentile should be near 1
   });
 
   test("laplace distribution", () => {
     const key = random.key(888);
-    const count = 5000;
+    const count = 50000;
     const samples: number[] = random.laplace(key, [count]).js();
 
     // Laplace(0, 1) has mean 0 and variance 2
@@ -124,12 +124,12 @@ suite.each(devices)("device:%s", (device) => {
       samples.reduce((a, b) => a + (b - mean) ** 2, 0) / (count - 1);
 
     expect(mean).toBeCloseTo(0, 1);
-    expect(variance).toBeCloseTo(2, 0); // variance = 2 * scale^2 = 2
+    expect(variance).toBeCloseTo(2, 0); // variance = 2 * scale^2 = 2, relaxed to 0 decimal places
   });
 
   test("gumbel distribution", () => {
     const key = random.key(777);
-    const count = 5000;
+    const count = 20000;
     const samples: number[] = random.gumbel(key, [count]).js();
 
     // Gumbel(0, 1) has mean = Euler-Mascheroni constant ≈ 0.5772
@@ -140,6 +140,6 @@ suite.each(devices)("device:%s", (device) => {
       samples.reduce((a, b) => a + (b - mean) ** 2, 0) / (count - 1);
 
     expect(mean).toBeCloseTo(eulerGamma, 1);
-    expect(variance).toBeCloseTo(Math.PI ** 2 / 6, 0);
+    expect(variance).toBeCloseTo(Math.PI ** 2 / 6, 1);
   });
 });
