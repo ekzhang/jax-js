@@ -55,31 +55,16 @@ export function treeBiasCorrection(
 /** Sum all elements across all arrays in a pytree. */
 export function treeSum(tr: JsTree<np.Array>): np.Array {
   const [leaves] = tree.flatten(tr);
-  let total: np.Array | null = null;
-  for (const leaf of leaves) {
-    const leafSum = np.sum(leaf);
-    if (total === null) {
-      total = leafSum;
-    } else {
-      total = np.add(total, leafSum);
-    }
-  }
-  return total ?? np.array(0.0);
+  return leaves.reduce((total, leaf) => total.add(np.sum(leaf)), np.array(0.0));
 }
 
 /** Max of all elements across all arrays in a pytree. */
 export function treeMax(tr: JsTree<np.Array>): np.Array {
   const [leaves] = tree.flatten(tr);
-  let maxVal: np.Array | null = null;
-  for (const leaf of leaves) {
-    const leafMax = np.max(leaf);
-    if (maxVal === null) {
-      maxVal = leafMax;
-    } else {
-      maxVal = np.maximum(maxVal, leafMax);
-    }
-  }
-  return maxVal ?? np.array(-Infinity);
+  return leaves.reduce(
+    (maxVal, leaf) => np.maximum(maxVal, np.max(leaf)),
+    np.array(-Infinity),
+  );
 }
 
 export type NormOrd = 1 | 2 | "inf" | "infinity" | number;

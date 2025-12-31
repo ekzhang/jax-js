@@ -38,7 +38,7 @@ test("clipByGlobalNorm: handles multi-dimensional gradients", () => {
   const [clipped] = clipper.update(updates, state);
 
   expect(clipped[0]).toBeAllclose([[1.08, 1.44]], { atol: 0.01 });
-  expect(clipped[1]).toBeAllclose([[1.80, 4.31]], { atol: 0.01 });
+  expect(clipped[1]).toBeAllclose([[1.8, 4.31]], { atol: 0.01 });
 });
 
 test("clipByGlobalNorm: zero gradients", () => {
