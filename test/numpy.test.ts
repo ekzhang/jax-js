@@ -1444,6 +1444,38 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.sinc()", () => {
+    test("sinc(0) = 1", () => {
+      expect(np.sinc(0).js()).toBeCloseTo(1, 5);
+    });
+
+    test("sinc at integer values is 0", () => {
+      // sinc(n) = sin(πn) / (πn) = 0 for non-zero integers
+      const x = np.array([1, 2, 3, -1, -2, -3]);
+      const result: number[] = np.sinc(x).js();
+      for (const val of result) {
+        expect(val).toBeCloseTo(0, 5);
+      }
+    });
+
+    test("sinc at 0.5", () => {
+      // sinc(0.5) = sin(π/2) / (π/2) = 1 / (π/2) = 2/π
+      expect(np.sinc(0.5).js()).toBeCloseTo(2 / Math.PI, 5);
+    });
+
+    test("sinc is symmetric", () => {
+      const x = np.array([0.1, 0.5, 1.5, 2.5]);
+      const negX = np.array([-0.1, -0.5, -1.5, -2.5]);
+      expect(np.sinc(x).js()).toBeAllclose(np.sinc(negX).js());
+    });
+
+    test("sinc on array", () => {
+      const x = np.array([0, 0.5, 1]);
+      const expected = [1, 2 / Math.PI, 0];
+      expect(np.sinc(x).js()).toBeAllclose(expected);
+    });
+  });
+
   suite("jax.numpy.atan()", () => {
     test("arctan values", () => {
       const vals = [-1000, -100, -10, -1, 0, 1, 10, 100, 1000, Infinity];

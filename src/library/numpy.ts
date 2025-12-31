@@ -1300,6 +1300,25 @@ export function tan(x: ArrayLike): Array {
   return sin(x.ref).div(cos(x));
 }
 
+/**
+ * @function
+ * Return the normalized sinc function.
+ *
+ * The sinc function is defined as `sin(πx) / (πx)` for `x != 0`, and `1` for `x = 0`.
+ * This is the normalized sinc function commonly used in signal processing.
+ *
+ * **Note:** JVP is not supported at x=0 due to discontinuous derivative. This
+ * requires a custom JVP rule to handle properly (see JAX implementation).
+ *
+ * @param x - Input array.
+ * @returns Array with sinc(x) values.
+ */
+export const sinc = jit(function sinc(x: Array): Array {
+  const pix = x.ref.mul(Math.PI);
+  // sinc(0) = 1, otherwise sin(πx) / (πx)
+  return where(equal(x, 0), 1, sin(pix.ref).div(pix));
+});
+
 /** Element-wise inverse cosine function (inverse of cos). */
 export function acos(x: ArrayLike): Array {
   return subtract(pi / 2, asin(x));

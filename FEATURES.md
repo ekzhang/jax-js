@@ -410,7 +410,7 @@ Most operations behave the same way as they do in JAX.
 | `sign`                | 🟢      |                                         |
 | `signbit`             | 🔴      |                                         |
 | `sin`                 | 🟢      |                                         |
-| `sinc`                | 🟠      |                                         |
+| `sinc`                | 🟡      | JVP not supported at x=0                |
 | `sinh`                | 🟢      |                                         |
 | `size`                | 🟢      |                                         |
 | `sort`                | 🟢      | sorting                                 |
