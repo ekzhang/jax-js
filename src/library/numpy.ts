@@ -1366,6 +1366,31 @@ export function trueDivide(x: ArrayLike, y: ArrayLike): Array {
 export { trueDivide as divide };
 
 /**
+ * Return the largest integer smaller or equal to the division of the inputs.
+ *
+ * The result is always rounded towards negative infinity.
+ *
+ * For floating-point inputs, this is equivalent to `floor(x / y)`.
+ * For integer inputs, we use `(x - remainder(x, y)) / y` to handle
+ * negative values correctly (note: may overflow near int32 boundaries).
+ *
+ * @param x - Dividend array.
+ * @param y - Divisor array.
+ * @returns Element-wise floor division of x by y.
+ */
+export function floorDivide(x: ArrayLike, y: ArrayLike): Array {
+  x = fudgeArray(x);
+  y = fudgeArray(y);
+  if (isFloatDtype(x.dtype) || isFloatDtype(y.dtype)) {
+    // For floats, floor(x / y) works correctly
+    return floor(trueDivide(x, y));
+  }
+  // For integers, use (x - remainder(x, y)) / y to round toward -infinity
+  // This avoids the truncation behavior of idiv which rounds toward zero
+  return subtract(x, remainder(x.ref, y.ref)).div(y) as Array;
+}
+
+/**
  * @function
  * Calculate element-wise floating-point modulo operation.
  */

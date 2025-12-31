@@ -234,7 +234,7 @@ Most operations behave the same way as they do in JAX.
 | `flipud`              | 🟢      |                                         |
 | `float_power`         | 🟠      |                                         |
 | `floor`               | 🟢      |                                         |
-| `floor_divide`        | 🟠      |                                         |
+| `floor_divide`        | 🟢      |                                         |
 | `fmax`                | 🟠      | use `maximum`                           |
 | `fmin`                | 🟠      | use `minimum`                           |
 | `fmod`                | 🟢      |                                         |
