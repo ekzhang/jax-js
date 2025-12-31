@@ -34,6 +34,8 @@ import {
 import {
   AbstractValue,
   CompareOp,
+  exp as coreExp,
+  mul as coreMul,
   getAval,
   ndim,
   newMain,
@@ -1597,6 +1599,33 @@ export function linspace(
     backend: getBackend(device),
     committed: device != undefined,
   });
+}
+
+/**
+ * Return numbers spaced evenly on a log scale.
+ *
+ * In linear space, the sequence starts at `base ** start` and ends at
+ * `base ** stop` (see `endpoint` below).
+ *
+ * @param start - `base ** start` is the starting value of the sequence.
+ * @param stop - `base ** stop` is the final value of the sequence, unless `endpoint` is false.
+ * @param num - Number of samples to generate. Default is 50.
+ * @param endpoint - If true, `stop` is the last sample. Otherwise, it is not included. Default is true.
+ * @param base - The base of the log space. Default is 10.
+ * @returns Array of evenly spaced values on a log scale.
+ */
+export function logspace(
+  start: number,
+  stop: number,
+  num: number = 50,
+  endpoint: boolean = true,
+  base: number = 10,
+  { dtype, device }: DTypeAndDevice = {},
+) {
+  const y = linspace(start, stop, num, endpoint, { dtype, device });
+  // base ** y = exp(log(base) * y)
+  const logBase = Math.log(base);
+  return coreExp(coreMul(y, logBase)) as Array;
 }
 
 export function aluCompare(a: AluExp, b: AluExp, op: CompareOp): AluExp {
