@@ -1746,6 +1746,84 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.all()", () => {
+    test("returns true when all elements are true", () => {
+      const x = np.array([true, true, true]);
+      expect(np.all(x).js()).toEqual(true);
+    });
+
+    test("returns false when any element is false", () => {
+      const x = np.array([true, false, true]);
+      expect(np.all(x).js()).toEqual(false);
+    });
+
+    test("works along axis", () => {
+      const x = np.array([
+        [true, false],
+        [true, true],
+      ]);
+      expect(np.all(x.ref, 0).js()).toEqual([true, false]);
+      expect(np.all(x, 1).js()).toEqual([false, true]);
+    });
+
+    test("works with numeric arrays (truthy values)", () => {
+      const x = np.array([1, 2, 3]);
+      expect(np.all(x).js()).toEqual(true);
+
+      const y = np.array([1, 0, 3]);
+      expect(np.all(y).js()).toEqual(false);
+    });
+
+    test("supports keepdims", () => {
+      const x = np.array([
+        [true, true],
+        [true, false],
+      ]);
+      const result = np.all(x, 1, { keepdims: true });
+      expect(result.shape).toEqual([2, 1]);
+      expect(result.js()).toEqual([[true], [false]]);
+    });
+  });
+
+  suite("jax.numpy.any()", () => {
+    test("returns true when any element is true", () => {
+      const x = np.array([false, true, false]);
+      expect(np.any(x).js()).toEqual(true);
+    });
+
+    test("returns false when all elements are false", () => {
+      const x = np.array([false, false, false]);
+      expect(np.any(x).js()).toEqual(false);
+    });
+
+    test("works along axis", () => {
+      const x = np.array([
+        [false, false],
+        [true, false],
+      ]);
+      expect(np.any(x.ref, 0).js()).toEqual([true, false]);
+      expect(np.any(x, 1).js()).toEqual([false, true]);
+    });
+
+    test("works with numeric arrays (truthy values)", () => {
+      const x = np.array([0, 0, 0]);
+      expect(np.any(x).js()).toEqual(false);
+
+      const y = np.array([0, 1, 0]);
+      expect(np.any(y).js()).toEqual(true);
+    });
+
+    test("supports keepdims", () => {
+      const x = np.array([
+        [false, false],
+        [true, false],
+      ]);
+      const result = np.any(x, 1, { keepdims: true });
+      expect(result.shape).toEqual([2, 1]);
+      expect(result.js()).toEqual([[false], [true]]);
+    });
+  });
+
   suite("jax.numpy.argsort()", () => {
     test("argsorts 1D array", () => {
       const x = np.array([3, 1, 4, 2, 5]);

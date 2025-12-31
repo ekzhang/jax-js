@@ -522,15 +522,31 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
       for (let j = 1; j < unroll; j++) {
         if (re.op === AluOp.Add) rhs = `${rhs} + ${items[i][j]}`;
         else if (re.op === AluOp.Mul) rhs = `${rhs} * ${items[i][j]}`;
-        else if (re.op === AluOp.Min) rhs = `min(${rhs}, ${items[i][j]})`;
-        else if (re.op === AluOp.Max) rhs = `max(${rhs}, ${items[i][j]})`;
-        else throw new Error(`Unsupported reduction op: ${re.op}`);
+        else if (re.op === AluOp.Min) {
+          // For booleans, min is AND; for numerics, use min()
+          rhs =
+            re.dtype === DType.Bool
+              ? `(${rhs} && ${items[i][j]})`
+              : `min(${rhs}, ${items[i][j]})`;
+        } else if (re.op === AluOp.Max) {
+          // For booleans, max is OR; for numerics, use max()
+          rhs =
+            re.dtype === DType.Bool
+              ? `(${rhs} || ${items[i][j]})`
+              : `max(${rhs}, ${items[i][j]})`;
+        } else throw new Error(`Unsupported reduction op: ${re.op}`);
       }
       if (re.op === AluOp.Add) emit(`${acc[i]} += ${rhs};`);
       else if (re.op === AluOp.Mul) emit(`${acc[i]} *= ${rhs};`);
-      else if (re.op === AluOp.Min) emit(`${acc[i]} = min(${acc[i]}, ${rhs});`);
-      else if (re.op === AluOp.Max) emit(`${acc[i]} = max(${acc[i]}, ${rhs});`);
-      else throw new Error(`Unsupported reduction op: ${re.op}`);
+      else if (re.op === AluOp.Min) {
+        // For booleans, min is AND; for numerics, use min()
+        if (re.dtype === DType.Bool) emit(`${acc[i]} = ${acc[i]} && ${rhs};`);
+        else emit(`${acc[i]} = min(${acc[i]}, ${rhs});`);
+      } else if (re.op === AluOp.Max) {
+        // For booleans, max is OR; for numerics, use max()
+        if (re.dtype === DType.Bool) emit(`${acc[i]} = ${acc[i]} || ${rhs};`);
+        else emit(`${acc[i]} = max(${acc[i]}, ${rhs});`);
+      } else throw new Error(`Unsupported reduction op: ${re.op}`);
     }
     emit(popIndent, "}");
 

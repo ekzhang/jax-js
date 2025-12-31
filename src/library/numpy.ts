@@ -271,6 +271,38 @@ export function max(
   return core.reduce(a, AluOp.Max, axis, opts) as Array;
 }
 
+/**
+ * Test whether all array elements along a given axis evaluate to True.
+ *
+ * Returns a boolean array with the same shape as `a` with the specified axis
+ * removed. If axis is None, returns a scalar.
+ */
+export function all(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: core.ReduceOpts,
+): Array {
+  // Convert to boolean and use min reduction (all true = min is 1)
+  a = fudgeArray(a).astype(DType.Bool);
+  return min(a, axis, opts);
+}
+
+/**
+ * Test whether any array element along a given axis evaluates to True.
+ *
+ * Returns a boolean array with the same shape as `a` with the specified axis
+ * removed. If axis is None, returns a scalar.
+ */
+export function any(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: core.ReduceOpts,
+): Array {
+  // Convert to boolean and use max reduction (any true = max is 1)
+  a = fudgeArray(a).astype(DType.Bool);
+  return max(a, axis, opts);
+}
+
 /** Return the peak-to-peak range along a given axis (`max - min`). */
 export function ptp(
   a: ArrayLike,

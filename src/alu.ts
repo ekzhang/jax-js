@@ -1524,8 +1524,10 @@ export class Reduction implements FpHashable {
   evaluate(...values: any) {
     if (this.dtype === DType.Bool) {
       if (this.op === AluOp.Add || this.op === AluOp.Max) {
-        return values.reduce((a: boolean, b: boolean) => a || b, true);
+        // OR reduction: identity is false
+        return values.reduce((a: boolean, b: boolean) => a || b, false);
       } else if (this.op === AluOp.Mul || this.op === AluOp.Min) {
+        // AND reduction: identity is true
         return values.reduce((a: boolean, b: boolean) => a && b, true);
       }
     } else if (this.dtype === DType.Int32) {
