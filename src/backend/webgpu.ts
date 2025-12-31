@@ -9,7 +9,15 @@ import {
 } from "../backend";
 import { Routine } from "../routine";
 import { tuneWebgpu } from "../tuner";
-import { DEBUG, findPow2, FpHash, mapSetUnion, prod, strip1 } from "../utils";
+import {
+  DEBUG,
+  findPow2,
+  FpHash,
+  mapSetUnion,
+  prod,
+  range,
+  strip1,
+} from "../utils";
 import { erfSrc, threefrySrc } from "./webgpu/builtins";
 import {
   calculateGrid,
@@ -43,7 +51,6 @@ export class WebGPUBackend implements Backend {
   nextSlot: number;
 
   #cachedShaderMap = new Map<bigint, ShaderInfo>();
-  #uniformBgl: GPUBindGroupLayout;
 
   constructor(readonly device: GPUDevice) {
     if (DEBUG >= 3 && device.adapterInfo) {
@@ -59,14 +66,8 @@ export class WebGPUBackend implements Backend {
     this.buffers = new Map();
     this.nextSlot = 1;
 
-    this.#uniformBgl = device.createBindGroupLayout({
-      entries: [
-        {
-          binding: 0, // @group(1) @binding(0) will be for uniform
-          buffer: { type: "uniform", hasDynamicOffset: true },
-          visibility: GPUShaderStage.COMPUTE,
-        },
-      ],
+    device.addEventListener("uncapturederror", (event) => {
+      console.error("Uncaptured error in WebGPU backend:", event.error.message);
     });
   }
 
@@ -171,35 +172,35 @@ export class WebGPUBackend implements Backend {
   }
 
   async prepareKernel(kernel: Kernel): Promise<Executable<ShaderDispatch[]>> {
-    const shaderInfo = this.#cachedShader(kernel);
-    const pipeline = await this.pipelines.prepare(shaderInfo.shader);
-    return new Executable(kernel, [{ ...shaderInfo, pipeline }]);
+    const shader = this.#cachedShader(kernel);
+    const pipeline = await this.pipelines.prepare(shader);
+    return new Executable(kernel, [{ ...shader, pipeline }]);
   }
 
   prepareKernelSync(kernel: Kernel): Executable<ShaderDispatch[]> {
-    const shaderInfo = this.#cachedShader(kernel);
-    const pipeline = this.pipelines.prepareSync(shaderInfo.shader);
-    return new Executable(kernel, [{ ...shaderInfo, pipeline }]);
+    const shader = this.#cachedShader(kernel);
+    const pipeline = this.pipelines.prepareSync(shader);
+    return new Executable(kernel, [{ ...shader, pipeline }]);
   }
 
   async prepareRoutine(
     routine: Routine,
   ): Promise<Executable<ShaderDispatch[]>> {
-    const shaderInfo = createRoutineShader(this.device, routine);
+    const shaders = createRoutineShader(this.device, routine);
     const dispatches = await Promise.all(
-      shaderInfo.map(async (info) => {
-        const pipeline = await this.pipelines.prepare(info.shader);
-        return { ...info, pipeline };
+      shaders.map(async (shader) => {
+        const pipeline = await this.pipelines.prepare(shader);
+        return { ...shader, pipeline };
       }),
     );
     return new Executable(routine, dispatches);
   }
 
   prepareRoutineSync(routine: Routine): Executable<ShaderDispatch[]> {
-    const shaderInfo = createRoutineShader(this.device, routine);
-    const dispatches = shaderInfo.map((info) => {
-      const pipeline = this.pipelines.prepareSync(info.shader);
-      return { ...info, pipeline };
+    const shaders = createRoutineShader(this.device, routine);
+    const dispatches = shaders.map((shader) => {
+      const pipeline = this.pipelines.prepareSync(shader);
+      return { ...shader, pipeline };
     });
     return new Executable(routine, dispatches);
   }
@@ -211,13 +212,7 @@ export class WebGPUBackend implements Backend {
   ): void {
     const inputBuffers = inputs.map((slot) => this.#getBuffer(slot).buffer);
     const outputBuffers = outputs.map((slot) => this.#getBuffer(slot).buffer);
-    pipelineSubmit(
-      this.device,
-      this.#uniformBgl,
-      exe.data,
-      inputBuffers,
-      outputBuffers,
-    );
+    pipelineSubmit(this.device, exe.data, inputBuffers, outputBuffers);
   }
 
   #getBuffer(slot: Slot): { buffer: GPUBuffer; size: number } {
@@ -571,35 +566,33 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
 
   emit(popIndent, "}");
   return {
-    shader: shader.join("\n"),
+    code: shader.join("\n"),
+    numInputs: nargs,
+    numOutputs: 1,
+    hasUniform: false,
     passes: [{ grid: [gridX, gridY] }],
   };
 }
 
 function pipelineSubmit(
   device: GPUDevice,
-  uniformBgl: GPUBindGroupLayout,
   pipelines: ShaderDispatch[],
   inputs: GPUBuffer[],
   outputs: GPUBuffer[],
 ) {
-  if (
-    inputs.length + outputs.length >
-    device.limits.maxStorageBuffersPerShaderStage
-  ) {
-    // This is a hard limit in WebGPU. All platforms have at least 8 storage
-    // buffers per shader stage, and >99% support 10. If you pass more than this
-    // many inputs then you risk running into this limit.
-    const actual = inputs.length + outputs.length;
-    const max = device.limits.maxStorageBuffersPerShaderStage;
-    throw new Error(
-      `Too many buffers (${actual}) for WebGPU pipeline (max: ${max})`,
-    );
-  }
-
   const commandEncoder = device.createCommandEncoder();
-  for (const { pipeline, passes } of pipelines) {
-    const filteredPasses = passes.filter(({ grid }) => prod(grid) > 0);
+  for (const { pipeline, ...shader } of pipelines) {
+    if (
+      inputs.length !== shader.numInputs ||
+      outputs.length !== shader.numOutputs
+    ) {
+      throw new Error(
+        `webgpu: expected ${shader.numInputs} inputs and ${shader.numOutputs} outputs, ` +
+          `got ${inputs.length} inputs and ${outputs.length} outputs`,
+      );
+    }
+
+    const filteredPasses = shader.passes.filter(({ grid }) => prod(grid) > 0);
     if (filteredPasses.length === 0) continue; // No work to do.
 
     const bindGroup = device.createBindGroup({
@@ -617,20 +610,17 @@ function pipelineSubmit(
     });
 
     let uniformBindGroup: GPUBindGroup | null = null;
-    let uniformAlignedSize = 0;
-    if (filteredPasses[0].uniform) {
+    let uniformAlignment = 0;
+    if (shader.hasUniform) {
       // This shader requires uniforms, create a shared buffer with uniform
       // values for each pass of the shader (use dynamic offsets).
       const uniforms = filteredPasses.map(({ uniform }) => uniform!);
-      const [uniformBuffer, alignedSize] = combineUniforms(device, uniforms);
-      uniformAlignedSize = alignedSize;
+      const [uniformBuffer, alignment] = combineUniforms(device, uniforms);
+      uniformAlignment = alignment;
       uniformBindGroup = device.createBindGroup({
-        layout: uniformBgl,
+        layout: pipeline.getBindGroupLayout(1),
         entries: [
-          {
-            binding: 0,
-            resource: { buffer: uniformBuffer, size: uniforms[0].byteLength },
-          },
+          { binding: 0, resource: { buffer: uniformBuffer, size: alignment } },
         ],
       });
     }
@@ -641,7 +631,7 @@ function pipelineSubmit(
       passEncoder.setPipeline(pipeline);
       passEncoder.setBindGroup(0, bindGroup);
       if (uniformBindGroup)
-        passEncoder.setBindGroup(1, uniformBindGroup, [i * uniformAlignedSize]);
+        passEncoder.setBindGroup(1, uniformBindGroup, [i * uniformAlignment]);
       passEncoder.dispatchWorkgroups(grid[0], grid[1]);
       passEncoder.end();
     }
@@ -662,18 +652,18 @@ function combineUniforms(
       throw new Error("webgpu: Uniform mismatch between shader passes");
     }
   }
-  const alignment = device.limits.minUniformBufferOffsetAlignment;
-  const alignedSize = Math.ceil(uniforms[0].byteLength / alignment) * alignment;
+  const minAlign = device.limits.minUniformBufferOffsetAlignment;
+  const alignment = Math.ceil(uniforms[0].byteLength / minAlign) * minAlign;
   const buffer = device.createBuffer({
-    size: alignedSize * uniforms.length,
+    size: alignment * uniforms.length,
     usage: GPUBufferUsage.UNIFORM,
     mappedAtCreation: true,
   });
   const bufferMapped = new Uint8Array(buffer.getMappedRange());
   for (let i = 0; i < uniforms.length; i++)
-    bufferMapped.set(uniforms[i], i * alignedSize);
+    bufferMapped.set(uniforms[i], i * alignment);
   buffer.unmap();
-  return [buffer, alignedSize];
+  return [buffer, alignment];
 }
 
 /**
@@ -693,23 +683,64 @@ class ShaderPipelineCache {
     this.inProgress = new Map();
   }
 
-  async prepare(code: string): Promise<GPUComputePipeline> {
-    const existingPipeline = this.cache.get(code);
+  #getLayout(shader: ShaderInfo): GPUPipelineLayout {
+    if (
+      shader.numInputs + shader.numOutputs >
+      this.device.limits.maxStorageBuffersPerShaderStage
+    ) {
+      // This is a hard limit in WebGPU. All platforms have at least 8 storage
+      // buffers per shader stage, and >99% support 10. If you pass more than this
+      // many inputs then you risk running into this limit.
+      const actual = shader.numInputs + shader.numOutputs;
+      const max = this.device.limits.maxStorageBuffersPerShaderStage;
+      throw new Error(
+        `Too many buffers (${actual}) for WebGPU pipeline (max: ${max})`,
+      );
+    }
+    const bindGroupLayouts: GPUBindGroupLayout[] = [
+      this.device.createBindGroupLayout({
+        entries: range(shader.numInputs + shader.numOutputs).map((i) => ({
+          binding: i,
+          visibility: GPUShaderStage.COMPUTE,
+          buffer: {
+            type: i < shader.numInputs ? "read-only-storage" : "storage",
+          },
+        })),
+      }),
+    ];
+    if (shader.hasUniform) {
+      bindGroupLayouts.push(
+        this.device.createBindGroupLayout({
+          entries: [
+            {
+              binding: 0,
+              visibility: GPUShaderStage.COMPUTE,
+              buffer: { type: "uniform", hasDynamicOffset: true },
+            },
+          ],
+        }),
+      );
+    }
+    return this.device.createPipelineLayout({ bindGroupLayouts });
+  }
+
+  async prepare(shader: ShaderInfo): Promise<GPUComputePipeline> {
+    const existingPipeline = this.cache.get(shader.code);
     if (existingPipeline) return existingPipeline;
 
-    const existingPromise = this.inProgress.get(code);
+    const existingPromise = this.inProgress.get(shader.code);
     if (existingPromise) return await existingPromise;
 
     if (DEBUG >= 2) {
-      console.info("=========== WebGPU shader ===========\n" + code);
+      console.info("=========== WebGPU shader ===========\n" + shader.code);
     }
 
-    const shaderModule = this.device.createShaderModule({ code });
+    const shaderModule = this.device.createShaderModule({ code: shader.code });
     const promise = (async () => {
       this.device.pushErrorScope("validation");
       try {
         const pipeline = await this.device.createComputePipelineAsync({
-          layout: "auto",
+          layout: this.#getLayout(shader),
           compute: {
             module: shaderModule,
             entryPoint: "main",
@@ -721,31 +752,31 @@ class ShaderPipelineCache {
         // This can race with other compilations, but it shouldn't happen in
         // correct code. Any validation error here is a bug in `jax-js`.
         const scope = await this.device.popErrorScope();
-        const emsg = await compileError(shaderModule, scope, code);
+        const emsg = await compileError(shaderModule, scope, shader.code);
         throw new Error(emsg);
       }
     })();
-    this.inProgress.set(code, promise);
+    this.inProgress.set(shader.code, promise);
 
     // This could race against getSync(), but it's okay since shader pipeline
     // creation is deterministic + idempotent.
     const pipeline = await promise;
-    this.cache.set(code, pipeline);
+    this.cache.set(shader.code, pipeline);
     return pipeline;
   }
 
-  prepareSync(code: string): GPUComputePipeline {
-    const existingPipeline = this.cache.get(code);
+  prepareSync(shader: ShaderInfo): GPUComputePipeline {
+    const existingPipeline = this.cache.get(shader.code);
     if (existingPipeline) return existingPipeline;
 
     if (DEBUG >= 2) {
-      console.info("=========== WebGPU shader ===========\n" + code);
+      console.info("=========== WebGPU shader ===========\n" + shader.code);
     }
 
-    const shaderModule = this.device.createShaderModule({ code });
+    const shaderModule = this.device.createShaderModule({ code: shader.code });
     this.device.pushErrorScope("validation");
     const pipeline = this.device.createComputePipeline({
-      layout: "auto",
+      layout: this.#getLayout(shader),
       compute: {
         module: shaderModule,
         entryPoint: "main",
@@ -756,11 +787,11 @@ class ShaderPipelineCache {
       // validation errors should never occur in correct code. Any issues here
       // reflect bugs in jax-js.
       if (scope !== null) {
-        const emsg = await compileError(shaderModule, scope, code);
+        const emsg = await compileError(shaderModule, scope, shader.code);
         console.error(emsg);
       }
     });
-    this.cache.set(code, pipeline);
+    this.cache.set(shader.code, pipeline);
     return pipeline;
   }
 }

@@ -3,7 +3,10 @@
 import { DType } from "../../alu";
 
 export interface ShaderInfo {
-  shader: string; // WGSL shader source code.
+  code: string; // WGSL shader source code.
+  numInputs: number;
+  numOutputs: number;
+  hasUniform: boolean;
   passes: {
     grid: [number, number]; // Grid size (number of workgroups) in x and y.
     uniform?: Uint8Array<ArrayBuffer>; // Optional uniform value.

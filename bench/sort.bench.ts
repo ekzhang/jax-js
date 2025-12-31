@@ -12,8 +12,8 @@ const devices = await init("wasm", "webgpu");
 suite.skipIf(!devices.includes("webgpu"))("gpu sort/argsort", async () => {
   defaultDevice("webgpu");
 
-  const batch = 32768; // GPU supports much more parallelism.
-  const size = 1024;
+  const batch = 32768 / 1024; // GPU supports much more parallelism.
+  const size = 1024 * 1024;
   const a = random.uniform(random.key(0), [batch, size]);
   await blockUntilReady(a);
   afterAll(() => {
@@ -36,7 +36,7 @@ suite.skipIf(!devices.includes("webgpu"))("gpu sort/argsort", async () => {
 suite.skipIf(!devices.includes("wasm"))("cpu sort/argsort", async () => {
   defaultDevice("wasm");
 
-  const batch = 128;
+  const batch = 1024;
   const size = 1024;
   const a = random.uniform(random.key(0), [batch, size]);
   await blockUntilReady(a);
