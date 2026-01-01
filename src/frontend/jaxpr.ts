@@ -562,12 +562,9 @@ export class ClosedJaxpr {
 
 /** Tracer that records its operations to dynamically construct a Jaxpr. */
 class JaxprTracer extends Tracer {
-  // Reference count just for this JaxprTracer, for consistency. We don't want a
-  // function that double-frees a variable to suddenly work after being wrapped
-  // in `jit()` if it wouldn't otherwise work.
-  //
-  // This isn't strictly necessary as JaxprTracer does not hold any resources
-  // that need to be freed.
+  // Reference count for this JaxprTracer. Although the tracer doesn't hold
+  // resources, we wouldn't want a function that double-frees a variable to work
+  // after being wrapped in `jit()` if it wouldn't otherwise be correct.
   #rc: number;
 
   constructor(
