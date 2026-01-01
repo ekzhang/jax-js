@@ -9,6 +9,7 @@ import {
 } from "./base";
 import {
   treeBiasCorrection,
+  treeNorm,
   treeUpdateMoment,
   treeZerosLike,
 } from "./treeUtils";
@@ -111,6 +112,30 @@ export function scaleByLearningRate(
     return scaleBySchedule((count) => m * learningRate(count));
   }
   return scale(m * learningRate);
+}
+
+/** Clip gradients by global norm. */
+export function clipByGlobalNorm(maxNorm: number): GradientTransformation {
+  return {
+    init: initEmptyState,
+    update(updates, state, params) {
+      tree.dispose(params);
+
+      const gNorm = treeNorm(tree.ref(updates));
+      const trigger = np.less(gNorm.ref, maxNorm);
+
+      const clippedUpdates = tree.map(
+        (t: np.Array) =>
+          np.where(trigger.ref, t.ref, t.div(gNorm.ref).mul(maxNorm)),
+        updates,
+      );
+
+      trigger.dispose();
+      gNorm.dispose();
+
+      return [clippedUpdates, state];
+    },
+  };
 }
 
 export type MaskFn = (tree: JsTree<np.Array>) => JsTree<np.Array>;

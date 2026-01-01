@@ -11,6 +11,7 @@ export { l2Loss, squaredError } from "./losses";
 export {
   addDecayedWeights,
   type AddDecayedWeightsOptions,
+  clipByGlobalNorm,
   scale,
   scaleByAdam,
   type ScaleByAdamOptions,
@@ -19,3 +20,13 @@ export {
   trace,
   type TraceOptions,
 } from "./transform";
+export {
+  type NormOrd,
+  treeBiasCorrection,
+  treeMax,
+  treeNorm,
+  treeOnesLike,
+  treeSum,
+  treeUpdateMoment,
+  treeZerosLike,
+} from "./treeUtils";

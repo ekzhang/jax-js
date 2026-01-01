@@ -51,3 +51,44 @@ export function treeBiasCorrection(
   const correction = 1 / (1 - Math.pow(decay, count.item()));
   return tree.map((t: np.Array) => t.mul(correction), moments);
 }
+
+/** Sum all elements across all arrays in a pytree. */
+export function treeSum(tr: JsTree<np.Array>): np.Array {
+  const [leaves] = tree.flatten(tr);
+  return leaves.reduce((total, leaf) => total.add(np.sum(leaf)), np.array(0.0));
+}
+
+/** Max of all elements across all arrays in a pytree. */
+export function treeMax(tr: JsTree<np.Array>): np.Array {
+  const [leaves] = tree.flatten(tr);
+  return leaves.reduce(
+    (maxVal, leaf) => np.maximum(maxVal, np.max(leaf)),
+    np.array(-Infinity),
+  );
+}
+
+export type NormOrd = 1 | 2 | "inf" | "infinity" | number | null;
+
+/** Compute the vector norm of the given ord of a pytree. */
+export function treeNorm(
+  tr: JsTree<np.Array>,
+  ord: NormOrd = null,
+  squared = false,
+): np.Array {
+  if (ord === null || ord === 2) {
+    const squaredTree = tree.map(np.square, tr);
+    const sqNorm = treeSum(squaredTree);
+    return squared ? sqNorm : np.sqrt(sqNorm);
+  } else if (ord === 1) {
+    const absTree = tree.map(np.abs, tr);
+    const result = treeSum(absTree);
+    return squared ? np.square(result) : result;
+  } else if (ord === "inf" || ord === "infinity" || ord === Infinity) {
+    const absTree = tree.map(np.abs, tr);
+    const result = treeMax(absTree);
+    return squared ? np.square(result) : result;
+  } else {
+    tree.dispose(tr);
+    throw new Error(`Unsupported ord: ${ord}`);
+  }
+}
