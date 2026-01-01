@@ -624,36 +624,18 @@ export function squeeze(a: ArrayLike, axis: core.Axis = null): Array {
  */
 export function expandDims(a: ArrayLike, axis: number | number[]): Array {
   const as = shape(a);
-  const axes = typeof axis === "number" ? [axis] : axis;
-  const ndimNew = as.length + axes.length;
+  axis = typeof axis === "number" ? [axis] : axis;
+  axis = normalizeAxis(axis, as.length + axis.length);
 
-  // Normalize axes to positive values
-  const normalizedAxes = axes.map((ax) => {
-    if (ax < -ndimNew || ax >= ndimNew) {
-      throw new Error(
-        `expandDims: axis ${ax} is out of bounds for array with ${ndimNew} dimensions`,
-      );
-    }
-    return ax < 0 ? ax + ndimNew : ax;
-  });
-
-  // Check for duplicate axes
-  const uniqueAxes = new Set(normalizedAxes);
-  if (uniqueAxes.size !== normalizedAxes.length) {
-    throw new Error("expandDims: repeated axis");
-  }
-
-  // Build the new shape by inserting 1s at the specified positions
   const newShape: number[] = [];
   let srcIdx = 0;
-  for (let i = 0; i < ndimNew; i++) {
-    if (uniqueAxes.has(i)) {
+  for (let i = 0; i < as.length + axis.length; i++) {
+    if (axis.includes(i)) {
       newShape.push(1);
     } else {
       newShape.push(as[srcIdx++]);
     }
   }
-
   return reshape(a, newShape);
 }
 
