@@ -23,7 +23,7 @@ suite("jax.makeJaxpr()", () => {
   });
 
   test("tracks a unary function", () => {
-    const { jaxpr } = makeJaxpr((x: np.Array) => np.multiply(x.add(2), x))(
+    const { jaxpr } = makeJaxpr((x: np.Array) => np.multiply(x.ref.add(2), x))(
       np.array([
         [2, 4, 10],
         [1, 1, 1],
@@ -39,8 +39,12 @@ suite("jax.makeJaxpr()", () => {
   });
 
   test("composes with jvp", () => {
-    const f = (x: np.Array) => np.multiply(x.add(2), x);
-    const fdot = (x: np.Array) => jvp(f, [x], [1])[1];
+    const f = (x: np.Array) => np.multiply(x.ref.add(2), x);
+    const fdot = (x: np.Array) => {
+      const [y, dy] = jvp(f, [x.ref], [1]);
+      y.dispose();
+      return dy;
+    };
 
     const { jaxpr } = makeJaxpr(fdot)(np.array(2));
     expect(jaxpr.toString()).toMatchInlineSnapshot(`
@@ -69,8 +73,8 @@ suite("jax.makeJaxpr()", () => {
 
   test("can flatten() nested Jaxprs", () => {
     const f = (x: np.Array) => {
-      const y = x.add(2);
-      return x.mul(x).add(y);
+      const y = x.ref.add(2);
+      return x.ref.mul(x).add(y);
     };
     const jf = jit(f);
 

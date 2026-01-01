@@ -34,6 +34,7 @@ import {
   Trace,
   Tracer,
   TracerValue,
+  UseAfterFreeError,
 } from "./core";
 
 /**
@@ -561,22 +562,42 @@ export class ClosedJaxpr {
 
 /** Tracer that records its operations to dynamically construct a Jaxpr. */
 class JaxprTracer extends Tracer {
+  // Reference count just for this JaxprTracer, for consistency. We don't want a
+  // function that double-frees a variable to suddenly work after being wrapped
+  // in `jit()` if it wouldn't otherwise work.
+  //
+  // This isn't strictly necessary as JaxprTracer does not hold any resources
+  // that need to be freed.
+  #rc: number;
+
   constructor(
     trace: Trace,
     readonly aval: ShapedArray,
   ) {
     super(trace);
+    this.#rc = 1;
   }
 
   toString(): string {
     return `JaxprTracer(${this.aval.toString()})`;
   }
 
-  // JaxprTracer does not hold any resources, no need to be reference counted.
   get ref() {
+    if (this.#rc <= 0) throw new UseAfterFreeError(this);
+    this.#rc++;
     return this;
   }
-  dispose() {}
+  dispose() {
+    if (this.#rc <= 0) throw new UseAfterFreeError(this);
+    this.#rc--;
+  }
+
+  // JaxprTracer can be created from a constant; if the constant is lifted
+  // multiple times we need to increment the reference count each time. We can't
+  // use `.ref` for this as that might raise a `UseAfterFreeError` when rc=0.
+  trackLiftedConstant() {
+    this.#rc++;
+  }
 }
 
 /** Analogous to the 'DynamicJaxprTrace' class in JAX. */
@@ -591,13 +612,16 @@ class JaxprTrace extends Trace {
 
   /** Register a constant / literal in this Jaxpr. */
   getOrMakeConstTracer(val: TracerValue): JaxprTracer {
+    if (!(val instanceof Tracer)) {
+      val = pureArray(val);
+    }
     let tracer = this.builder.constTracers.get(val);
     if (tracer === undefined) {
       tracer = this.builder.newTracer(this, ShapedArray.fromAval(getAval(val)));
-      this.builder.addConst(
-        tracer,
-        val instanceof Tracer ? val.ref : array(val),
-      );
+      this.builder.addConst(tracer, val);
+    } else {
+      val.dispose();
+      tracer.trackLiftedConstant();
     }
     return tracer;
   }
@@ -609,7 +633,10 @@ class JaxprTrace extends Trace {
     tracers: JaxprTracer[],
     params: PrimitiveParams<P>,
   ): JaxprTracer[] {
-    const avalsIn = tracers.map((t) => t.aval);
+    const avalsIn = tracers.map((t) => {
+      t.dispose();
+      return t.aval;
+    });
     const avalsOut = abstractEvalRules[primitive](avalsIn, params);
     const outTracers = avalsOut.map((aval) =>
       this.builder.newTracer(this, aval),
@@ -634,7 +661,7 @@ class JaxprTrace extends Trace {
 class JaxprBuilder {
   eqns: JaxprEqn[] = [];
   tracerToVar: Map<JaxprTracer, Var> = new Map();
-  constTracers: Map<TracerValue, JaxprTracer> = new Map(); // already-seen value -> tracer
+  constTracers: Map<Tracer, JaxprTracer> = new Map(); // already-seen value -> tracer
   constVals: Map<Var, Tracer> = new Map(); // var -> const value
   tracers: JaxprTracer[] = [];
 
