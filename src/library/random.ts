@@ -174,7 +174,7 @@ export const laplace = jit(
     const u = uniform(key, shape);
     // u - 0.5 is in [-0.5, 0.5)
     const centered = u.sub(0.5);
-    const s = sign(centered);
+    const s = sign(centered.ref);
     // |u - 0.5| ranges from 0 to 0.5, so 2*|u-0.5| ranges from 0 to 1
     // We use log1p(-(2*|centered|)) = log(1 - 2*|centered|) to avoid log(0)
     // when centered is close to ±0.5

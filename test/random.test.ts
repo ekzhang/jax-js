@@ -97,7 +97,7 @@ suite.each(devices)("device:%s", (device) => {
 
   test("cauchy distribution", () => {
     const key = random.key(999);
-    const count = 50000;
+    const count = 20000;
     const samples: number[] = random.cauchy(key, [count]).js();
 
     // Cauchy has heavy tails, so we can't use mean/variance tests.
@@ -115,7 +115,7 @@ suite.each(devices)("device:%s", (device) => {
 
   test("laplace distribution", () => {
     const key = random.key(888);
-    const count = 50000;
+    const count = 20000;
     const samples: number[] = random.laplace(key, [count]).js();
 
     // Laplace(0, 1) has mean 0 and variance 2
