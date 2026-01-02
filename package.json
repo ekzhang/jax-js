@@ -1,6 +1,6 @@
 {
   "name": "@jax-js/jax",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Numerical computing and ML in the browser",
   "keywords": [
     "machine learning",
