@@ -1480,6 +1480,22 @@ export const remainder = jit(function remainder(x: Array, y: Array): Array {
   return core.mod(core.mod(x, y.ref).add(y.ref), y) as Array;
 });
 
+/**
+ * Return element-wise quotient and remainder simultaneously.
+ *
+ * Equivalent to `[floorDivide(x, y), remainder(x, y)]`.
+ *
+ * @param x - Dividend array.
+ * @param y - Divisor array.
+ * @returns Tuple of [quotient, remainder].
+ */
+export function divmod(x: ArrayLike, y: ArrayLike): [Array, Array] {
+  const xArr = fudgeArray(x);
+  const yArr = fudgeArray(y);
+  // floorDivide and remainder both consume their inputs, so use .ref for the first call
+  return [floorDivide(xArr.ref, yArr.ref), remainder(xArr, yArr)];
+}
+
 /** Round input to the nearest integer towards zero. */
 export function trunc(x: ArrayLike): Array {
   return core.idiv(x, 1) as Array; // Integer division truncates the decimal part.

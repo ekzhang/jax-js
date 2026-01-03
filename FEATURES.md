@@ -207,7 +207,7 @@ Most operations behave the same way as they do in JAX.
 | `diff`                | 🟠      |                                         |
 | `digitize`            | 🟠      |                                         |
 | `divide`              | 🟢      |                                         |
-| `divmod`              | 🟠      |                                         |
+| `divmod`              | 🟢      |                                         |
 | `dot`                 | 🟢      |                                         |
 | `dsplit`              | 🟠      | `split` is supported                    |
 | `dstack`              | 🟢      |                                         |

@@ -1138,6 +1138,41 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.divmod()", () => {
+    test("returns floor division and remainder", () => {
+      const [q, r] = np.divmod([7, 7, -7, -7], [3, -3, 3, -3]);
+      // floor(7/3)=2, floor(7/-3)=-3, floor(-7/3)=-3, floor(-7/-3)=2
+      expect(q.js()).toEqual([2, -3, -3, 2]);
+      // remainder follows sign of divisor y
+      expect(r.js()).toEqual([1, -2, 2, -1]);
+    });
+
+    test("satisfies invariant x == q*y + r", () => {
+      const xVals = [5, -5, 10, -10];
+      const yVals = [3, 3, 4, 4];
+      const [q, r] = np.divmod(xVals, yVals);
+      // Verify: x == q * y + r
+      const reconstructed = np.add(np.multiply(q, yVals), r);
+      expect(reconstructed.js()).toEqual(xVals);
+    });
+
+    test("works with scalars", () => {
+      const [q, r] = np.divmod(7, 3);
+      expect(q.js()).toBeCloseTo(2, 5);
+      expect(r.js()).toBeCloseTo(1, 5);
+    });
+
+    test("works with int32 dtype", () => {
+      const x = np.array([7, -7], { dtype: np.int32 });
+      const y = np.array([3, 3], { dtype: np.int32 });
+      const [q, r] = np.divmod(x, y);
+      expect(q.js()).toEqual([2, -3]);
+      expect(r.js()).toEqual([1, 2]);
+      expect(q.dtype).toBe(np.int32);
+      expect(r.dtype).toBe(np.int32);
+    });
+  });
+
   suite("jax.numpy.exp()", () => {
     test("computes element-wise exponential", () => {
       const x = np.array([-Infinity, 0, 1, 2, 3]);
