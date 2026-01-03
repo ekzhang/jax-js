@@ -12,7 +12,7 @@ import {
 import { Backend, Slot } from "../backend";
 import { PPrint } from "../pprint";
 import { Routine, Routines } from "../routine";
-import { ShapeTracker, unravelAlu } from "../shape";
+import { Pair, ShapeTracker, unravelAlu } from "../shape";
 import {
   DEBUG,
   deepEqual,
@@ -389,14 +389,14 @@ export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
     if (!rule)
       throw new TypeError(`JIT not implemented for primitive ${eqn.primitive}`);
 
-    let exp: AluExp;
+    let exp: AluExp[];
     let reduction: Reduction | undefined;
 
     if (inputReduction) {
       // Special case: we are in the fused epilogue of a reduction.
       const jv = inputReduction;
-      const newEpilogue = rule(inputExps, inputAvals, eqn.params as any).exp;
-      exp = jv.exp.reindexGids(addArgs(jv.args));
+      const newEpilogue = rule(inputExps, inputAvals, eqn.params as any).exp[0];
+      exp = [jv.exp.reindexGids(addArgs(jv.args))];
       reduction = new Reduction(
         jv.reduction.dtype,
         jv.reduction.op,
@@ -411,24 +411,26 @@ export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
 
     // Then dispatch the kernel, if it is a "black" node as determined from
     // dataflow analysis above.
-    const outVar = eqn.outBinders[0];
-    if (blackNodes.has(outVar)) {
-      const nargs = inputArgs.length;
-      const size = outVar.aval.size;
-      const kernel = new Kernel(nargs, size, exp, reduction);
-      const outId = builder.pushKernel(kernel, inputArgs);
-      ctx.set(outVar, { type: "imm", arg: outId });
-    } else if (reduction) {
-      // Reduction but not black, means it will have an epilogue.
-      ctx.set(outVar, {
-        type: "red",
-        exp: exp,
-        reduction: reduction,
-        args: inputArgs,
-      });
-    } else {
-      // Otherwise, fuse the kernel into the next expression.
-      ctx.set(outVar, { type: "exp", exp: exp, args: inputArgs });
+    for (let i = 0; i < eqn.outBinders.length; i++) {
+      const outVar = eqn.outBinders[i];
+      if (blackNodes.has(outVar)) {
+        const nargs = inputArgs.length;
+        const size = outVar.aval.size;
+        const kernel = new Kernel(nargs, size, exp[i], reduction);
+        const outId = builder.pushKernel(kernel, inputArgs);
+        ctx.set(outVar, { type: "imm", arg: outId });
+      } else if (reduction) {
+        // Reduction but not black, means it will have an epilogue.
+        ctx.set(outVar, {
+          type: "red",
+          exp: exp[i],
+          reduction,
+          args: inputArgs,
+        });
+      } else {
+        // Otherwise, fuse the kernel into the next expression.
+        ctx.set(outVar, { type: "exp", exp: exp[i], args: inputArgs });
+      }
     }
   }
 
@@ -481,7 +483,7 @@ type JitRule<P extends Primitive> = (
   avals: ShapedArray[],
   params: PrimitiveParams<P>,
 ) => {
-  exp: AluExp;
+  exp: AluExp[]; // One expression for each output
   reduction?: Reduction;
 };
 
@@ -543,7 +545,7 @@ function broadcastedJit<P extends Primitive>(
     });
 
     // Then, we can call the function to produce a new expression.
-    return { exp: fn(exps, params) };
+    return { exp: [fn(exps, params)] };
   };
 }
 
@@ -552,7 +554,7 @@ function unopJit<P extends Primitive>(
   fn: (exp: AluExp, params: PrimitiveParams<P>) => AluExp,
 ): JitRule<P> {
   return ([a], [_as], params) => {
-    return { exp: fn(a, params) };
+    return { exp: [fn(a, params)] };
   };
 }
 
@@ -560,7 +562,7 @@ function reshapeJit<P extends Primitive>(
   fn: (st: ShapeTracker, params: PrimitiveParams<P>) => ShapeTracker,
 ): JitRule<P> {
   return ([a], [_as], params) => {
-    return { exp: reshapeViews(a, (st) => fn(st, params)) };
+    return { exp: [reshapeViews(a, (st) => fn(st, params))] };
   };
 }
 
@@ -610,7 +612,7 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
     const perm = keptAxes.concat(shiftedAxes);
     a = reshapeViews(a, (st) => st.permute(perm).reshape(newShape), true);
     const reduction = new Reduction(a.dtype, op, reductionSize);
-    return { exp: a, reduction };
+    return { exp: [a], reduction };
   },
   [Primitive.Pool]: reshapeJit((st, { window, strides }) =>
     pool(st, window, strides),
@@ -629,12 +631,12 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
       AluOp.Add,
       stX.shape[stX.shape.length - 1],
     );
-    return { exp: a, reduction };
+    return { exp: [a], reduction };
   },
   [Primitive.Dot]([a, b], [as, bs]) {
     // Dot is just Mul->Reduce in sequence.
     const k1 = jitRules[Primitive.Mul]([a, b], [as, bs], {});
-    const c = k1.exp;
+    const [c] = k1.exp;
     const cs = promoteAvals(as, bs);
     return jitRules[Primitive.Reduce]([c], [cs], {
       op: AluOp.Add,
@@ -659,10 +661,31 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
     { skipCastIdx: [0] },
   ),
   [Primitive.Concatenate](exps, avals, { axis }) {
-    throw new Error("TODO: JIT for Concatenate");
+    const ndim = avals[0].ndim;
+    const sizes = avals.map((x) => x.shape[axis]);
+    const finalSize = sizes.reduce((a, b) => a + b, 0);
+    const makePadAxis = (start: number, end: number): [number, number][] =>
+      range(ndim).map((i) => (i === axis ? [start, end] : [0, 0]));
+    let cum = 0;
+    const src: AluExp[] = [];
+    for (let i = 0; i < exps.length; i++) {
+      const padding = makePadAxis(cum, finalSize - cum - sizes[i]);
+      src.push(reshapeViews(exps[i], (st) => st.pad(padding)));
+      cum += sizes[i];
+    }
+    return { exp: [src.reduce(AluExp.add)] };
   },
   [Primitive.Split]([a], [as], { axis, sizes }) {
-    throw new Error("TODO: JIT for Split");
+    const exp: AluExp[] = [];
+    let start = 0;
+    for (const size of sizes) {
+      const slice = range(as.ndim).map<Pair>((d) =>
+        d === axis ? [start, start + size] : [0, as.shape[d]],
+      );
+      exp.push(reshapeViews(a, (st) => st.shrink(slice)));
+      start += size;
+    }
+    return { exp };
   },
   [Primitive.RandomBits]: (keys, keyShapes, { shape, mode }) => {
     const mapping = (st: ShapeTracker): ShapeTracker | undefined => {
@@ -674,7 +697,7 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
     const c0 = AluExp.u32(0);
     const c1 = AluExp.cast(DType.Uint32, AluVar.gidx);
     const exp = AluExp.threefry2x32(k0, k1, c0, c1, mode);
-    return { exp };
+    return { exp: [exp] };
   },
   [Primitive.Gather](
     [x, ...indices],
@@ -723,7 +746,7 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
     const [index, valid] = ShapeTracker.fromShape(xs.shape).toAluExp(src);
     if (!valid.resolve())
       throw new Error("internal: expected full validity mask in Gather");
-    return { exp: x.substitute({ gidx: index }) };
+    return { exp: [x.substitute({ gidx: index })] };
   },
   [Primitive.Transpose]: reshapeJit((st, { perm }) => st.permute(perm)),
   [Primitive.Broadcast]: reshapeJit((st, { shape, axis }) =>

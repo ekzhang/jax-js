@@ -991,15 +991,12 @@ export class Array extends Tracer {
         const finalSize = sizes.reduce((a, b) => a + b, 0);
         const makePadAxis = (start: number, end: number): [number, number][] =>
           range(ndim).map((i) => (i === axis ? [start, end] : [0, 0]));
-        let cumulative = 0;
+        let cum = 0;
         const xsPadded: Array[] = [];
         for (let i = 0; i < xs.length; i++) {
-          const padding = makePadAxis(
-            cumulative,
-            finalSize - cumulative - sizes[i],
-          );
+          const padding = makePadAxis(cum, finalSize - cum - sizes[i]);
           xsPadded.push(xs[i].#reshape(xs[i].#st.pad(padding)));
-          cumulative += sizes[i];
+          cum += sizes[i];
         }
         const custom = (exps: AluExp[]) => exps.reduce(AluExp.add);
         return [Array.#naryCustom("concatenate", custom, xsPadded)];
