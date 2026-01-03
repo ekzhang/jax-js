@@ -1140,7 +1140,9 @@ suite.each(devices)("device:%s", (device) => {
 
   suite("jax.numpy.divmod()", () => {
     test("returns floor division and remainder", () => {
-      const [q, r] = np.divmod([7, 7, -7, -7], [3, -3, 3, -3]);
+      const x = np.array([7, 7, -7, -7]);
+      const y = np.array([3, -3, 3, -3]);
+      const [q, r] = np.divmod(x, y);
       // floor(7/3)=2, floor(7/-3)=-3, floor(-7/3)=-3, floor(-7/-3)=2
       expect(q.js()).toEqual([2, -3, -3, 2]);
       // remainder follows sign of divisor y
@@ -1148,12 +1150,12 @@ suite.each(devices)("device:%s", (device) => {
     });
 
     test("satisfies invariant x == q*y + r", () => {
-      const xVals = [5, -5, 10, -10];
-      const yVals = [3, 3, 4, 4];
-      const [q, r] = np.divmod(xVals, yVals);
+      const x = np.array([5, -5, 10, -10]);
+      const y = np.array([3, 3, 4, 4]);
+      const [q, r] = np.divmod(x, y.ref);
       // Verify: x == q * y + r
-      const reconstructed = np.add(np.multiply(q, yVals), r);
-      expect(reconstructed.js()).toEqual(xVals);
+      const reconstructed = np.add(np.multiply(q, y), r);
+      expect(reconstructed.js()).toEqual([5, -5, 10, -10]);
     });
 
     test("works with scalars", () => {
