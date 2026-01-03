@@ -1346,6 +1346,109 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.split()", () => {
+    test("splits into equal parts with integer", () => {
+      const x = np.arange(6);
+      const [a, b, c] = np.split(x, 3);
+      expect(a.js()).toEqual([0, 1]);
+      expect(b.js()).toEqual([2, 3]);
+      expect(c.js()).toEqual([4, 5]);
+    });
+
+    test("splits 2D array along axis 0", () => {
+      const x = np.arange(12).reshape([4, 3]);
+      const [a, b] = np.split(x, 2, 0);
+      expect(a.js()).toEqual([
+        [0, 1, 2],
+        [3, 4, 5],
+      ]);
+      expect(b.js()).toEqual([
+        [6, 7, 8],
+        [9, 10, 11],
+      ]);
+    });
+
+    test("splits 2D array along axis 1", () => {
+      const x = np.arange(12).reshape([3, 4]);
+      const [a, b] = np.split(x, 2, 1);
+      expect(a.js()).toEqual([
+        [0, 1],
+        [4, 5],
+        [8, 9],
+      ]);
+      expect(b.js()).toEqual([
+        [2, 3],
+        [6, 7],
+        [10, 11],
+      ]);
+    });
+
+    test("splits at indices", () => {
+      const x = np.arange(10);
+      const [a, b, c] = np.split(x, [3, 7]);
+      expect(a.js()).toEqual([0, 1, 2]);
+      expect(b.js()).toEqual([3, 4, 5, 6]);
+      expect(c.js()).toEqual([7, 8, 9]);
+    });
+
+    test("splits at indices with empty sections", () => {
+      const x = np.arange(5);
+      const [a, b, c, d] = np.split(x, [0, 0, 3]);
+      expect(a.js()).toEqual([]);
+      expect(b.js()).toEqual([]);
+      expect(c.js()).toEqual([0, 1, 2]);
+      expect(d.js()).toEqual([3, 4]);
+    });
+
+    test("throws on uneven split", () => {
+      const x = np.arange(5);
+      expect(() => np.split(x, 2)).toThrow(Error);
+      expect(() => np.split(x, 3)).toThrow(Error);
+    });
+
+    test("works with negative axis", () => {
+      const x = np.arange(12).reshape([3, 4]);
+      const [a, b] = np.split(x, 2, -1);
+      expect(a.js()).toEqual([
+        [0, 1],
+        [4, 5],
+        [8, 9],
+      ]);
+      expect(b.js()).toEqual([
+        [2, 3],
+        [6, 7],
+        [10, 11],
+      ]);
+    });
+
+    test("works with grad", () => {
+      const x = np.arange(6).astype(np.float32);
+      const f = (x: np.Array) => {
+        const [a, b] = np.split(x, 2);
+        return a.sum().add(b.mul(2).sum());
+      };
+      const dx = grad(f)(x);
+      expect(dx.js()).toEqual([1, 1, 1, 2, 2, 2]);
+    });
+
+    test("works inside jit", () => {
+      const f = jit((x: np.Array) => {
+        const [a, b] = np.split(x, 2);
+        return a.add(b);
+      });
+      const x = np.arange(6);
+      const y = f(x);
+      expect(y.js()).toEqual([3, 5, 7]);
+    });
+
+    test("splits an array into 20 parts", () => {
+      const x = np.arange(20);
+      for (const [i, a] of np.split(x, 20).entries()) {
+        expect(a.js()).toEqual([i]);
+      }
+    });
+  });
+
   suite("jax.numpy.concatenate()", () => {
     // This suite also handles stack, hstack, vstack, dstack, etc.
 
