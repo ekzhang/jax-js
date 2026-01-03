@@ -853,13 +853,15 @@ export abstract class Tracer {
    * ```
    */
   *[Symbol.iterator](): IterableIterator<this> {
-    if (this.ndim === 0) {
-      throw new Error("Cannot iterate over a scalar array");
-    }
+    if (this.ndim === 0) throw new Error("Cannot iterate over a scalar array");
+    let residual: Tracer = this;
+    const subarrayShape = this.shape.slice(1);
     for (let i = 0; i < this.shape[0]; i++) {
-      yield this.ref.slice(i);
+      const lr = split(residual, 0, [1, residual.shape[0] - 1]);
+      yield lr[0].reshape(subarrayShape) as this;
+      residual = lr[1];
     }
-    this.dispose();
+    residual.dispose();
   }
 
   /**
