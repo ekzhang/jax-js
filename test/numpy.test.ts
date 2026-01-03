@@ -1837,6 +1837,47 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.nanToNum()", () => {
+    test("replaces NaN with zero by default", () => {
+      const x = np.array([NaN, 1, 2, NaN]);
+      const result = np.nanToNum(x);
+      expect(result.js()).toEqual([0, 1, 2, 0]);
+    });
+
+    test("replaces infinity with large finite numbers by default", () => {
+      const x = np.array([Infinity, -Infinity, 1]);
+      const result = np.nanToNum(x);
+      const js = result.js() as number[];
+      expect(js[0]).toBeGreaterThanOrEqual(1e30);
+      expect(js[1]).toBeLessThanOrEqual(-1e30);
+      expect(js[2]).toBe(1);
+    });
+
+    test("uses custom nan value", () => {
+      const x = np.array([NaN, 1, NaN]);
+      const result = np.nanToNum(x, { nan: -999 });
+      expect(result.js()).toEqual([-999, 1, -999]);
+    });
+
+    test("uses custom posinf and neginf values", () => {
+      const x = np.array([Infinity, -Infinity, 0]);
+      const result = np.nanToNum(x, { posinf: 100, neginf: -100 });
+      expect(result.js()).toEqual([100, -100, 0]);
+    });
+
+    test("handles all special values together", () => {
+      const x = np.array([NaN, Infinity, -Infinity, 42]);
+      const result = np.nanToNum(x, { nan: 0, posinf: 999, neginf: -999 });
+      expect(result.js()).toEqual([0, 999, -999, 42]);
+    });
+
+    test("returns input unchanged for non-float dtypes", () => {
+      const x = np.array([1, 2, 3], { dtype: np.int32 });
+      const result = np.nanToNum(x);
+      expect(result.js()).toEqual([1, 2, 3]);
+    });
+  });
+
   suite("jax.numpy.convolve()", () => {
     test("computes 1D convolution", () => {
       const x = np.array([1, 2, 3, 2, 1]);

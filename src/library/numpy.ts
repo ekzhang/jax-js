@@ -1767,3 +1767,37 @@ export const isfinite = jit(function isfinite(x: Array): Array {
   if (!isFloatDtype(x.dtype)) return fullLike(x, true);
   return isnan(x.ref).add(isinf(x)).notEqual(true);
 });
+
+/**
+ * Replace NaN with zero and infinity with large finite numbers.
+ *
+ * @param x - Input array.
+ * @param nan - Value to replace NaN with. Default is 0.
+ * @param posinf - Value to replace positive infinity with. Default is a large
+ *   finite number.
+ * @param neginf - Value to replace negative infinity with. Default is a large
+ *   negative number.
+ * @returns Array with NaN and infinity values replaced.
+ */
+export function nanToNum(
+  x: ArrayLike,
+  {
+    nan = 0,
+    posinf,
+    neginf,
+  }: { nan?: number; posinf?: number; neginf?: number } = {},
+): Array {
+  x = fudgeArray(x);
+  if (!isFloatDtype(x.dtype)) return x;
+
+  // Default large values - use 1e30 which is safely representable in WGSL f32
+  // (Float32 max is ~3.4e38 but WGSL has parsing limitations for large literals)
+  const maxVal = posinf ?? 1e30;
+  const minVal = neginf ?? -1e30;
+
+  // Replace NaN first, then positive infinity, then negative infinity
+  let result = where(isnan(x.ref), nan, x);
+  result = where(isposinf(result.ref), maxVal, result);
+  result = where(isneginf(result.ref), minVal, result);
+  return result;
+}
