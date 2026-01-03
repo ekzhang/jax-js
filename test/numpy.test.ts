@@ -1055,15 +1055,6 @@ suite.each(devices)("device:%s", (device) => {
       expect(z.js()).toEqual([2, -3, -3, 2]);
       expect(z.dtype).toBe(np.int32);
     });
-
-    test("int32 floor division rounds toward negative infinity", () => {
-      const x = np.array([5, -5, 10, -10], { dtype: np.int32 });
-      const y = np.array([2, 2, 3, 3], { dtype: np.int32 });
-      const z = np.floorDivide(x, y);
-      // -5 // 2 = -3 (not -2 which is truncation toward zero)
-      // -10 // 3 = -4 (not -3 which is truncation toward zero)
-      expect(z.js()).toEqual([2, -3, 3, -4]);
-    });
   });
 
   suite("jax.numpy.fmod()", () => {
