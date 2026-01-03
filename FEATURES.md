@@ -311,7 +311,7 @@ Most operations behave the same way as they do in JAX.
 | `logical_not`         | 🟠      |                                         |
 | `logical_or`          | 🟠      |                                         |
 | `logical_xor`         | 🟠      |                                         |
-| `logspace`            | 🟠      |                                         |
+| `logspace`            | 🟢      |                                         |
 | `mask_indices`        | 🟠      |                                         |
 | `matmul`              | 🟢      |                                         |
 | `matrix_transpose`    | 🟢      |                                         |

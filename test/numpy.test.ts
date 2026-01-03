@@ -298,6 +298,38 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.logspace()", () => {
+    test("creates log-spaced values with base 10", () => {
+      // logspace(0, 2, 3) should give 10^0, 10^1, 10^2 = [1, 10, 100]
+      const x = np.logspace(0, 2, 3);
+      expect(x.js()).toBeAllclose([1, 10, 100]);
+    });
+
+    test("creates log-spaced values with base 2", () => {
+      // logspace(0, 3, 4, base=2) should give 2^0, 2^1, 2^2, 2^3 = [1, 2, 4, 8]
+      const x = np.logspace(0, 3, 4, true, 2);
+      expect(x.js()).toBeAllclose([1, 2, 4, 8]);
+    });
+
+    test("handles endpoint=false", () => {
+      // logspace(0, 2, 4, endpoint=false) should give [1, ~3.16, 10, ~31.6]
+      const x = np.logspace(0, 2, 4, false);
+      const result = x.js() as number[];
+      expect(result[0]).toBeCloseTo(1, 5);
+      expect(result[1]).toBeCloseTo(Math.pow(10, 0.5), 5);
+      expect(result[2]).toBeCloseTo(10, 5);
+      expect(result[3]).toBeCloseTo(Math.pow(10, 1.5), 5);
+    });
+
+    test("defaults to 50 elements with base 10", () => {
+      const x = np.logspace(0, 1);
+      expect(x.shape).toEqual([50]);
+      const ar = x.js() as number[];
+      expect(ar[0]).toBeCloseTo(1, 5); // 10^0
+      expect(ar[49]).toBeCloseTo(10, 5); // 10^1
+    });
+  });
+
   suite("jax.numpy.where()", () => {
     test("computes where", () => {
       const x = np.array([1, 2, 3]);
