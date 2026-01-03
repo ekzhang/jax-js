@@ -16,6 +16,7 @@ import {
   tan,
 } from "./numpy";
 import { fudgeArray } from "../frontend/array";
+import * as core from "../frontend/core";
 import { bitcast, randomBits } from "../frontend/core";
 import { jit } from "../frontend/jaxpr";
 
@@ -29,6 +30,14 @@ function validateKeyShape(key: Array): number[] {
     );
   }
   return key.shape.slice(0, -1);
+}
+
+function getK01(key: Array): [Array, Array] {
+  const keyShape = validateKeyShape(key);
+  let [k0, k1] = core.split(key, -1, [1, 1]) as [Array, Array];
+  k0 = k0.reshape(keyShape); // Remove the last dimension of size 1
+  k1 = k1.reshape(keyShape);
+  return [k0, k1];
 }
 
 /** Create a pseudo-random number generator (PRNG) key from 32-bit integer seed. */
@@ -49,9 +58,7 @@ export function split(key: Array, num: number | number[] = 2): Array {
     }
   }
 
-  const keyShape = validateKeyShape(key);
-  const k0 = key.ref.slice(...keyShape.map(() => null), 0);
-  const k1 = key.slice(...keyShape.map(() => null), 1);
+  const [k0, k1] = getK01(key);
   return stack(
     // It's inefficient to calculate the PRNG key twice, then join the halves
     // together. But this allows us to avoid refactoring AluExp to support
@@ -66,12 +73,8 @@ export function split(key: Array, num: number | number[] = 2): Array {
 
 /** Sample uniform bits in the form of unsigned integers. */
 export function bits(key: Array, shape: number[] = []): Array {
-  const keyShape = validateKeyShape(key);
-  return randomBits(
-    key.ref.slice(...keyShape.map(() => null), 0),
-    key.slice(...keyShape.map(() => null), 1),
-    shape,
-  ) as Array;
+  const [k0, k1] = getK01(key);
+  return randomBits(k0, k1, shape) as Array;
 }
 
 /**

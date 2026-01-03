@@ -142,7 +142,7 @@ Most operations behave the same way as they do in JAX.
 | `array_equal`         | 🔴      |                                         |
 | `array_equiv`         | 🔴      |                                         |
 | `array_repr`          | 🔴      |                                         |
-| `array_split`         | 🟠      | `Array.slice` is supported              |
+| `array_split`         | 🟠      | `split` is supported                    |
 | `array_str`           | 🔴      |                                         |
 | `asarray`             | ⚪️      | alias of `array`                        |
 | `asin`                | 🟢      |                                         |
@@ -209,7 +209,7 @@ Most operations behave the same way as they do in JAX.
 | `divide`              | 🟢      |                                         |
 | `divmod`              | 🟠      |                                         |
 | `dot`                 | 🟢      |                                         |
-| `dsplit`              | 🟠      | `Array.slice` is supported              |
+| `dsplit`              | 🟠      | `split` is supported                    |
 | `dstack`              | 🟢      |                                         |
 | `dtype`               | ⚪️      | can access `Array.dtype`                |
 | `ediff1d`             | 🟠      |                                         |
@@ -261,7 +261,7 @@ Most operations behave the same way as they do in JAX.
 | `histogram_bin_edges` | 🔴      |                                         |
 | `histogram2d`         | 🔴      |                                         |
 | `histogramdd`         | 🔴      |                                         |
-| `hsplit`              | 🟠      | `Array.slice` is supported              |
+| `hsplit`              | 🟠      | `split` is supported                    |
 | `hstack`              | 🟢      |                                         |
 | `hypot`               | 🟡      | implemented as `sqrt(x^2 + y^2)`        |
 | `i0`                  | 🔴      | transcendental                          |
@@ -416,7 +416,7 @@ Most operations behave the same way as they do in JAX.
 | `sort`                | 🟢      | sorting                                 |
 | `sort_complex`        | ⚪️      | complex numbers                         |
 | `spacing`             | 🔴      |                                         |
-| `split`               | 🟠      | `Array.slice` is supported              |
+| `split`               | 🟢      |                                         |
 | `sqrt`                | 🟢      |                                         |
 | `square`              | 🟢      |                                         |
 | `squeeze`             | 🟢      |                                         |
@@ -461,7 +461,7 @@ Most operations behave the same way as they do in JAX.
 | `vecdot`              | 🟢      |                                         |
 | `vecmat`              | 🟠      |                                         |
 | `vectorize`           | 🟠      |                                         |
-| `vsplit`              | 🟠      | `Array.slice` is supported              |
+| `vsplit`              | 🟠      | `split` is supported                    |
 | `vstack`              | 🟢      |                                         |
 | `where`               | 🟢      |                                         |
 | `zeros`               | 🟢      |                                         |

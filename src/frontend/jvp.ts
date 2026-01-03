@@ -278,6 +278,8 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     dcond.dispose();
     return [[where(cond.ref, x, y)], [where(cond, dx, dy)]];
   },
+  [Primitive.Concatenate]: linearTangentsJvp(Primitive.Concatenate),
+  [Primitive.Split]: linearTangentsJvp(Primitive.Split),
   [Primitive.RandomBits]: zeroTangentsJvp(Primitive.RandomBits),
   [Primitive.Gather]([x, ...indices], [dx, ..._], { axis, outDim }) {
     // d(gather(x, indices)) = gather(dx, indices).

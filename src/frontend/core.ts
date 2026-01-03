@@ -70,6 +70,8 @@ export enum Primitive {
   // Utility
   Compare = "compare",
   Where = "where",
+  Concatenate = "concatenate",
+  Split = "split",
   RandomBits = "random_bits",
   Gather = "gather",
 
@@ -103,6 +105,8 @@ interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
     strides: number[];
   };
   [Primitive.Compare]: { op: CompareOp };
+  [Primitive.Concatenate]: { axis: number };
+  [Primitive.Split]: { axis: number; sizes: number[] };
   [Primitive.RandomBits]: { shape: number[]; mode: "xor" | 0 | 1 };
   [Primitive.Gather]: { axis: number[]; outDim: number };
   [Primitive.Transpose]: { perm: number[] };
@@ -289,6 +293,39 @@ export function lessEqual(x: TracerValue, y: TracerValue) {
 
 export function where(cond: TracerValue, x: TracerValue, y: TracerValue) {
   return bind1(Primitive.Where, [cond, x, y]);
+}
+
+export function concatenate(xs: TracerValue[], axis: number) {
+  if (xs.length === 0)
+    throw new Error("concatenate requires at least one input");
+  const avals = xs.map((x) => ShapedArray.fromAval(getAval(x)));
+  axis = checkAxis(axis, avals[0].ndim);
+  for (const x of avals) {
+    if (
+      x.ndim !== avals[0].ndim ||
+      !x.shape.every((s, i) => i === axis || s === avals[0].shape[i])
+    )
+      throw new Error(
+        `Concatenate: inputs ${avals[0]} and ${x} must match shapes except on axis ${axis}`,
+      );
+  }
+  return bind1(Primitive.Concatenate, xs, { axis });
+}
+
+export function split(x: TracerValue, axis: number, sizes: number[]) {
+  axis = checkAxis(axis, ndim(x));
+  if (sizes.some((s) => s < 0 || !Number.isInteger(s))) {
+    throw new Error(
+      `split: sizes must be nonnegative integers, got ${JSON.stringify(sizes)}`,
+    );
+  }
+  const totalSize = sizes.reduce((a, b) => a + b, 0);
+  if (totalSize !== getShape(x)[axis]) {
+    throw new Error(
+      `split: sizes must sum to the size of the axis ${axis}, got ${totalSize}`,
+    );
+  }
+  return bind(Primitive.Split, [x], { axis, sizes });
 }
 
 export function randomBits(
@@ -1050,6 +1087,10 @@ export class ShapedArray implements AbstractValue {
 
   get size() {
     return prod(this.shape);
+  }
+
+  scalar() {
+    return new ShapedArray([], this.dtype, this.weakType);
   }
 
   toString() {

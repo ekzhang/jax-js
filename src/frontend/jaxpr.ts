@@ -830,10 +830,7 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     return [new ShapedArray(shape, dtype, weakType)];
   },
   [Primitive.Conv]([lhs, rhs], params) {
-    const { dtype, weakType } = promoteAvals(
-      new ShapedArray([], lhs.dtype, lhs.weakType),
-      new ShapedArray([], rhs.dtype, rhs.weakType),
-    );
+    const { dtype, weakType } = promoteAvals(lhs.scalar(), rhs.scalar());
     const shape = checkConvShape(lhs.shape, rhs.shape, params);
     return [new ShapedArray(shape, dtype, weakType)];
   },
@@ -844,6 +841,38 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     const xy = promoteAvals(x, y);
     const shape = generalBroadcast(cond.shape, xy.shape);
     return [new ShapedArray(shape, xy.dtype, xy.weakType)];
+  },
+  [Primitive.Concatenate](xs, { axis }) {
+    if (xs.length === 0)
+      throw new TypeError("Concatenate requires at least one input");
+    for (const x of xs) {
+      if (
+        x.ndim !== xs[0].ndim ||
+        !x.shape.every((s, i) => i === axis || s === xs[0].shape[i])
+      )
+        throw new TypeError(
+          `Concatenate: inputs ${xs[0]} and ${x} must match shapes except on axis ${axis}`,
+        );
+    }
+    const shape = xs[0].shape.slice();
+    shape[axis] = xs.reduce((sum, x) => sum + x.shape[axis], 0);
+    const { dtype, weakType } = xs.map((x) => x.scalar()).reduce(promoteAvals);
+    return [new ShapedArray(shape, dtype, weakType)];
+  },
+  [Primitive.Split]([x], { axis, sizes }) {
+    const totalSize = sizes.reduce((a, b) => a + b, 0);
+    if (x.shape[axis] !== totalSize) {
+      throw new TypeError(
+        `Split: sizes ${sizes} do not sum to dimension ${x.shape[axis]} on axis ${axis}`,
+      );
+    }
+    return sizes.map((size) => {
+      return new ShapedArray(
+        x.shape.toSpliced(axis, 1, size),
+        x.dtype,
+        x.weakType,
+      );
+    });
   },
   [Primitive.RandomBits]([k0, k1]: ShapedArray[], { shape }) {
     if (k0.dtype !== DType.Uint32 || k1.dtype !== DType.Uint32) {

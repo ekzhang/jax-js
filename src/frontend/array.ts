@@ -14,7 +14,7 @@ import {
 } from "../alu";
 import { Backend, Device, Executable, getBackend, Slot } from "../backend";
 import { Routine, Routines } from "../routine";
-import { ShapeTracker, unravelAlu } from "../shape";
+import { Pair, ShapeTracker, unravelAlu } from "../shape";
 import {
   deepEqual,
   generalBroadcast,
@@ -472,7 +472,7 @@ export class Array extends Tracer {
         } else {
           ({ dtype: castDtype, weakType: castWeakType } = promoteAvals(
             new ShapedArray([], castDtype, castWeakType),
-            new ShapedArray([], arrays[i].#dtype, arrays[i].#weakType),
+            arrays[i].aval.scalar(),
           ));
         }
       }
@@ -983,6 +983,38 @@ export class Array extends Tracer {
             dtypeOverride: [DType.Bool],
           }),
         ];
+      },
+      [Primitive.Concatenate](xs, { axis }) {
+        // Lower to a pad of all the arrays onto the final size, then sum.
+        const ndim = xs[0].ndim;
+        const sizes = xs.map((x) => x.shape[axis]);
+        const finalSize = sizes.reduce((a, b) => a + b, 0);
+        const makePadAxis = (start: number, end: number): [number, number][] =>
+          range(ndim).map((i) => (i === axis ? [start, end] : [0, 0]));
+        let cumulative = 0;
+        const xsPadded: Array[] = [];
+        for (let i = 0; i < xs.length; i++) {
+          const padding = makePadAxis(
+            cumulative,
+            finalSize - cumulative - sizes[i],
+          );
+          xsPadded.push(xs[i].#reshape(xs[i].#st.pad(padding)));
+          cumulative += sizes[i];
+        }
+        const custom = (exps: AluExp[]) => exps.reduce(AluExp.add);
+        return [Array.#naryCustom("concatenate", custom, xsPadded)];
+      },
+      [Primitive.Split]([x], { axis, sizes }) {
+        const outputs: Array[] = [];
+        for (let i = 0, start = 0; i < sizes.length; i++) {
+          const slice = range(x.ndim).map<Pair>((d) =>
+            d === axis ? [start, start + sizes[i]] : [0, x.shape[d]],
+          );
+          outputs.push(x.ref.#reshape(x.#st.shrink(slice)));
+          start += sizes[i];
+        }
+        x.dispose();
+        return outputs;
       },
       [Primitive.RandomBits]([k0, k1], { shape, mode }) {
         const keyShape = generalBroadcast(k0.shape, k1.shape);

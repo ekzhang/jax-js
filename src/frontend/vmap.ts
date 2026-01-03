@@ -14,6 +14,7 @@ import {
   ceil,
   cholesky,
   compare,
+  concatenate,
   conv,
   cos,
   dot,
@@ -44,6 +45,7 @@ import {
   shrink,
   sin,
   sort,
+  split,
   sqrt,
   stopGradient,
   Trace,
@@ -294,6 +296,18 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
     );
   },
   [Primitive.Where]: broadcastBatcher(where),
+  [Primitive.Concatenate](axisSize, xs, xBdims, { axis }) {
+    const minBdim = Math.min(...xBdims.filter((d) => d !== null));
+    xs = xs.map((x, i) => moveBatchAxis(axisSize, xBdims[i], minBdim, x));
+    const newAxis = axis + (minBdim <= axis ? 1 : 0);
+    return [[concatenate(xs, newAxis)], [minBdim]];
+  },
+  [Primitive.Split](axisSize, [x], [xBdim], { axis, sizes }) {
+    assertNonNull(xBdim);
+    const newAxis = axis + (xBdim <= axis ? 1 : 0);
+    const outs = split(x, newAxis, sizes);
+    return [outs, rep(outs.length, xBdim)];
+  },
   // TODO: random_bits
   [Primitive.Gather](
     axisSize,

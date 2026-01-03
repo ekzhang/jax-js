@@ -22,6 +22,7 @@ import {
   add,
   bind,
   broadcast,
+  concatenate,
   conv,
   flattenFun,
   flip,
@@ -37,6 +38,7 @@ import {
   reshape,
   ShapedArray,
   shrink,
+  split,
   stopGradient,
   Trace,
   Tracer,
@@ -673,6 +675,8 @@ type TransposeRule<P extends Primitive> = (
 // that are UndefPrimal (i.e., tangents that weren't sent forward).
 const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
   [Primitive.Mul]([ct], [x, y]) {
+    // TODO: For transpose rules on operations that have type promotion rules,
+    // make sure the gradient is cast back to the correct dtype.
     if (x instanceof UndefPrimal === y instanceof UndefPrimal)
       throw new NonlinearError(Primitive.Mul);
     return [
@@ -806,6 +810,17 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
     ct.dispose();
     cond.dispose();
     return cts;
+  },
+  [Primitive.Concatenate]([ct], inputs, { axis }) {
+    // The backprop of concatenate is split.
+    if (inputs.some((x) => !(x instanceof UndefPrimal)))
+      throw new NonlinearError(Primitive.Concatenate);
+    const sizes = inputs.map((x) => x.aval.shape[axis]);
+    return split(ct, axis, sizes);
+  },
+  [Primitive.Split](cts, [x], { axis }) {
+    if (!(x instanceof UndefPrimal)) throw new NonlinearError(Primitive.Split);
+    return [concatenate(cts, axis)];
   },
   [Primitive.Gather]([ct], [x, ...indices], { axis, outDim }) {
     if (!(x instanceof UndefPrimal)) throw new NonlinearError(Primitive.Gather);

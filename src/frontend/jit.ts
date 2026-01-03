@@ -658,6 +658,12 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
     ([cond, a, b]) => AluExp.where(cond, a, b),
     { skipCastIdx: [0] },
   ),
+  [Primitive.Concatenate](exps, avals, { axis }) {
+    throw new Error("TODO: JIT for Concatenate");
+  },
+  [Primitive.Split]([a], [as], { axis, sizes }) {
+    throw new Error("TODO: JIT for Split");
+  },
   [Primitive.RandomBits]: (keys, keyShapes, { shape, mode }) => {
     const mapping = (st: ShapeTracker): ShapeTracker | undefined => {
       if (!deepEqual(st.shape, shape))

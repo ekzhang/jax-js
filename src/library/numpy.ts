@@ -422,9 +422,8 @@ export function flip(x: ArrayLike, axis: core.Axis = null): Array {
  * No scalars can be passed to this function, as the axis is then ambiguous.
  */
 export function concatenate(xs: Array[], axis: number = 0) {
-  if (xs.length === 0) {
+  if (xs.length === 0)
     throw new Error("Need at least one array to concatenate");
-  }
   const shapes = xs.map(shape);
   axis = checkAxis(axis, shapes[0].length);
   for (let i = 1; i < shapes.length; i++) {
@@ -433,20 +432,16 @@ export function concatenate(xs: Array[], axis: number = 0) {
       !shapes[i].every((d, j) => j === axis || d === shapes[0][j])
     ) {
       throw new Error(
-        `Cannot concatenate arrays with shapes ${JSON.stringify(shapes)} along axis ${axis}`,
+        `Cannot concatenate arrays ${xs[0].aval} and ${xs[i].aval} along axis ${axis}`,
       );
     }
   }
-  const makePadAxis = (start: number, end: number): [number, number][] =>
-    shapes[0].map((_, i) => (i === axis ? [start, end] : [0, 0]));
+  // Concatenate the arrays in groups of 8 to avoid possibly exceeding the
+  // `maxArgs` of the backend.
   let result = xs[0];
-  for (let i = 1; i < xs.length; i++) {
-    const len1 = result.shape[axis];
-    const len2 = shapes[i][axis];
-    // Concatenate arrays by padding with zeros and adding them together.
-    result = pad(result, makePadAxis(0, len2)).add(
-      pad(xs[i], makePadAxis(len1, 0)),
-    );
+  for (let i = 1; i < xs.length; i += 7) {
+    const group = xs.slice(i, i + 7);
+    result = core.concatenate([result, ...group], axis) as Array;
   }
   return result;
 }
