@@ -226,6 +226,7 @@
                 class="ml-auto border border-gray-300 rounded-md text-sm px-1 py-0.5"
               >
                 <option value="webgpu">WebGPU</option>
+                <option value="webgl">WebGL</option>
                 <option value="wasm">Wasm</option>
                 <option value="cpu">CPU (slow)</option>
               </select>

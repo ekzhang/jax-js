@@ -58,13 +58,13 @@ import { numpy as np } from "@jax-js/jax";
 const ar = np.array([1, 2, 3]);
 ```
 
-By default, this is a float32 array, but you can also specify a dtype explicitly:
+By default, this is a float32 array, but you can specify a different dtype:
 
 ```ts
-const ar = np.array([1, 2, 3], { dtype: np.float32 });
+const ar = np.array([1, 2, 3], { dtype: np.int32 });
 ```
 
-For more efficient construction, you can create an array from a JS `TypedArray` buffer:
+For more efficient construction, create an array from a JS `TypedArray` buffer:
 
 ```ts
 const buf = new Float32Array([10, 20, 30, 100, 200, 300]);
@@ -223,14 +223,18 @@ Note that you need to use `type` alias syntax rather than `interface` to define 
 Similar to JAX, jax-js has a concept of "devices" which are a backend that stores Arrays in memory
 and determines how to execute compiled operations on them.
 
-There are currently 3 devices in jax-js:
+There are currently 4 devices in jax-js:
 
-- `cpu`: Slow, mostly for debugging purposes.
+- `cpu`: Slow, interpreted JS, only meant for debugging.
 - `wasm`: [WebAssembly](https://webassembly.org/), currently single-threaded and blocking.
 - `webgpu`: [WebGPU](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API), available on
   [supported browsers](https://caniuse.com/webgpu) (Chrome, Firefox, Safari, iOS).
+- `webgl`: [WebGL2](https://developer.mozilla.org/en-US/docs/Web/API/WebGL2RenderingContext), via
+  fragment shaders. This is an older graphics API that runs on almost all browsers, but it is much
+  slower than WebGPU. It's offered on a best-effort basis and not as well-supported.
 
-The default device is `wasm`, but you can change this at startup time:
+**We recommend `webgpu` for best performance, especially when running neural networks.** The default
+device is `wasm`, but you can change this at startup time:
 
 ```ts
 import { defaultDevice, init } from "@jax-js/jax";
@@ -333,7 +337,6 @@ Contributions are welcomed! Some fruitful areas to look into:
   able to generate `traceEvents` from backends (especially on GPU, with precise timestamp queries)
   to help with model performance debugging.
 - Helping the JIT compiler to fuse operations in more cases, like `tanh` branches.
-- Adding WebGL runtime for older browsers that don't support WebGPU.
 - Making a fast transformer inference engine, comparing against onnxruntime-web.
 
 You may join our [Discord server](https://discord.gg/BW6YsCd4Tf) and chat with the community.

@@ -236,7 +236,7 @@ suite.each(devices)("device:%s", (device) => {
 
   // This checks to make sure that index calculations don't suddenly break for
   // large arrays, covering workgroups > 65535 in WebGPU for instance.
-  if (device !== "cpu") {
+  if (device !== "cpu" && device !== "webgl") {
     test("large array dispatch", async () => {
       const x = ones([100, 1000, 1000], { dtype: DType.Int32 }); // 100M elements
       await x.blockUntilReady();

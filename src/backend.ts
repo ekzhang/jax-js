@@ -14,8 +14,8 @@ import { CpuBackend } from "./backend/cpu";
 import { WasmBackend } from "./backend/wasm";
 import { Routine, Routines } from "./routine";
 
-export type Device = "cpu" | "wasm" | "webgpu";
-export const devices: Device[] = ["cpu", "wasm", "webgpu"];
+export type Device = "cpu" | "wasm" | "webgpu" | "webgl";
+export const devices: Device[] = ["cpu", "wasm", "webgpu", "webgl"];
 
 const initializedBackends = new Map<Device, Backend>();
 
@@ -117,6 +117,10 @@ async function createBackend(device: Device): Promise<Backend | null> {
       console.error("Unexpected error requesting WebGPU device:", error);
       return null;
     }
+  } else if (device === "webgl") {
+    if (typeof WebGL2RenderingContext === "undefined") return null; // WebGL2 is not available.
+    const { WebGLBackend } = await import("./backend/webgl");
+    return new WebGLBackend();
   } else {
     device satisfies never;
     throw new Error(`Backend not found: ${device}`);

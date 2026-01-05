@@ -1911,88 +1911,6 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
-  suite("jax.numpy.sort()", () => {
-    test("sorts 1D array", () => {
-      const x = np.array([3, 1, 4, 1, 5, 9, 2, 6]);
-      const y = np.sort(x);
-      expect(y.js()).toEqual([1, 1, 2, 3, 4, 5, 6, 9]);
-    });
-
-    test("sorts 2D array along axis", () => {
-      const x = np.array([
-        [3, 1, 2],
-        [6, 4, 5],
-      ]);
-      const y0 = np.sort(x.ref, 0);
-      expect(y0.js()).toEqual([
-        [3, 1, 2],
-        [6, 4, 5],
-      ]);
-      const y1 = np.sort(x, 1);
-      expect(y1.js()).toEqual([
-        [1, 2, 3],
-        [4, 5, 6],
-      ]);
-    });
-
-    test("sorts NaN to the end", () => {
-      const x = np.array([3, NaN, 1, NaN, 2]);
-      const y = np.sort(x);
-      expect(y.js()).toEqual([1, 2, 3, NaN, NaN]);
-    });
-
-    test("works with jvp", () => {
-      const x = np.array([3, 1, 2]);
-      const [y, dy] = jvp(np.sort, [x], [np.array([10, 20, 30])]);
-      expect(y.js()).toEqual([1, 2, 3]);
-      expect(dy.js()).toEqual([20, 30, 10]);
-    });
-
-    // Won't work until scatter is implemented.
-    test.fails("works with grad", () => {
-      const x = np.array([3, 1, 4, 2]);
-      const f = (x: np.Array) => np.sort(x).slice([0, 2]).sum();
-      const dx = grad(f)(x);
-      expect(dx.js()).toEqual([0, 1, 0, 1]);
-    });
-
-    test("works inside a jit function", () => {
-      const x = np.array([5, 2, 8, 1]);
-      const f = jit((x: np.Array) => np.sort(x));
-      const y = f(x);
-      expect(y.js()).toEqual([1, 2, 5, 8]);
-    });
-
-    test("works for int and bool dtypes", () => {
-      for (const dtype of [np.int32, np.uint32]) {
-        const x = np.array([3, 1, 4, 1, 5], { dtype });
-        const y = np.sort(x);
-        expect(y.js()).toEqual([1, 1, 3, 4, 5]);
-        expect(y.dtype).toBe(dtype);
-      }
-      const x = np.array([true, false, true, false, true]);
-      const y = np.sort(x);
-      expect(y.js()).toEqual([false, false, true, true, true]);
-      expect(y.dtype).toBe(np.bool);
-    });
-
-    test("handles zero-sized arrays", () => {
-      const x = np.array([[], [], []], { dtype: np.float32 });
-      const y = np.sort(x);
-      expect(y.shape).toEqual([3, 0]);
-      expect(y.dtype).toBe(np.float32);
-    });
-
-    test("can sort 8192 elements", async () => {
-      // If the maximum workgroup size is 1024, then only 2048 elements can fit
-      // into a single-workgroup sort. This test exercises multi-pass sorting in
-      // global memory for GPUs.
-      const x = np.linspace(0, 1, 8192);
-      const y = np.sort(np.flip(x.ref));
-      expect(y).toBeAllclose(x);
-    });
-  });
-
   suite("jax.numpy.all()", () => {
     test("returns true when all elements are true", () => {
       const x = np.array([true, true, true]);
@@ -2141,39 +2059,123 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
-  suite("jax.numpy.argsort()", () => {
-    test("argsorts 1D array", () => {
-      const x = np.array([3, 1, 4, 2, 5]);
-      const idx = np.argsort(x);
-      expect(idx.js()).toEqual([1, 3, 0, 2, 4]);
-      expect(idx.dtype).toBe("int32");
+  if (device !== "webgl") {
+    suite("jax.numpy.sort()", () => {
+      test("sorts 1D array", () => {
+        const x = np.array([3, 1, 4, 1, 5, 9, 2, 6]);
+        const y = np.sort(x);
+        expect(y.js()).toEqual([1, 1, 2, 3, 4, 5, 6, 9]);
+      });
+
+      test("sorts 2D array along axis", () => {
+        const x = np.array([
+          [3, 1, 2],
+          [6, 4, 5],
+        ]);
+        const y0 = np.sort(x.ref, 0);
+        expect(y0.js()).toEqual([
+          [3, 1, 2],
+          [6, 4, 5],
+        ]);
+        const y1 = np.sort(x, 1);
+        expect(y1.js()).toEqual([
+          [1, 2, 3],
+          [4, 5, 6],
+        ]);
+      });
+
+      test("sorts NaN to the end", () => {
+        const x = np.array([3, NaN, 1, NaN, 2]);
+        const y = np.sort(x);
+        expect(y.js()).toEqual([1, 2, 3, NaN, NaN]);
+      });
+
+      test("works with jvp", () => {
+        const x = np.array([3, 1, 2]);
+        const [y, dy] = jvp(np.sort, [x], [np.array([10, 20, 30])]);
+        expect(y.js()).toEqual([1, 2, 3]);
+        expect(dy.js()).toEqual([20, 30, 10]);
+      });
+
+      // Won't work until scatter is implemented.
+      test.fails("works with grad", () => {
+        const x = np.array([3, 1, 4, 2]);
+        const f = (x: np.Array) => np.sort(x).slice([0, 2]).sum();
+        const dx = grad(f)(x);
+        expect(dx.js()).toEqual([0, 1, 0, 1]);
+      });
+
+      test("works inside a jit function", () => {
+        const x = np.array([5, 2, 8, 1]);
+        const f = jit((x: np.Array) => np.sort(x));
+        const y = f(x);
+        expect(y.js()).toEqual([1, 2, 5, 8]);
+      });
+
+      test("works for int and bool dtypes", () => {
+        for (const dtype of [np.int32, np.uint32]) {
+          const x = np.array([3, 1, 4, 1, 5], { dtype });
+          const y = np.sort(x);
+          expect(y.js()).toEqual([1, 1, 3, 4, 5]);
+          expect(y.dtype).toBe(dtype);
+        }
+        const x = np.array([true, false, true, false, true]);
+        const y = np.sort(x);
+        expect(y.js()).toEqual([false, false, true, true, true]);
+        expect(y.dtype).toBe(np.bool);
+      });
+
+      test("handles zero-sized arrays", () => {
+        const x = np.array([[], [], []], { dtype: np.float32 });
+        const y = np.sort(x);
+        expect(y.shape).toEqual([3, 0]);
+        expect(y.dtype).toBe(np.float32);
+      });
+
+      test("can sort 8192 elements", async () => {
+        // If the maximum workgroup size is 1024, then only 2048 elements can fit
+        // into a single-workgroup sort. This test exercises multi-pass sorting in
+        // global memory for GPUs.
+        const x = np.linspace(0, 1, 8192);
+        const y = np.sort(np.flip(x.ref));
+        expect(y).toBeAllclose(x);
+      });
     });
 
-    test("argsorts 2D array", () => {
-      const x = np.array([
-        [3, 1, 2],
-        [6, 4, 5],
-      ]);
-      const idx = np.argsort(x, 1);
-      expect(idx.js()).toEqual([
-        [1, 2, 0],
-        [1, 2, 0],
-      ]);
-    });
+    suite("jax.numpy.argsort()", () => {
+      test("argsorts 1D array", () => {
+        const x = np.array([3, 1, 4, 2, 5]);
+        const idx = np.argsort(x);
+        expect(idx.js()).toEqual([1, 3, 0, 2, 4]);
+        expect(idx.dtype).toBe("int32");
+      });
 
-    test("produces zero gradient", () => {
-      const x = np.array([3, 1, 2]);
-      const f = (x: np.Array) => np.argsort(x).astype(np.float32).sum();
-      const dx = grad(f)(x);
-      expect(dx.js()).toEqual([0, 0, 0]);
-    });
+      test("argsorts 2D array", () => {
+        const x = np.array([
+          [3, 1, 2],
+          [6, 4, 5],
+        ]);
+        const idx = np.argsort(x, 1);
+        expect(idx.js()).toEqual([
+          [1, 2, 0],
+          [1, 2, 0],
+        ]);
+      });
 
-    test("can argsort 8191 elements", async () => {
-      // Testing 8191 as it's not exactly a power-of-two size.
-      const x = np.linspace(0, 1, 8191);
-      const y = np.argsort(np.flip(x));
-      const ar = y.js() as number[];
-      expect(ar).toEqual(Array.from({ length: 8191 }, (_, i) => 8190 - i));
+      test("produces zero gradient", () => {
+        const x = np.array([3, 1, 2]);
+        const f = (x: np.Array) => np.argsort(x).astype(np.float32).sum();
+        const dx = grad(f)(x);
+        expect(dx.js()).toEqual([0, 0, 0]);
+      });
+
+      test("can argsort 8191 elements", async () => {
+        // Testing 8191 as it's not exactly a power-of-two size.
+        const x = np.linspace(0, 1, 8191);
+        const y = np.argsort(np.flip(x));
+        const ar = y.js() as number[];
+        expect(ar).toEqual(Array.from({ length: 8191 }, (_, i) => 8190 - i));
+      });
     });
-  });
+  }
 });

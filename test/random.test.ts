@@ -178,7 +178,7 @@ suite.each(devices)("device:%s", (device) => {
       expect(variance).toBeCloseTo(Math.PI ** 2 / 6, 1);
     });
 
-    if (device !== "webgpu") {
+    if (device === "cpu" || device === "wasm") {
       // TODO: cholesky not yet supported on webgpu
       test("multivariate normal distribution", () => {
         const key = random.key(42);
