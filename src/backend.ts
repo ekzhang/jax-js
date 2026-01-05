@@ -119,8 +119,21 @@ async function createBackend(device: Device): Promise<Backend | null> {
     }
   } else if (device === "webgl") {
     if (typeof WebGL2RenderingContext === "undefined") return null; // WebGL2 is not available.
+    const canvas = new OffscreenCanvas(0, 0);
+    const gl = canvas.getContext("webgl2", {
+      alpha: false,
+      antialias: false,
+      premultipliedAlpha: false,
+      preserveDrawingBuffer: false,
+      depth: false,
+      stencil: false,
+      failIfMajorPerformanceCaveat: true,
+    });
+    if (!gl) return null;
+    // Required extension for rendering to float textures.
+    if (!gl.getExtension("EXT_color_buffer_float")) return null;
     const { WebGLBackend } = await import("./backend/webgl");
-    return new WebGLBackend();
+    return new WebGLBackend(gl);
   } else {
     device satisfies never;
     throw new Error(`Backend not found: ${device}`);

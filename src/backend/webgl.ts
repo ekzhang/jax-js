@@ -57,51 +57,19 @@ export class WebGLBackend implements Backend {
   readonly type: Device = "webgl";
   readonly maxArgs = 8; // See: https://web3dsurvey.com/webgl/parameters/MAX_TEXTURE_IMAGE_UNITS
 
+  readonly gl: WebGL2RenderingContext;
+  readonly #fbo: WebGLFramebuffer;
   #buffers: Map<Slot, WebGLSlot>;
   #programCache: Map<string, ShaderDispatch>;
-  #fbo: WebGLFramebuffer;
-  #gl: WebGL2RenderingContext | undefined = undefined;
   #nextSlot: number;
 
-  constructor() {
+  constructor(gl: WebGL2RenderingContext) {
+    this.gl = gl;
+    this.#fbo = gl.createFramebuffer();
     this.#buffers = new Map();
     this.#programCache = new Map();
     this.#nextSlot = 1;
     this.#fbo = null as any; // Will be initialized with `this.gl`
-  }
-
-  get gl(): WebGL2RenderingContext {
-    if (this.#gl) return this.#gl;
-
-    // Initialize the WebGL2 context lazily, since it seems to take a few
-    // milliseconds on modern browsers: we want creating backends to be cheap.
-    const canvas = new OffscreenCanvas(0, 0);
-    const gl = canvas.getContext("webgl2", {
-      alpha: false,
-      antialias: false,
-      premultipliedAlpha: false,
-      preserveDrawingBuffer: false,
-      depth: false,
-      stencil: false,
-      failIfMajorPerformanceCaveat: true,
-    });
-    if (!gl) throw new Error("WebGL2 is not available");
-
-    // Required extension for rendering to float textures
-    const ext = gl.getExtension("EXT_color_buffer_float");
-    if (!ext) {
-      throw new Error(
-        "EXT_color_buffer_float required for WebGL compute backend",
-      );
-    }
-
-    // Create a reusable framebuffer
-    const fbo = gl.createFramebuffer();
-    if (!fbo) throw new Error("Failed to create framebuffer");
-    this.#fbo = fbo;
-
-    this.#gl = gl;
-    return gl;
   }
 
   /**
