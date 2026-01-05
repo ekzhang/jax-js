@@ -142,7 +142,6 @@ export const vjp = linearizeModule.vjp as <
 /**
  * @function
  * Like vjp, but expects f to return [output, aux] tuple.
- * Aux is returned unchanged and not differentiated.
  */
 export const vjpWithAux = linearizeModule.vjpWithAux as <
   F extends (...args: any[]) => [JsTree<Array>, JsTree<Array>],
@@ -183,6 +182,30 @@ export const valueAndGrad = linearizeModule.valueAndGrad as <
 ) => (
   ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
 ) => [ReturnType<F>, MapJsTree<Parameters<F>[0], ArrayLike, Array>];
+
+/**
+ * @function
+ * Like grad, but expects f to return [scalar, aux] tuple.
+ */
+export const gradWithAux = linearizeModule.gradWithAux as <
+  F extends (...args: any[]) => [JsTree<Array>, JsTree<Array>],
+>(
+  f: F,
+) => (
+  ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
+) => [MapJsTree<Parameters<F>[0], ArrayLike, Array>, ReturnType<F>[1]];
+
+/**
+ * @function
+ * Like valueAndGrad, but expects f to return [scalar, aux] tuple.
+ */
+export const valueAndGradWithAux = linearizeModule.valueAndGradWithAux as <
+  F extends (...args: any[]) => [JsTree<Array>, JsTree<Array>],
+>(
+  f: F,
+) => (
+  ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
+) => [ReturnType<F>[0], MapJsTree<Parameters<F>[0], ArrayLike, Array>, ReturnType<F>[1]];
 
 /**
  * @function

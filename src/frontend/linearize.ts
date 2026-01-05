@@ -1062,6 +1062,37 @@ export function valueAndGrad(f: (...primals: any) => Tracer) {
   };
 }
 
+/** Like grad, but expects f to return [scalar, aux] tuple. */
+export function gradWithAux(f: (...primals: any) => [Tracer, any]) {
+  const valueAndGradFn = valueAndGradWithAux(f);
+  return (...x: any) => {
+    const [y, dx, aux] = valueAndGradFn(...x);
+    y.dispose();
+    return [dx, aux];
+  };
+}
+
+/** Like valueAndGrad, but expects f to return [scalar, aux] tuple. */
+export function valueAndGradWithAux(f: (...primals: any) => [Tracer, any]) {
+  return (...x: any) => {
+    if (x.length === 0) {
+      throw new Error("grad requires at least one argument to differentiate");
+    }
+    // JAX convention, differentiate with respect to the first argument.
+    const [y, fVjp, aux] = vjpWithAux(f, x[0], ...x.slice(1).map(stopGradient));
+    if (!(y instanceof Tracer) || ndim(y) !== 0) {
+      throw new TypeError("grad requires a scalar output");
+    }
+    if (!isFloatDtype(y.dtype)) {
+      throw new TypeError("grad only supports floating-point dtypes");
+    }
+    const [ct, ...rest] = fVjp(onesLike(y.ref)); // backprop from scalar 1
+    for (const r of rest) treeDispose(r);
+    fVjp.dispose();
+    return [y, ct, aux] as [any, any, any];
+  };
+}
+
 // See also: jacfwd()
 export function jacrev(f: any) {
   return function jacobianReverse(x: Tracer) {
