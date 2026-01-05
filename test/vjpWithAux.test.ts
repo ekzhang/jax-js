@@ -51,7 +51,7 @@ suite("vjpWithAux", () => {
     };
 
     const x = np.array([1, 2, 3]);
-    const [main, vjpFn, aux] = vjpWithAux(f, x);
+    const [main, vjpFn, _aux] = vjpWithAux(f, x);
 
     expect((main as Main).a).toBeAllclose(6);
     expect((main as Main).b).toBeAllclose(6);
@@ -90,9 +90,10 @@ suite("vjpWithAux", () => {
   });
 
   test("works with jit wrapper", () => {
-    const f = jit(
-      (x: np.Array): [np.Array, np.Array] => [x.ref.sum(), x.mul(2)],
-    );
+    const f = jit((x: np.Array): [np.Array, np.Array] => [
+      x.ref.sum(),
+      x.mul(2),
+    ]);
 
     const x = np.array([1, 2, 3]);
     const [loss, vjpFn, aux] = vjpWithAux(f, x);

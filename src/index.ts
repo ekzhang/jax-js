@@ -205,7 +205,11 @@ export const valueAndGradWithAux = linearizeModule.valueAndGradWithAux as <
   f: F,
 ) => (
   ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
-) => [ReturnType<F>[0], MapJsTree<Parameters<F>[0], ArrayLike, Array>, ReturnType<F>[1]];
+) => [
+  ReturnType<F>[0],
+  MapJsTree<Parameters<F>[0], ArrayLike, Array>,
+  ReturnType<F>[1],
+];
 
 /**
  * @function

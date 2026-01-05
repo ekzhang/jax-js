@@ -1,4 +1,11 @@
-import { grad, gradWithAux, jit, numpy as np, valueAndGrad, valueAndGradWithAux } from "@jax-js/jax";
+import {
+  grad,
+  gradWithAux,
+  jit,
+  numpy as np,
+  valueAndGrad,
+  valueAndGradWithAux,
+} from "@jax-js/jax";
 import { expect, suite, test } from "vitest";
 
 suite("gradWithAux", () => {
@@ -51,9 +58,10 @@ suite("gradWithAux", () => {
   });
 
   test("works with jit wrapper", () => {
-    const f = jit(
-      (x: np.Array): [np.Array, np.Array] => [x.ref.sum(), x.mul(2)],
-    );
+    const f = jit((x: np.Array): [np.Array, np.Array] => [
+      x.ref.sum(),
+      x.mul(2),
+    ]);
 
     const x = np.array([1, 2, 3]);
     const [grad, aux] = gradWithAux(f)(x);
