@@ -71,6 +71,8 @@ export const bool = DType.Bool;
 export const float16 = DType.Float16;
 export const float64 = DType.Float64;
 
+export { finfo, iinfo } from "./numpy/dtype-info";
+
 // Constants section
 
 /** Euler's constant, `e = 2.7182818284590...` */
