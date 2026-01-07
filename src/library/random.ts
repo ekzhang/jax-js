@@ -211,12 +211,11 @@ export const laplace = jit(
  *
  * This uses Cholesky decomposition on the covariance matrix.
  *
- * @param key - PRNG key
- * @param mean - Mean vector of shape `[..., n]`
- * @param cov - Covariance of shape `[..., n, n]`, must be positive-definite
- * @param shape - Result batch shape, must be broadcastable with
- *                `mean.shape[:-1]` and `cov.shape[:-2]`
- * @param dtype - Data type of the result
+ * - `key` - PRNG key
+ * - `mean` - Mean vector of shape `[..., n]`
+ * - `cov` - Covariance of shape `[..., n, n]`, must be positive-definite
+ * - `shape` - Result batch shape, must be broadcastable with
+ *            `mean.shape[:-1]` and `cov.shape[:-2]`
  * @returns Random samples of shape `[...shape, n]`
  */
 export const multivariateNormal = jit(
