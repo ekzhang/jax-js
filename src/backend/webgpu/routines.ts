@@ -254,6 +254,199 @@ function createArgsort(device: GPUDevice, type: RoutineType): ShaderInfo[] {
   return bitonicSortShader(device, dtype, n, batches, true);
 }
 
+/**
+ * Generate a triangular solve shader.
+ *
+ * Solves A @ X.T = B.T for X, where A is upper-triangular.
+ * Uses a parallelized back-substitution:
+ *   1. Copy b to x
+ *   2. For j = n-1 down to 0:
+ *      - Divide x[j] by a[j,j] (single thread)
+ *      - All threads subtract x[j] * a[i,j] from x[i] for i < j in parallel
+ */
+function createTriangularSolve(
+  device: GPUDevice,
+  type: RoutineType,
+  params: { unitDiagonal: boolean },
+): ShaderInfo[] {
+  const dtype = type.inputDtypes[0];
+  const aShape = type.inputShapes[0]; // [..., n, n]
+  const bShape = type.inputShapes[1]; // [..., batch, n]
+
+  const n = aShape[aShape.length - 1]; // Matrix dimension
+  const numRhs = bShape[bShape.length - 2]; // Number of RHS vectors per matrix
+  const numMatrices = prod(aShape.slice(0, -2)); // Number of matrices in batch
+
+  const needsF16 = dtype === DType.Float16;
+  const ty = dtypeToWgsl(dtype, true);
+
+  // Each workgroup handles one (matrix, rhs) pair
+  const workgroupSize = findPow2(n, device.limits.maxComputeWorkgroupSizeX);
+
+  const code = `
+${needsF16 ? "enable f16;" : ""}
+${headerWgsl}
+
+@group(0) @binding(0) var<storage, read> a: array<${ty}>;
+@group(0) @binding(1) var<storage, read> b: array<${ty}>;
+@group(0) @binding(2) var<storage, read_write> x: array<${ty}>;
+
+// Shared memory for the current pivot value x[j]
+var<workgroup> x_j: ${ty};
+
+@compute @workgroup_size(${workgroupSize})
+fn main(
+  @builtin(workgroup_id) wg_id: vec3<u32>,
+  @builtin(local_invocation_id) local_id: vec3<u32>,
+) {
+  let wg_idx = wg_id.x + wg_id.y * ${gridOffsetY}u;
+  let mat_idx = wg_idx / ${numRhs}u;
+  let rhs_idx = wg_idx % ${numRhs}u;
+
+  if (mat_idx >= ${numMatrices}u) {
+    return;
+  }
+
+  let a_base = mat_idx * ${n * n}u;
+  let bx_base = (mat_idx * ${numRhs}u + rhs_idx) * ${n}u;
+  let tid = local_id.x;
+
+  // Step 1: Copy b to x (threads collaborate)
+  for (var idx = tid; idx < ${n}u; idx += ${workgroupSize}u) {
+    x[bx_base + idx] = b[bx_base + idx];
+  }
+  storageBarrier();
+
+  // Step 2: Back-substitution from j = n-1 down to 0
+  for (var jj = 0u; jj < ${n}u; jj++) {
+    let j = ${n - 1}u - jj;
+
+    // Thread 0 computes x[j] = x[j] / a[j,j]
+    if (tid == 0u) {
+      ${params.unitDiagonal ? `x_j = x[bx_base + j];` : `x_j = x[bx_base + j] / a[a_base + j * ${n}u + j];`}
+      x[bx_base + j] = x_j;
+    }
+    workgroupBarrier();  // Sync shared memory x_j
+
+    // All threads subtract x[j] * a[i,j] from x[i] for i < j
+    for (var i = tid; i < j; i += ${workgroupSize}u) {
+      x[bx_base + i] -= x_j * a[a_base + i * ${n}u + j];
+    }
+    workgroupBarrier();
+    storageBarrier();
+  }
+}
+`.trim();
+
+  const totalWorkgroups = numMatrices * numRhs;
+  const grid = calculateGrid(totalWorkgroups);
+  return [
+    {
+      code,
+      numInputs: 2,
+      numOutputs: 1,
+      hasUniform: false,
+      passes: [{ grid }],
+    },
+  ];
+}
+
+/**
+ * Generate a Cholesky decomposition shader.
+ *
+ * Computes the lower triangular matrix L such that A = L * L^T for each
+ * positive semi-definite matrix in the batch. Uses the Cholesky-Crout
+ * algorithm which processes column-by-column.
+ *
+ * For each column j:
+ *   1. All threads compute their row's sum in parallel and store to output
+ *   2. Thread 0 computes L[j][j] = sqrt(output[j][j]) and stores to shared memory
+ *   3. All threads divide their output[i][j] by L[j][j] in parallel
+ */
+function createCholesky(device: GPUDevice, type: RoutineType): ShaderInfo[] {
+  const dtype = type.inputDtypes[0];
+  const shape = type.inputShapes[0];
+  const n = shape[shape.length - 1]; // Matrix dimension (n x n)
+  const batches = prod(shape.slice(0, -2)); // Number of matrices in batch
+
+  const needsF16 = dtype === DType.Float16;
+  const ty = dtypeToWgsl(dtype, true);
+
+  // Use workgroup size to parallelize column computation
+  const workgroupSize = findPow2(n, device.limits.maxComputeWorkgroupSizeX);
+
+  const code = `
+${needsF16 ? "enable f16;" : ""}
+${headerWgsl}
+
+@group(0) @binding(0) var<storage, read> input: array<${ty}>;
+@group(0) @binding(1) var<storage, read_write> output: array<${ty}>;
+
+// Shared memory for the diagonal element
+var<workgroup> L_jj: ${ty};
+
+@compute @workgroup_size(${workgroupSize})
+fn main(
+  @builtin(workgroup_id) wg_id: vec3<u32>,
+  @builtin(local_invocation_id) local_id: vec3<u32>,
+) {
+  let batch = wg_id.x + wg_id.y * ${gridOffsetY}u;
+  if (batch >= ${batches}u) {
+    return;
+  }
+
+  let base = batch * ${n * n}u;
+  let tid = local_id.x;
+
+  // Zero out output and copy lower triangle from input (threads collaborate)
+  for (var idx = tid; idx < ${n * n}u; idx += ${workgroupSize}u) {
+    let row = idx / ${n}u;
+    let col = idx % ${n}u;
+    output[base + idx] = select(0, input[base + idx], col <= row);
+  }
+  storageBarrier();
+
+  // Cholesky-Crout algorithm: process column by column
+  for (var j = 0u; j < ${n}u; j++) {
+    // Step 1: All threads compute sum for their rows i >= j in parallel
+    // sum = A[i][j] - sum(L[i][k] * L[j][k] for k < j)
+    for (var i = j + tid; i < ${n}u; i += ${workgroupSize}u) {
+      var sum = output[base + i * ${n}u + j];
+      for (var k = 0u; k < j; k++) {
+        sum -= output[base + i * ${n}u + k] * output[base + j * ${n}u + k];
+      }
+      output[base + i * ${n}u + j] = sum;
+    }
+    storageBarrier();
+
+    // Step 2: Thread 0 computes L[j][j] = sqrt(output[j][j])
+    if (tid == 0u) {
+      L_jj = sqrt(output[base + j * ${n}u + j]);
+      output[base + j * ${n}u + j] = L_jj;
+    }
+    workgroupBarrier();
+
+    // Step 3: All threads divide output[i][j] by L[j][j] for i > j
+    for (var i = j + 1u + tid; i < ${n}u; i += ${workgroupSize}u) {
+      output[base + i * ${n}u + j] /= L_jj;
+    }
+    storageBarrier();
+  }
+}
+`.trim();
+
+  const grid = calculateGrid(batches);
+  return [
+    {
+      code,
+      numInputs: 1,
+      numOutputs: 1,
+      hasUniform: false,
+      passes: [{ grid }],
+    },
+  ];
+}
+
 export function createRoutineShader(
   device: GPUDevice,
   routine: Routine,
@@ -263,6 +456,10 @@ export function createRoutineShader(
       return createSort(device, routine.type);
     case Routines.Argsort:
       return createArgsort(device, routine.type);
+    case Routines.TriangularSolve:
+      return createTriangularSolve(device, routine.type, routine.params);
+    case Routines.Cholesky:
+      return createCholesky(device, routine.type);
     default:
       throw new UnsupportedRoutineError(routine.name, "webgpu");
   }

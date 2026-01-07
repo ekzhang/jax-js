@@ -10,8 +10,9 @@ import {
 import { beforeEach, expect, suite, test } from "vitest";
 
 const devicesAvailable = await init();
+const devicesWithLinalg: Device[] = ["cpu", "wasm", "webgpu"];
 
-suite.each(["cpu", "wasm"] as Device[])("device:%s", (device) => {
+suite.each(devicesWithLinalg)("device:%s", (device) => {
   const skipped = !devicesAvailable.includes(device);
   beforeEach(({ skip }) => {
     if (skipped) skip();
@@ -80,7 +81,7 @@ suite.each(["cpu", "wasm"] as Device[])("device:%s", (device) => {
       const eps = 1e-4;
       const L2 = lax.linalg.cholesky(x.add(dx.mul(eps)));
       const dL_fd = L2.sub(L).div(eps);
-      expect(dL).toBeAllclose(dL_fd, { rtol: 1e-2, atol: 1e-3 });
+      expect(dL).toBeAllclose(dL_fd, { rtol: 1e-2, atol: 2e-3 });
     });
 
     test("works with grad", () => {

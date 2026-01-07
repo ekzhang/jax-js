@@ -9,8 +9,9 @@ import {
 import { beforeEach, expect, suite, test } from "vitest";
 
 const devicesAvailable = await init();
+const devicesWithLinalg: Device[] = ["cpu", "wasm", "webgpu"];
 
-suite.each(["cpu", "wasm"] as Device[])("device:%s", (device) => {
+suite.each(devicesWithLinalg)("device:%s", (device) => {
   const skipped = !devicesAvailable.includes(device);
   beforeEach(({ skip }) => {
     if (skipped) skip();
