@@ -508,7 +508,7 @@ Cholesky but are missing other building blocks like:
 
 | API                | Support | Notes                                   |
 | ------------------ | ------- | --------------------------------------- |
-| `cholesky`         | 🟡      | Not yet on WebGPU                       |
+| `cholesky`         | 🟢      |                                         |
 | `cond`             | 🔴      |                                         |
 | `cross`            | 🟠      |                                         |
 | `det`              | 🔴      |                                         |
