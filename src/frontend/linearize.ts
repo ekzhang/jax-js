@@ -980,7 +980,6 @@ export function vjp(
   const [primalsInFlat, inTree] = treeFlatten(primalsIn);
 
   if (opts?.hasAux) {
-    // Aux path: expects f to return [output, aux] tuple
     const [fFlat, mainTree, auxTree] = flattenFunWithAux(f, inTree);
     const [primalsOutFlat, fVjpFlat, dispose] = vjpFlat(
       fFlat,
@@ -995,8 +994,6 @@ export function vjp(
     const mainPrimalsFlat = primalsOutFlat.slice(0, mainSize);
     const auxPrimalsFlat = primalsOutFlat.slice(mainSize);
 
-    const auxAvals = auxPrimalsFlat.map((t) => t.aval);
-
     const primalsOut = treeUnflatten(mainTree.value, mainPrimalsFlat);
     const aux = treeUnflatten(auxTree.value, auxPrimalsFlat);
 
@@ -1005,16 +1002,7 @@ export function vjp(
       if (!mainTree.value!.equals(cotangentTree)) {
         throw new TreeMismatchError("vjp", mainTree.value!, cotangentTree);
       }
-
-      const auxZeros = auxAvals.map((aval) =>
-        zeros(aval.shape, { dtype: aval.dtype }),
-      );
-      const fullCotangentsFlat = [
-        ...cotangentsOutFlat.map(pureArray),
-        ...auxZeros,
-      ];
-
-      const cotangentsInFlat = fVjpFlat(...fullCotangentsFlat);
+      const cotangentsInFlat = fVjpFlat(...cotangentsOutFlat.map(pureArray));
       return treeUnflatten(inTree, cotangentsInFlat);
     }) as OwnedFunction<(cotangents: any) => any>;
     fVjp.dispose = dispose;

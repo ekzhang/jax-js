@@ -1225,11 +1225,12 @@ export function flattenFunWithAux(
     const [main, aux] = result;
     const [mainFlat, mainTree] = treeFlatten(main);
     const [auxFlat, auxTree] = treeFlatten(aux);
+    const auxStopped = auxFlat.map(stopGradient);
 
     mainTreeStore.value = mainTree;
     auxTreeStore.value = auxTree;
 
-    return [...mainFlat, ...auxFlat];
+    return [...mainFlat, ...auxStopped];
   };
 
   return [flatFun, mainTreeStore, auxTreeStore];
