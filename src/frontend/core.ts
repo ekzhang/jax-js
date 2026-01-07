@@ -464,6 +464,13 @@ export function triangularSolve(
   }: { lower?: boolean; unitDiagonal?: boolean } = {},
 ) {
   // Solve a triangular linear system `A @ X.T = B.T`, transposed for speed.
+  const as = getShape(a);
+  const bs = getShape(b);
+  if (as.length < 2 || bs.length < 2)
+    throw new Error(`triangular_solve: must be >=2D, got a=${as}, b=${bs}`);
+  const n = as[as.length - 2];
+  if (n !== as[as.length - 1] || n !== bs[bs.length - 1])
+    throw new Error(`triangular_solve: incompatible shapes a=${as}, b=${bs}`);
   if (lower) {
     // Convert lower-triangular solve into upper-triangular solve by
     // flipping the matrices.
@@ -476,6 +483,9 @@ export function triangularSolve(
 }
 
 export function cholesky(x: TracerValue) {
+  const aval = ShapedArray.fromAval(getAval(x));
+  if (aval.ndim < 2 || aval.shape[aval.ndim - 1] !== aval.shape[aval.ndim - 2])
+    throw new Error(`cholesky: expected batch of square matrices, got ${aval}`);
   return bind1(Primitive.Cholesky, [x]);
 }
 
