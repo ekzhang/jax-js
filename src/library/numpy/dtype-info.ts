@@ -1,7 +1,7 @@
 import { DType, isFloatDtype } from "../../alu";
 
 /** @inline */
-type FInfo = {
+type FInfo = Readonly<{
   /** The number of bits occupied by the type. */
   bits: number;
   /** Returns the _dtype_ for which finfo returns information. */
@@ -34,7 +34,7 @@ type FInfo = {
   smallestNormal: number;
   /** The smallest positive subnormal number. */
   smallestSubnormal: number;
-};
+}>;
 
 /** Machine limits for floating-point types. */
 export function finfo(dtype: DType): FInfo {
@@ -42,7 +42,7 @@ export function finfo(dtype: DType): FInfo {
     throw new Error(`finfo: received ${dtype}, must be a floating-point type`);
   switch (dtype) {
     case DType.Float16:
-      return {
+      return Object.freeze({
         bits: 16,
         dtype: DType.Float16,
         eps: 2 ** -10,
@@ -59,9 +59,9 @@ export function finfo(dtype: DType): FInfo {
         resolution: 1e-3,
         smallestNormal: 2 ** -14,
         smallestSubnormal: 2 ** -24,
-      };
+      });
     case DType.Float32:
-      return {
+      return Object.freeze({
         bits: 32,
         dtype: DType.Float32,
         eps: 2 ** -23,
@@ -78,9 +78,9 @@ export function finfo(dtype: DType): FInfo {
         resolution: 1e-6,
         smallestNormal: 2 ** -126,
         smallestSubnormal: 2 ** -149,
-      };
+      });
     case DType.Float64:
-      return {
+      return Object.freeze({
         bits: 64,
         dtype: DType.Float64,
         eps: 2 ** -52,
@@ -97,7 +97,7 @@ export function finfo(dtype: DType): FInfo {
         resolution: 1e-15,
         smallestNormal: 2 ** -1022,
         smallestSubnormal: 2 ** -1074,
-      };
+      });
     default:
       dtype satisfies never; // completeness check
       throw new Error(`finfo: unsupported dtype ${dtype}`);
@@ -105,7 +105,7 @@ export function finfo(dtype: DType): FInfo {
 }
 
 /** @inline */
-type IInfo = {
+type IInfo = Readonly<{
   /** The number of bits occupied by the type. */
   bits: number;
   /** Returns the _dtype_ for which iinfo returns information. */
@@ -114,25 +114,25 @@ type IInfo = {
   max: number;
   /** The smallest representable integer. */
   min: number;
-};
+}>;
 
 /** Machine limits for integer types. */
 export function iinfo(dtype: DType): IInfo {
   switch (dtype) {
     case DType.Int32:
-      return {
+      return Object.freeze({
         bits: 32,
         dtype: DType.Int32,
         max: 2147483647,
         min: -2147483648,
-      };
+      });
     case DType.Uint32:
-      return {
+      return Object.freeze({
         bits: 32,
         dtype: DType.Uint32,
         max: 4294967295,
         min: 0,
-      };
+      });
     default:
       throw new Error(`iinfo: unsupported dtype ${dtype}`);
   }
