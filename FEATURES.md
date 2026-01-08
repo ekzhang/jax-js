@@ -230,7 +230,7 @@ Most operations behave the same way as they do in JAX.
 | `eye`                 | 🟢      |                                         |
 | `fabs`                | ⚪️      | use `abs`                               |
 | `fill_diagonal`       | 🟠      |                                         |
-| `finfo`               | ⚪️      | Python-specific                         |
+| `finfo`               | 🟢      |                                         |
 | `fix`                 | ⚪️      | use `trunc`                             |
 | `flatnonzero`         | 🔴      |                                         |
 | `flip`                | 🟢      |                                         |
@@ -270,7 +270,7 @@ Most operations behave the same way as they do in JAX.
 | `hypot`               | 🟡      | implemented as `sqrt(x^2 + y^2)`        |
 | `i0`                  | 🔴      | transcendental                          |
 | `identity`            | 🟢      |                                         |
-| `iinfo`               | ⚪️      | Python-specific                         |
+| `iinfo`               | 🟢      |                                         |
 | `imag`                | ⚪️      | complex numbers                         |
 | `index_exp`           | ⚪️      | Python-specific                         |
 | `indices`             | 🟠      |                                         |
@@ -508,7 +508,7 @@ Cholesky but are missing other building blocks like:
 
 | API                | Support | Notes                                   |
 | ------------------ | ------- | --------------------------------------- |
-| `cholesky`         | 🟡      | Not yet on WebGPU                       |
+| `cholesky`         | 🟢      |                                         |
 | `cond`             | 🔴      |                                         |
 | `cross`            | 🟠      |                                         |
 | `det`              | 🔴      |                                         |

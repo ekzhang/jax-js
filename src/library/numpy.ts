@@ -71,6 +71,8 @@ export const bool = DType.Bool;
 export const float16 = DType.Float16;
 export const float64 = DType.Float64;
 
+export { finfo, iinfo } from "./numpy/dtype-info";
+
 // Constants section
 
 /** Euler's constant, `e = 2.7182818284590...` */
@@ -1362,9 +1364,6 @@ export function tan(x: ArrayLike): Array {
  *
  * **Note:** JVP is not supported at x=0 due to discontinuous derivative. This
  * requires a custom JVP rule to handle properly (see JAX implementation).
- *
- * @param x - Input array.
- * @returns Array with sinc(x) values.
  */
 export const sinc = jit(function sinc(x: Array): Array {
   const pix = x.ref.mul(Math.PI);
