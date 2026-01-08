@@ -103,6 +103,33 @@ export function lstsq(a: ArrayLike, b: ArrayLike): Array {
 }
 
 export { matmul } from "./numpy";
+
+/** Raise a square matrix to an integer power, via repeated squarings. */
+export function matrixPower(a: ArrayLike, n: number): Array {
+  if (!Number.isInteger(n))
+    throw new Error(`matrixPower: exponent must be an integer, got ${n}`);
+  a = fudgeArray(a);
+  const m = checkSquare("matrixPower", a);
+  if (n === 0) {
+    a.dispose();
+    return np.broadcastTo(np.eye(m), a.shape);
+  }
+  if (n < 0) {
+    a = inv(a);
+    n = -n;
+  }
+  let result: Array | null = null;
+  let a2k = a; // a^(2^k)
+  for (let k = 0; n; k++) {
+    if (k > 0) a2k = np.matmul(a2k.ref, a2k);
+    if (n % 2 === 1)
+      result = result === null ? a2k.ref : np.matmul(result, a2k.ref);
+    n = Math.floor(n / 2);
+  }
+  a2k.dispose();
+  return result!;
+}
+
 export { matrixTranspose } from "./numpy";
 export { outer } from "./numpy";
 

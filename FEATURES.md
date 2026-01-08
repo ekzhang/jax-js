@@ -521,7 +521,7 @@ Cholesky but are missing other building blocks like:
 | `lstsq`            | 🟡      | Cholesky-based, less stable than QR/SVD |
 | `matmul`           | 🟢      |                                         |
 | `matrix_norm`      | 🟠      |                                         |
-| `matrix_power`     | 🔴      |                                         |
+| `matrix_power`     | 🟢      |                                         |
 | `matrix_rank`      | 🔴      |                                         |
 | `matrix_transpose` | 🟢      |                                         |
 | `multi_dot`        | 🟠      |                                         |
