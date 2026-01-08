@@ -1061,9 +1061,9 @@ export class Array extends Tracer {
       [Primitive.Sort]([x]) {
         const routine = new Routine(Routines.Sort, {
           inputShapes: [x.shape],
-          inputDtypes: [x.aval.dtype],
+          inputDtypes: [x.dtype],
           outputShapes: [x.shape],
-          outputDtypes: [x.aval.dtype],
+          outputDtypes: [x.dtype],
         });
         return Array.#routine(routine, [x], [x.#weakType]);
       },
