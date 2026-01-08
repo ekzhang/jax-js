@@ -228,6 +228,11 @@ export class Array extends Tracer {
     return this;
   }
 
+  /** Get the current reference count (for debugging memory management). */
+  get refCount(): number {
+    return this.#rc;
+  }
+
   dispose() {
     this.#check();
     if (--this.#rc === 0) {
