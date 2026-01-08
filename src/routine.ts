@@ -249,7 +249,7 @@ function runLU(
           const factor = out[i * n + j] / diag;
           out[i * n + j] = factor; // L
           for (let col = j + 1; col < n; col++)
-            out[i * n + col] -= factor * out[j * n + col]; // U
+            out[i * n + col] -= factor * out[j * n + col];
         }
       }
     }
