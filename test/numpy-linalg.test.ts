@@ -5,6 +5,7 @@ import {
   init,
   jvp,
   numpy as np,
+  random,
 } from "@jax-js/jax";
 import { beforeEach, expect, suite, test } from "vitest";
 
@@ -18,7 +19,7 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
     defaultDevice(device);
   });
 
-  suite("np.linalg.cholesky()", () => {
+  suite("numpy.linalg.cholesky()", () => {
     test("symmetrizes input by default", () => {
       const x = np.array([
         [4.0, 2.01],
@@ -31,7 +32,7 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
     });
   });
 
-  suite("np.linalg.lstsq()", () => {
+  suite("numpy.linalg.lstsq()", () => {
     test("solves overdetermined system (M > N)", () => {
       // 3x2 system: more equations than unknowns
       const a = np.array([
@@ -176,6 +177,30 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
         expected.push([(fp - fm) / (2 * eps)]);
       }
       expect(db).toBeAllclose(expected, { rtol: 1e-2, atol: 1e-3 });
+    });
+  });
+
+  suite("numpy.linalg.solve()", () => {
+    test("solves simple Ax = b", () => {
+      const a = np.array([
+        [3.0, 2.0],
+        [1.0, 2.0],
+      ]);
+      const b = np.array([5.0, 4.0]);
+      const x = np.linalg.solve(a, b);
+      expect(x).toBeAllclose([0.5, 1.75]);
+    });
+
+    test("solves random batched AX = B", () => {
+      const [k1, k2] = random.split(random.key(0), 2);
+      const a = random.uniform(k1, [10, 15, 15]);
+      const xTrue = random.uniform(k2, [10, 15, 5]);
+      const b = np.matmul(a.ref, xTrue.ref); // B = A @ X_true
+      expect(b.shape).toEqual(xTrue.shape);
+
+      const xPred = np.linalg.solve(a, b);
+      expect(xPred.shape).toEqual(xTrue.shape);
+      expect(xPred).toBeAllclose(xTrue, { rtol: 1e-2, atol: 1e-4 });
     });
   });
 });

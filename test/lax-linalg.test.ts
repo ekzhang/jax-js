@@ -133,7 +133,7 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
 
     test("P @ A = L @ U holds", () => {
       const n = 30;
-      const A = random.normal(random.key(0), [n, n]);
+      const A = random.uniform(random.key(0), [n, n]);
       const [lu, pivots, permutation] = lax.linalg.lu(A.ref);
 
       pivots.dispose(); // Not needed

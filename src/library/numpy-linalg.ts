@@ -1,7 +1,17 @@
 import * as lax from "./lax";
 import { triangularSolve } from "./lax-linalg";
-import { Array, ArrayLike, matmul, matrixTranspose } from "./numpy";
+import {
+  Array,
+  ArrayLike,
+  broadcastTo,
+  matmul,
+  matrixTranspose,
+  squeeze,
+  take,
+} from "./numpy";
 import { fudgeArray } from "../frontend/array";
+import { vmap } from "../frontend/vmap";
+import { generalBroadcast } from "../utils";
 
 /**
  * Compute the Cholesky decomposition of a (batched) positive-definite matrix.
@@ -78,6 +88,65 @@ export function lstsq(a: ArrayLike, b: ArrayLike): Array {
 export { matmul } from "./numpy";
 export { matrixTranspose } from "./numpy";
 export { outer } from "./numpy";
+
+/**
+ * Solve a linear system of equations.
+ *
+ * This solves a (batched) linear system of equations `a @ x = b` for `x` given
+ * `a` and `b`. If `a` is singular, this will return `nan` or `inf` values.
+ *
+ * @param a - Coefficient matrix of shape `(..., N, N)`.
+ * @param b - Values of shape `(N,)` or `(..., N, M)`.
+ * @returns Solution `x` of shape `(..., N)` or `(..., N, M)`.
+ */
+export function solve(a: ArrayLike, b: ArrayLike): Array {
+  a = fudgeArray(a);
+  b = fudgeArray(b);
+  if (a.ndim < 2)
+    throw new Error(`solve: a must be at least 2D, got ${a.aval}`);
+  const [n, n2] = a.shape.slice(-2);
+  if (n !== n2) throw new Error(`solve: a must be square, got ${a.aval}`);
+  if (b.ndim === 0) throw new Error(`solve: b cannot be scalar`);
+  const bIs1d = b.ndim === 1;
+  if (bIs1d) {
+    b = b.reshape([...b.shape, 1]); // We'll remove this at the end.
+  }
+  if (b.shape[b.ndim - 2] !== n) {
+    throw new Error(
+      `solve: leading dimension of b must match size of a, got a=${a.aval}, b=${b.aval}`,
+    );
+  }
+  const m = b.shape[b.ndim - 1];
+  const batchDims = generalBroadcast(
+    a.shape.slice(0, -2),
+    b.shape.slice(0, -2),
+  );
+  a = broadcastTo(a, [...batchDims, n, n]);
+  b = broadcastTo(b, [...batchDims, n, m]);
+
+  // Compute the LU decomposition with partial pivoting.
+  const [lu, pivots, permutation] = lax.linalg.lu(a);
+  pivots.dispose();
+
+  // L @ U @ x = P @ b
+  const Pb = (
+    vmap((x: Array, y: Array) => take(x, y, -2), [0, 0])(
+      b.reshape([-1, n, m]),
+      permutation.reshape([-1, n]),
+    ) as Array
+  ).reshape([...batchDims, n, m]); // Janky vmap until we get `takeAlongAxis()`
+  const LPb = triangularSolve(lu.ref, Pb, {
+    leftSide: true,
+    lower: true,
+    unitDiagonal: true,
+  });
+  let x = triangularSolve(lu, LPb.ref, { leftSide: true, lower: false });
+  if (bIs1d) {
+    x = squeeze(x, -1);
+  }
+  return x;
+}
+
 export { tensordot } from "./numpy";
 export { trace } from "./numpy";
 export { vecdot } from "./numpy";
