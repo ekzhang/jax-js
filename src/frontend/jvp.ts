@@ -334,6 +334,10 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     );
     return [[L], [dL]];
   },
+  [Primitive.LU]([_a], [_da]) {
+    // TODO: implement JVP rule for LU decomposition
+    throw new Error("JVP rule for LU not implemented yet");
+  },
   [Primitive.Jit](primals, tangents, { name, jaxpr }) {
     const newJaxpr = jvpJaxpr(jaxpr);
     const outs = bind(

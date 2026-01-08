@@ -6,6 +6,7 @@ import {
   jvp,
   lax,
   numpy as np,
+  random,
 } from "@jax-js/jax";
 import { beforeEach, expect, suite, test } from "vitest";
 
@@ -114,6 +115,39 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
       expect(dx).toBeAllclose(expected, { rtol: 1e-2, atol: 1e-3 });
     });
   });
+
+  if (device !== "webgpu") {
+    suite("jax.lax.linalg.lu()", () => {
+      test("example with partial pivoting", () => {
+        const A = np.array([
+          [4, 3],
+          [6, 3],
+        ]);
+        const [lu, pivots, permutation] = lax.linalg.lu(A);
+        expect(lu).toBeAllclose([
+          [6, 3],
+          [0.6666667, 1.0],
+        ]);
+        expect(pivots.js()).toEqual([1, 1]);
+        expect(permutation.js()).toEqual([1, 0]);
+      });
+
+      test("P @ A = L @ U holds", () => {
+        const n = 30;
+        const A = random.normal(random.key(0), [n, n]);
+        const [lu, pivots, permutation] = lax.linalg.lu(A.ref);
+
+        pivots.dispose(); // Not needed
+        const P = np.eye(n).slice(permutation);
+        const L = np.tril(lu.ref, -1).add(np.eye(n));
+        const U = np.triu(lu);
+
+        const PA = np.matmul(P, A);
+        const LU = np.matmul(L, U);
+        expect(PA).toBeAllclose(LU, { rtol: 1e-5, atol: 1e-6 });
+      });
+    });
+  }
 
   suite("jax.lax.linalg.triangularSolve()", () => {
     test("solves lower-triangular system", () => {

@@ -2,59 +2,32 @@ import { assertNonNull, checkAxis, range, rep, unzip2, zip } from "../utils";
 import { arange, eye, pureArray } from "./array";
 import {
   AbstractValue,
-  add,
-  argsort,
-  asin,
-  atan,
   bind,
   bind1,
-  bitcast,
   broadcast,
-  cast,
-  ceil,
-  cholesky,
-  compare,
   concatenate,
   conv,
-  cos,
   dot,
-  erf,
-  erfc,
-  exp,
   flattenFun,
   flip,
-  floor,
   fullRaise,
   gather,
-  idiv,
-  log,
-  max,
-  min,
-  mod,
-  mul,
   ndim,
-  neg,
   newMain,
   pad,
   Primitive,
   PrimitiveParams,
   randomBits,
-  reciprocal,
   reduce,
   reshape,
   ShapedArray,
   shrink,
-  sin,
-  sort,
   split,
-  sqrt,
-  stopGradient,
   Trace,
   Tracer,
   TracerValue,
   transpose,
   TreeMismatchError,
-  where,
 } from "./core";
 import {
   JsTree,
@@ -170,6 +143,12 @@ class BatchTrace extends Trace {
       bdimsIn,
       params,
     );
+    if (valOuts.length !== bdimOuts.length) {
+      throw new Error(
+        `vmap rule for ${primitive} returned mismatched lengths: ` +
+          `${valOuts.length} vs ${bdimOuts.length}`,
+      );
+    }
     return zip(valOuts, bdimOuts).map(
       ([x, bd]) => new BatchTracer(this, x, bd),
     );
@@ -196,8 +175,8 @@ type VmapRule<P extends Primitive> = (
  *
  * Reference: https://github.com/jax-ml/jax/blob/jax-v0.8.1/jax/_src/interpreters/batching.py#L1029
  */
-function broadcastBatcher(op: (...x: Tracer[]) => Tracer): VmapRule<Primitive> {
-  return (axisSize, args, dims) => {
+function broadcastBatcher<P extends Primitive>(prim: P): VmapRule<P> {
+  return (axisSize, args, dims, params) => {
     if (args.length === 0) {
       throw new Error("Empty list in broadcastBatcher");
     }
@@ -216,7 +195,7 @@ function broadcastBatcher(op: (...x: Tracer[]) => Tracer): VmapRule<Primitive> {
           (d !== null && d - x.ndim === firstBdim),
       )
     ) {
-      return [[op(...args)], [nd + firstBdim]];
+      return [[bind1(prim, args, params)], [nd + firstBdim]];
     }
 
     // Move the batch axes to the front. If needed, expand arrays so that all
@@ -232,41 +211,54 @@ function broadcastBatcher(op: (...x: Tracer[]) => Tracer): VmapRule<Primitive> {
         ]);
       return x;
     });
-    return [[op(...args)], [0]];
+    return [[bind1(prim, args, params)], [0]];
   };
 }
 
-function unopBatcher<P extends Primitive>(
-  op: (x: Tracer, params: PrimitiveParams<P>) => Tracer,
+function unopBatcher<P extends Primitive>(prim: P): VmapRule<P> {
+  return (axisSize, [x], [xBdim], params) => {
+    return [[bind1(prim, [x], params)], [xBdim]];
+  };
+}
+
+function lastDimsBatcher<P extends Primitive>(
+  prim: P,
+  inputDims: number,
+  numOutputs: number = 1,
 ): VmapRule<P> {
   return (axisSize, [x], [xBdim], params) => {
-    return [[op(x, params)], [xBdim]];
+    assertNonNull(xBdim);
+    if (xBdim < x.ndim - inputDims) {
+      return [bind(prim, [x], params), rep(numOutputs, xBdim)];
+    }
+    x = moveBatchAxis(axisSize, xBdim, 0, x);
+    return [bind(prim, [x], params), rep(numOutputs, 0)];
   };
 }
 
 const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
-  [Primitive.Add]: broadcastBatcher(add),
-  [Primitive.Mul]: broadcastBatcher(mul),
-  [Primitive.Idiv]: broadcastBatcher(idiv),
-  [Primitive.Mod]: broadcastBatcher(mod),
-  [Primitive.Min]: broadcastBatcher(min),
-  [Primitive.Max]: broadcastBatcher(max),
-  [Primitive.Neg]: unopBatcher(neg),
-  [Primitive.Reciprocal]: unopBatcher(reciprocal),
-  [Primitive.Floor]: unopBatcher(floor),
-  [Primitive.Ceil]: unopBatcher(ceil),
-  [Primitive.StopGradient]: unopBatcher(stopGradient),
-  [Primitive.Cast]: unopBatcher((x, { dtype }) => cast(x, dtype)),
-  [Primitive.Bitcast]: unopBatcher((x, { dtype }) => bitcast(x, dtype)),
-  [Primitive.Sin]: unopBatcher(sin),
-  [Primitive.Cos]: unopBatcher(cos),
-  [Primitive.Asin]: unopBatcher(asin),
-  [Primitive.Atan]: unopBatcher(atan),
-  [Primitive.Exp]: unopBatcher(exp),
-  [Primitive.Log]: unopBatcher(log),
-  [Primitive.Erf]: unopBatcher(erf),
-  [Primitive.Erfc]: unopBatcher(erfc),
-  [Primitive.Sqrt]: unopBatcher(sqrt),
+  [Primitive.Add]: broadcastBatcher(Primitive.Add),
+  [Primitive.Mul]: broadcastBatcher(Primitive.Mul),
+  [Primitive.Idiv]: broadcastBatcher(Primitive.Idiv),
+  [Primitive.Mod]: broadcastBatcher(Primitive.Mod),
+  [Primitive.Min]: broadcastBatcher(Primitive.Min),
+  [Primitive.Max]: broadcastBatcher(Primitive.Max),
+  [Primitive.Neg]: unopBatcher(Primitive.Neg),
+  [Primitive.Reciprocal]: unopBatcher(Primitive.Reciprocal),
+  [Primitive.Floor]: unopBatcher(Primitive.Floor),
+  [Primitive.Ceil]: unopBatcher(Primitive.Ceil),
+  [Primitive.StopGradient]: unopBatcher(Primitive.StopGradient),
+  [Primitive.Cast]: unopBatcher(Primitive.Cast),
+  [Primitive.Bitcast]: unopBatcher(Primitive.Bitcast),
+  [Primitive.Sin]: unopBatcher(Primitive.Sin),
+  [Primitive.Cos]: unopBatcher(Primitive.Cos),
+  [Primitive.Asin]: unopBatcher(Primitive.Asin),
+  [Primitive.Atan]: unopBatcher(Primitive.Atan),
+  [Primitive.Exp]: unopBatcher(Primitive.Exp),
+  [Primitive.Log]: unopBatcher(Primitive.Log),
+  [Primitive.Erf]: unopBatcher(Primitive.Erf),
+  [Primitive.Erfc]: unopBatcher(Primitive.Erfc),
+  [Primitive.Sqrt]: unopBatcher(Primitive.Sqrt),
   [Primitive.Reduce](axisSize, [x], [xBdim], { op, axis }) {
     assertNonNull(xBdim);
     const newAxis = axis.map((ax) => ax + (xBdim <= ax ? 1 : 0));
@@ -288,15 +280,8 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
     return [[z], [0]];
   },
   // TODO: pool, pool_transpose
-  [Primitive.Compare](axisSize, args, dims, { op }) {
-    return broadcastBatcher((x, y) => compare(x, y, op))(
-      axisSize,
-      args,
-      dims,
-      {},
-    );
-  },
-  [Primitive.Where]: broadcastBatcher(where),
+  [Primitive.Compare]: broadcastBatcher(Primitive.Compare),
+  [Primitive.Where]: broadcastBatcher(Primitive.Where),
   [Primitive.Concatenate](axisSize, xs, xBdims, { axis }) {
     const minBdim = Math.min(...xBdims.filter((d) => d !== null));
     xs = xs.map((x, i) => moveBatchAxis(axisSize, xBdims[i], minBdim, x));
@@ -391,18 +376,8 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
     const newWidth = width.toSpliced(xBdim, 0, [0, 0]);
     return [[pad(x, newWidth)], [xBdim]];
   },
-  [Primitive.Sort](axisSize, [x], [xBdim]) {
-    assertNonNull(xBdim);
-    if (xBdim !== x.ndim - 1) return [[sort(x)], [xBdim]];
-    x = moveBatchAxis(axisSize, xBdim, 0, x);
-    return [[sort(x)], [0]];
-  },
-  [Primitive.Argsort](axisSize, [x], [xBdim]) {
-    assertNonNull(xBdim);
-    if (xBdim !== x.ndim - 1) return [argsort(x), [xBdim, xBdim]];
-    x = moveBatchAxis(axisSize, xBdim, 0, x);
-    return [argsort(x), [0, 0]];
-  },
+  [Primitive.Sort]: lastDimsBatcher(Primitive.Sort, 1),
+  [Primitive.Argsort]: lastDimsBatcher(Primitive.Argsort, 1, 2),
   [Primitive.TriangularSolve](
     axisSize,
     [a, b],
@@ -423,12 +398,8 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
     const x = bind1(Primitive.TriangularSolve, [a, b], { unitDiagonal });
     return [[x], [0]];
   },
-  [Primitive.Cholesky](axisSize, [x], [xBdim]) {
-    assertNonNull(xBdim);
-    if (xBdim < x.ndim - 2) return [[cholesky(x)], [xBdim]];
-    x = moveBatchAxis(axisSize, xBdim, 0, x);
-    return [[cholesky(x)], [0]];
-  },
+  [Primitive.Cholesky]: lastDimsBatcher(Primitive.Cholesky, 2),
+  [Primitive.LU]: lastDimsBatcher(Primitive.LU, 2, 3),
   [Primitive.Jit](axisSize, args, dims, { name, jaxpr }) {
     const newJaxpr = vmapJaxpr(jaxpr, axisSize, dims);
     const outs = bind(

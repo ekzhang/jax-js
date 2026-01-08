@@ -89,6 +89,7 @@ export enum Primitive {
   Argsort = "argsort", // argsort(x, axis=-1)
   TriangularSolve = "triangular_solve", // A is upper triangular, A @ X.T = B.T
   Cholesky = "cholesky", // A is positive-definite, A = L @ L^T
+  LU = "lu", // LU decomposition with partial pivoting
 
   // JIT compilation
   Jit = "jit",
@@ -487,6 +488,13 @@ export function cholesky(x: TracerValue) {
   if (aval.ndim < 2 || aval.shape[aval.ndim - 1] !== aval.shape[aval.ndim - 2])
     throw new Error(`cholesky: expected batch of square matrices, got ${aval}`);
   return bind1(Primitive.Cholesky, [x]);
+}
+
+export function lu(x: TracerValue) {
+  const aval = ShapedArray.fromAval(getAval(x));
+  if (aval.ndim < 2)
+    throw new Error(`lu: expected batch of matrices, got ${aval}`);
+  return bind(Primitive.LU, [x]);
 }
 
 export function sort(x: TracerValue) {

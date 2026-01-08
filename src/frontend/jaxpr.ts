@@ -980,6 +980,17 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
       throw new TypeError(`cholesky: must be square, got ${a}`);
     return [ShapedArray.fromAval(a)];
   },
+  [Primitive.LU]([a]) {
+    if (a.ndim < 2)
+      throw new TypeError(`lu: requires at least 2D input, got ${a}`);
+    const batch = a.shape.slice(0, -2);
+    const [m, n] = a.shape.slice(-2);
+    return [
+      ShapedArray.fromAval(a),
+      new ShapedArray([...batch, Math.min(m, n)], DType.Int32, false),
+      new ShapedArray([...batch, m], DType.Int32, false),
+    ];
+  },
   [Primitive.Jit](args, { jaxpr }) {
     const { inTypes, outTypes } = typecheckJaxpr(jaxpr);
     if (args.length !== inTypes.length) {
