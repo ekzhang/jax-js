@@ -25,3 +25,35 @@ suite("refcount through grad", () => {
     expect(() => df(x).js()).toThrowError(ReferenceError);
   });
 });
+
+suite("refCount property", () => {
+  test("initial refCount is 1", () => {
+    const x = np.array([1, 2, 3]);
+    expect(x.refCount).toBe(1);
+    x.dispose();
+  });
+
+  test("refCount increments after .ref", () => {
+    const x = np.array([1, 2, 3]);
+    expect(x.refCount).toBe(1);
+    const y = x.ref;
+    expect(x.refCount).toBe(2);
+    expect(y.refCount).toBe(2); // same array
+    x.dispose();
+    y.dispose();
+  });
+
+  test("refCount is 0 after final dispose", () => {
+    const x = np.array([1, 2, 3]);
+    expect(x.refCount).toBe(1);
+    x.dispose();
+    expect(x.refCount).toBe(0);
+  });
+
+  test("refCount is readable on disposed arrays", () => {
+    const x = np.array([1, 2, 3]);
+    x.dispose();
+    // Should not throw - refCount is readable for debugging
+    expect(x.refCount).toBe(0);
+  });
+});
