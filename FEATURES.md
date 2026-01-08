@@ -517,7 +517,7 @@ Cholesky but are missing other building blocks like:
 | `eigh`             | 🔴      |                                         |
 | `eigvals`          | 🔴      |                                         |
 | `eigvalsh`         | 🔴      |                                         |
-| `inv`              | 🔴      |                                         |
+| `inv`              | 🟢      |                                         |
 | `lstsq`            | 🟡      | Cholesky-based, less stable than QR/SVD |
 | `matmul`           | 🟢      |                                         |
 | `matrix_norm`      | 🟠      |                                         |

@@ -203,4 +203,25 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
       expect(xPred).toBeAllclose(xTrue, { rtol: 1e-2, atol: 1e-4 });
     });
   });
+
+  suite("numpy.linalg.inv()", () => {
+    test("computes inverse of simple matrix", () => {
+      const a = np.array([
+        [4.0, 7.0],
+        [2.0, 6.0],
+      ]);
+      const aInv = np.linalg.inv(a.ref);
+      const identity = np.matmul(a, aInv);
+      expect(identity).toBeAllclose(np.eye(2));
+    });
+
+    test("computes inverse of batched matrices", () => {
+      const a = random.uniform(random.key(0), [2, 3, 4, 4]);
+      const aInv = np.linalg.inv(a.ref);
+      const identity = np.matmul(a, aInv);
+      expect(identity).toBeAllclose(np.broadcastTo(np.eye(4), [2, 3, 4, 4]), {
+        atol: 1e-4,
+      });
+    });
+  });
 });

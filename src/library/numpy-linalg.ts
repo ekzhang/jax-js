@@ -4,6 +4,7 @@ import {
   Array,
   ArrayLike,
   broadcastTo,
+  eye,
   matmul,
   matrixTranspose,
   squeeze,
@@ -42,6 +43,18 @@ export function cholesky(
 }
 
 export { diagonal } from "./numpy";
+
+/** Compute the inverse of a square matrix (batched). */
+export function inv(a: ArrayLike): Array {
+  a = fudgeArray(a);
+  if (a.ndim < 2 || a.shape[a.ndim - 1] !== a.shape[a.ndim - 2]) {
+    throw new Error(
+      `inv: input must be at least 2D square matrix, got ${a.aval}`,
+    );
+  }
+  const n = a.shape[a.ndim - 1];
+  return solve(a, eye(n));
+}
 
 /**
  * Return the least-squares solution to a linear equation.
