@@ -16,10 +16,10 @@ Other features just aren't implemented yet. But those can probably be added easi
 
 In the tables below, we use a color legend to refer to functions in JAX:
 
-- 🟢 = supported **(~43%)**
+- 🟢 = supported **(~45%)**
 - 🟡 = supported, with API limitations **(~2%)**
 - 🟠 = not supported, easy to add (<1 day) **(~35%)**
-- 🔴 = not supported **(~20%)**
+- 🔴 = not supported **(~18%)**
 - ⚪️ = not applicable, will not be supported (see notes)
 
 ## [`jax`](https://docs.jax.dev/en/latest/jax.html)
@@ -429,7 +429,7 @@ Most operations behave the same way as they do in JAX.
 | `subtract`            | 🟢      |                                         |
 | `sum`                 | 🟢      |                                         |
 | `swapaxes`            | 🟠      | `transpose` is supported                |
-| `take`                | 🟠      |                                         |
+| `take`                | 🟢      |                                         |
 | `take_along_axis`     | 🟠      |                                         |
 | `tan`                 | 🟢      |                                         |
 | `tanh`                | 🟢      |                                         |
@@ -511,17 +511,17 @@ Cholesky but are missing other building blocks like:
 | `cholesky`         | 🟢      |                                         |
 | `cond`             | 🔴      |                                         |
 | `cross`            | 🟠      |                                         |
-| `det`              | 🔴      |                                         |
+| `det`              | 🟢      |                                         |
 | `diagonal`         | 🟢      |                                         |
 | `eig`              | 🔴      |                                         |
 | `eigh`             | 🔴      |                                         |
 | `eigvals`          | 🔴      |                                         |
 | `eigvalsh`         | 🔴      |                                         |
-| `inv`              | 🔴      |                                         |
+| `inv`              | 🟢      |                                         |
 | `lstsq`            | 🟡      | Cholesky-based, less stable than QR/SVD |
 | `matmul`           | 🟢      |                                         |
 | `matrix_norm`      | 🟠      |                                         |
-| `matrix_power`     | 🔴      |                                         |
+| `matrix_power`     | 🟢      |                                         |
 | `matrix_rank`      | 🔴      |                                         |
 | `matrix_transpose` | 🟢      |                                         |
 | `multi_dot`        | 🟠      |                                         |
@@ -529,8 +529,8 @@ Cholesky but are missing other building blocks like:
 | `outer`            | 🟢      |                                         |
 | `pinv`             | 🔴      |                                         |
 | `qr`               | 🔴      |                                         |
-| `slogdet`          | 🔴      |                                         |
-| `solve`            | 🔴      |                                         |
+| `slogdet`          | 🟢      |                                         |
+| `solve`            | 🟢      |                                         |
 | `svd`              | 🔴      |                                         |
 | `svdvals`          | 🔴      |                                         |
 | `tensordot`        | 🟢      |                                         |

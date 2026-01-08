@@ -2185,4 +2185,33 @@ suite.each(devices)("device:%s", (device) => {
       });
     });
   }
+
+  suite("jax.numpy.take()", () => {
+    test("takes elements from 1D array", () => {
+      const x = np.array([10, 20, 30, 40, 50]);
+      const indices = np.array([3, 0, 4, 1]);
+      const y = np.take(x, indices);
+      expect(y.js()).toEqual([40, 10, 50, 20]);
+    });
+
+    test("takes elements from 2D array along axis", () => {
+      const x = np.array([
+        [10, 20, 30],
+        [40, 50, 60],
+        [70, 80, 90],
+      ]);
+      const indices = np.array([2, 0]);
+      const y0 = np.take(x.ref, indices.ref, 0);
+      expect(y0.js()).toEqual([
+        [70, 80, 90],
+        [10, 20, 30],
+      ]);
+      const y1 = np.take(x, indices, 1);
+      expect(y1.js()).toEqual([
+        [30, 10],
+        [60, 40],
+        [90, 70],
+      ]);
+    });
+  });
 });

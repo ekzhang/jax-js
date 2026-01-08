@@ -34,6 +34,7 @@ const routinePrimitives = new Map([
   [Primitive.Argsort, Routines.Argsort],
   [Primitive.TriangularSolve, Routines.TriangularSolve],
   [Primitive.Cholesky, Routines.Cholesky],
+  [Primitive.LU, Routines.LU],
 ]);
 
 export type JitId = number;
@@ -769,6 +770,7 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   [Primitive.Argsort]: routineNoJit(),
   [Primitive.TriangularSolve]: routineNoJit(),
   [Primitive.Cholesky]: routineNoJit(),
+  [Primitive.LU]: routineNoJit(),
   [Primitive.Jit]() {
     throw new Error(
       "internal: Jit should have been flattened before JIT compilation",

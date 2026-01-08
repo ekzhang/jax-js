@@ -864,6 +864,25 @@ export function argsort(a: ArrayLike, axis: number = -1): Array {
   return fudgeArray(a).argsort(axis);
 }
 
+/**
+ * Take elements from an array along an axis.
+ *
+ * This is equivalent to advanced indexing with integer indices over that
+ * numbered axis. By default, the flattened array is used.
+ */
+export function take(
+  a: ArrayLike,
+  indices: ArrayLike,
+  axis: number | null = null,
+): Array {
+  if (axis === null) {
+    a = ravel(a);
+    axis = 0;
+  }
+  axis = checkAxis(axis, ndim(a));
+  return core.gather(a, [indices], [axis], axis) as Array;
+}
+
 /** Return if two arrays are element-wise equal within a tolerance. */
 export function allclose(
   actual: Parameters<typeof array>[0],

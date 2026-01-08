@@ -1065,19 +1065,19 @@ export class Array extends Tracer {
       },
       [Primitive.Sort]([x]) {
         const routine = new Routine(Routines.Sort, {
-          inputShapes: [x.aval.shape],
-          inputDtypes: [x.aval.dtype],
-          outputShapes: [x.aval.shape],
-          outputDtypes: [x.aval.dtype],
+          inputShapes: [x.shape],
+          inputDtypes: [x.dtype],
+          outputShapes: [x.shape],
+          outputDtypes: [x.dtype],
         });
         return Array.#routine(routine, [x], [x.#weakType]);
       },
       [Primitive.Argsort]([x]) {
         const routine = new Routine(Routines.Argsort, {
-          inputShapes: [x.aval.shape],
-          inputDtypes: [x.aval.dtype],
-          outputShapes: [x.aval.shape, x.aval.shape],
-          outputDtypes: [x.aval.dtype, DType.Int32],
+          inputShapes: [x.shape],
+          inputDtypes: [x.dtype],
+          outputShapes: [x.shape, x.shape],
+          outputDtypes: [x.dtype, DType.Int32],
         });
         return Array.#routine(routine, [x], [x.#weakType, false]);
       },
@@ -1085,10 +1085,10 @@ export class Array extends Tracer {
         const routine = new Routine(
           Routines.TriangularSolve,
           {
-            inputShapes: [a.aval.shape, b.aval.shape],
-            inputDtypes: [a.aval.dtype, b.aval.dtype],
-            outputShapes: [b.aval.shape],
-            outputDtypes: [b.aval.dtype],
+            inputShapes: [a.shape, b.shape],
+            inputDtypes: [a.dtype, b.dtype],
+            outputShapes: [b.shape],
+            outputDtypes: [b.dtype],
           },
           { unitDiagonal },
         );
@@ -1096,12 +1096,23 @@ export class Array extends Tracer {
       },
       [Primitive.Cholesky]([a]) {
         const routine = new Routine(Routines.Cholesky, {
-          inputShapes: [a.aval.shape],
-          inputDtypes: [a.aval.dtype],
-          outputShapes: [a.aval.shape],
-          outputDtypes: [a.aval.dtype],
+          inputShapes: [a.shape],
+          inputDtypes: [a.dtype],
+          outputShapes: [a.shape],
+          outputDtypes: [a.dtype],
         });
         return Array.#routine(routine, [a], [a.#weakType]);
+      },
+      [Primitive.LU]([a]) {
+        const batch = a.shape.slice(0, -2);
+        const [m, n] = a.shape.slice(-2);
+        const routine = new Routine(Routines.LU, {
+          inputShapes: [a.shape],
+          inputDtypes: [a.dtype],
+          outputShapes: [a.shape, [...batch, Math.min(m, n)], [...batch, m]],
+          outputDtypes: [a.dtype, DType.Int32, DType.Int32],
+        });
+        return Array.#routine(routine, [a], [a.#weakType, false, false]);
       },
       [Primitive.Jit](args, { jaxpr }) {
         if (jaxpr.inBinders.length !== args.length) {

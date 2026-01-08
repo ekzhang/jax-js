@@ -89,6 +89,7 @@ export enum Primitive {
   Argsort = "argsort", // argsort(x, axis=-1)
   TriangularSolve = "triangular_solve", // A is upper triangular, A @ X.T = B.T
   Cholesky = "cholesky", // A is positive-definite, A = L @ L^T
+  LU = "lu", // LU decomposition with partial pivoting
 
   // JIT compilation
   Jit = "jit",
@@ -489,6 +490,13 @@ export function cholesky(x: TracerValue) {
   return bind1(Primitive.Cholesky, [x]);
 }
 
+export function lu(x: TracerValue) {
+  const aval = ShapedArray.fromAval(getAval(x));
+  if (aval.ndim < 2)
+    throw new Error(`lu: expected batch of matrices, got ${aval}`);
+  return bind(Primitive.LU, [x]);
+}
+
 export function sort(x: TracerValue) {
   const nd = ndim(x);
   if (nd === 0) throw new Error("sort: requires at least 1D input");
@@ -724,6 +732,11 @@ export abstract class Tracer {
   }
   mul(other: this | TracerValue) {
     return mul(this, other) as this;
+  }
+  mod(other: this | TracerValue) {
+    // Note: Unlike `jax.numpy.remainder()`, this has JS rounding behavior where
+    // the result matches the sign of the numerator. `1 % -2 === 1`.
+    return mod(this, other) as this;
   }
   greater(other: this | TracerValue) {
     return greater(this, other) as this;

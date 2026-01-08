@@ -6,6 +6,7 @@ import {
   jvp,
   lax,
   numpy as np,
+  random,
 } from "@jax-js/jax";
 import { beforeEach, expect, suite, test } from "vitest";
 
@@ -112,6 +113,62 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
         }
       }
       expect(dx).toBeAllclose(expected, { rtol: 1e-2, atol: 1e-3 });
+    });
+  });
+
+  suite("jax.lax.linalg.lu()", () => {
+    test("example with partial pivoting", () => {
+      const A = np.array([
+        [4, 3],
+        [6, 3],
+      ]);
+      const [lu, pivots, permutation] = lax.linalg.lu(A);
+      expect(lu).toBeAllclose([
+        [6, 3],
+        [0.6666667, 1.0],
+      ]);
+      expect(pivots.js()).toEqual([1, 1]);
+      expect(permutation.js()).toEqual([1, 0]);
+    });
+
+    test("P @ A = L @ U holds", () => {
+      const n = 30;
+      const A = random.uniform(random.key(0), [n, n]);
+      const [lu, pivots, permutation] = lax.linalg.lu(A.ref);
+
+      pivots.dispose(); // Not needed
+      const P = np.eye(n).slice(permutation);
+      const L = np.tril(lu.ref, -1).add(np.eye(n));
+      const U = np.triu(lu);
+
+      const PA = np.matmul(P, A);
+      const LU = np.matmul(L, U);
+      expect(PA).toBeAllclose(LU, { rtol: 1e-5, atol: 1e-6 });
+    });
+
+    test("works with jvp", () => {
+      const A = np.array([
+        [4.0, 3.0, 6.3],
+        [6.0, 3.0, -2.4],
+      ]);
+      const dA = np.array([
+        [0.1, 0.2, -0.2],
+        [0.3, 0.4, -0.1],
+      ]);
+
+      const luFn = (x: np.Array) => {
+        const [lu, pivots, permutation] = lax.linalg.lu(x);
+        pivots.dispose();
+        permutation.dispose();
+        return lu;
+      };
+      const [lu, dlu] = jvp(luFn, [A.ref], [dA.ref]);
+
+      // Verify dlu by finite differences
+      const eps = 1e-4;
+      const lu2 = lax.linalg.lu(A.add(dA.mul(eps)))[0];
+      const dlu_fd = lu2.sub(lu).div(eps);
+      expect(dlu).toBeAllclose(dlu_fd, { rtol: 1e-2, atol: 1e-3 });
     });
   });
 

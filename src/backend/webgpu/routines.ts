@@ -447,6 +447,132 @@ fn main(
   ];
 }
 
+/**
+ * Generate an LU decomposition shader with partial pivoting.
+ *
+ * Computes PA = LU where P is a permutation matrix, L is lower triangular
+ * with unit diagonal, and U is upper triangular.
+ *
+ * For each column j:
+ *   1. Find pivot row (max absolute value in column j, rows >= j)
+ *   2. Swap rows j and pivot row
+ *   3. Compute L[i][j] = A[i][j] / A[j][j] for i > j
+ *   4. Update submatrix: A[i][k] -= L[i][j] * A[j][k] for i > j, k > j
+ */
+function createLU(device: GPUDevice, type: RoutineType): ShaderInfo[] {
+  const dtype = type.inputDtypes[0];
+  const shape = type.inputShapes[0];
+  const m = shape[shape.length - 2]; // rows
+  const n = shape[shape.length - 1]; // cols
+  const r = Math.min(m, n);
+  const batches = prod(shape.slice(0, -2));
+
+  const needsF16 = dtype === DType.Float16;
+  const ty = dtypeToWgsl(dtype, true);
+
+  const workgroupSize = findPow2(
+    Math.max(m, n),
+    device.limits.maxComputeWorkgroupSizeX,
+  );
+
+  const code = `
+${needsF16 ? "enable f16;" : ""}
+${headerWgsl}
+
+@group(0) @binding(0) var<storage, read> input: array<${ty}>;
+@group(0) @binding(1) var<storage, read_write> lu: array<${ty}>;
+@group(0) @binding(2) var<storage, read_write> pivots: array<i32>;
+@group(0) @binding(3) var<storage, read_write> perm: array<i32>;
+
+var<workgroup> pivot_row: u32;
+var<workgroup> pivot_val: ${ty};
+
+@compute @workgroup_size(${workgroupSize})
+fn main(
+  @builtin(workgroup_id) wg_id: vec3<u32>,
+  @builtin(local_invocation_id) local_id: vec3<u32>,
+) {
+  let batch = wg_id.x + wg_id.y * ${gridOffsetY}u;
+  if (batch >= ${batches}u) {
+    return;
+  }
+
+  let lu_base = batch * ${m * n}u;
+  let piv_base = batch * ${r}u;
+  let perm_base = batch * ${m}u;
+  let tid = local_id.x;
+
+  // Copy input to lu
+  for (var idx = tid; idx < ${m * n}u; idx += ${workgroupSize}u) {
+    lu[lu_base + idx] = input[lu_base + idx];
+  }
+  // Initialize permutation
+  for (var idx = tid; idx < ${m}u; idx += ${workgroupSize}u) {
+    perm[perm_base + idx] = i32(idx);
+  }
+  storageBarrier();
+
+  // LU decomposition with partial pivoting
+  for (var j = 0u; j < ${r}u; j++) {
+    // Step 1: Thread 0 finds pivot (max abs value in column j, rows >= j)
+    if (tid == 0u) {
+      var max_val = abs(lu[lu_base + j * ${n}u + j]);
+      var max_row = j;
+      for (var i = j + 1u; i < ${m}u; i++) {
+        let val = abs(lu[lu_base + i * ${n}u + j]);
+        if (val > max_val) {
+          max_val = val;
+          max_row = i;
+        }
+      }
+      pivot_row = max_row;
+      pivot_val = lu[lu_base + max_row * ${n}u + j];
+      pivots[piv_base + j] = i32(max_row);
+    }
+    workgroupBarrier();
+
+    // Step 2: Swap rows j and pivot_row (threads collaborate)
+    let pr = pivot_row;
+    if (pr != j) {
+      for (var col = tid; col < ${n}u; col += ${workgroupSize}u) {
+        let tmp = lu[lu_base + j * ${n}u + col];
+        lu[lu_base + j * ${n}u + col] = lu[lu_base + pr * ${n}u + col];
+        lu[lu_base + pr * ${n}u + col] = tmp;
+      }
+      if (tid == 0u) {
+        let tmp_p = perm[perm_base + j];
+        perm[perm_base + j] = perm[perm_base + pr];
+        perm[perm_base + pr] = tmp_p;
+      }
+    }
+    storageBarrier();
+
+    // Step 3: Compute L[i][j] and update submatrix
+    // Each thread handles one row i > j
+    for (var i = j + 1u + tid; i < ${m}u; i += ${workgroupSize}u) {
+      let factor = lu[lu_base + i * ${n}u + j] / pivot_val;
+      lu[lu_base + i * ${n}u + j] = factor; // L[i][j]
+      for (var k = j + 1u; k < ${n}u; k++) {
+        lu[lu_base + i * ${n}u + k] -= factor * lu[lu_base + j * ${n}u + k];
+      }
+    }
+    storageBarrier();
+  }
+}
+`.trim();
+
+  const grid = calculateGrid(batches);
+  return [
+    {
+      code,
+      numInputs: 1,
+      numOutputs: 3,
+      hasUniform: false,
+      passes: [{ grid }],
+    },
+  ];
+}
+
 export function createRoutineShader(
   device: GPUDevice,
   routine: Routine,
@@ -460,6 +586,8 @@ export function createRoutineShader(
       return createTriangularSolve(device, routine.type, routine.params);
     case Routines.Cholesky:
       return createCholesky(device, routine.type);
+    case Routines.LU:
+      return createLU(device, routine.type);
     default:
       throw new UnsupportedRoutineError(routine.name, "webgpu");
   }

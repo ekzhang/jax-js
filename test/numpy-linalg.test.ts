@@ -5,6 +5,8 @@ import {
   init,
   jvp,
   numpy as np,
+  random,
+  valueAndGrad,
 } from "@jax-js/jax";
 import { beforeEach, expect, suite, test } from "vitest";
 
@@ -18,7 +20,7 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
     defaultDevice(device);
   });
 
-  suite("np.linalg.cholesky()", () => {
+  suite("numpy.linalg.cholesky()", () => {
     test("symmetrizes input by default", () => {
       const x = np.array([
         [4.0, 2.01],
@@ -31,7 +33,47 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
     });
   });
 
-  suite("np.linalg.lstsq()", () => {
+  suite("numpy.linalg.det()", () => {
+    test("computes determinant of simple matrix", () => {
+      const a = np.array([
+        [4.0, 7.0],
+        [2.0, 6.0],
+      ]);
+      const detA = np.linalg.det(a.ref);
+      expect(detA).toBeAllclose(10.0);
+    });
+
+    test("gradient of det is adjugate.mT", () => {
+      const a = random.uniform(random.key(0), [15, 15]);
+      const g = valueAndGrad(np.linalg.det);
+      const [detA, da] = g(a.ref);
+      const adjA = np.linalg.inv(a).mul(detA);
+      expect(da).toBeAllclose(np.matrixTranspose(adjA), { rtol: 1e-3 });
+    });
+  });
+
+  suite("numpy.linalg.inv()", () => {
+    test("computes inverse of simple matrix", () => {
+      const a = np.array([
+        [4.0, 7.0],
+        [2.0, 6.0],
+      ]);
+      const aInv = np.linalg.inv(a.ref);
+      const identity = np.matmul(a, aInv);
+      expect(identity).toBeAllclose(np.eye(2));
+    });
+
+    test("computes inverse of batched matrices", () => {
+      const a = random.uniform(random.key(0), [2, 3, 4, 4]);
+      const aInv = np.linalg.inv(a.ref);
+      const identity = np.matmul(a, aInv);
+      expect(identity).toBeAllclose(np.broadcastTo(np.eye(4), [2, 3, 4, 4]), {
+        atol: 1e-4,
+      });
+    });
+  });
+
+  suite("numpy.linalg.lstsq()", () => {
     test("solves overdetermined system (M > N)", () => {
       // 3x2 system: more equations than unknowns
       const a = np.array([
@@ -176,6 +218,42 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
         expected.push([(fp - fm) / (2 * eps)]);
       }
       expect(db).toBeAllclose(expected, { rtol: 1e-2, atol: 1e-3 });
+    });
+  });
+
+  suite("numpy.linalg.slogdet()", () => {
+    test("computes slogdet of simple matrix", () => {
+      const a = np.array([
+        [4.0, 7.0],
+        [2.0, 6.0],
+      ]);
+      const [sign, logdet] = np.linalg.slogdet(a.ref);
+      expect(sign).toBeAllclose(1);
+      expect(logdet).toBeAllclose(Math.log(10));
+    });
+  });
+
+  suite("numpy.linalg.solve()", () => {
+    test("solves simple Ax = b", () => {
+      const a = np.array([
+        [3.0, 2.0],
+        [1.0, 2.0],
+      ]);
+      const b = np.array([5.0, 4.0]);
+      const x = np.linalg.solve(a, b);
+      expect(x).toBeAllclose([0.5, 1.75]);
+    });
+
+    test("solves random batched AX = B", () => {
+      const [k1, k2] = random.split(random.key(0), 2);
+      const a = random.uniform(k1, [10, 15, 15]);
+      const xTrue = random.uniform(k2, [10, 15, 5]);
+      const b = np.matmul(a.ref, xTrue.ref); // B = A @ X_true
+      expect(b.shape).toEqual(xTrue.shape);
+
+      const xPred = np.linalg.solve(a, b);
+      expect(xPred.shape).toEqual(xTrue.shape);
+      expect(xPred).toBeAllclose(xTrue, { rtol: 1e-2, atol: 1e-4 });
     });
   });
 });

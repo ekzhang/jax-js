@@ -32,13 +32,43 @@ export class Routine {
 export enum Routines {
   /** Stable sorting algorithm along the last axis. */
   Sort = "Sort",
+
   /** Returns `int32` indices of the stably sorted array. */
   Argsort = "Argsort",
 
-  /** Solve a triangular system of questions. */
+  /**
+   * Solve a triangular system of equations.
+   *
+   * The first batch of inputs `A` should be of shape `[..., N, N]` and upper
+   * triangular, while the second batch `B` should be of shape `[..., M, N]`.
+   *
+   * Solves for `X` in the equation `A @ X.T = B.T`, where `A` is the
+   * triangular matrix. This is equivalent to `X = B @ A^-T`.
+   */
   TriangularSolve = "TriangularSolve",
-  /** Cholesky decomposition of 2D positive semi-definite matrices. */
+
+  /**
+   * Cholesky decomposition of 2D positive semi-definite matrices.
+   *
+   * The input batch should be of shape `[..., N, N]`, and the output batch is
+   * of the same shape, containing the lower-triangular matrix `L` such that
+   * `A = L @ L.T`. Behavior is unspecified if A is not positive semi-definite.
+   */
   Cholesky = "Cholesky",
+
+  /**
+   * LU decomposition of 2D rectangular matrices.
+   *
+   * The input is a batch of shape `[..., M, N]`, and the output is a tuple of
+   * three arrays: `LU, Pivots, Permutation`.
+   *
+   * - `LU` is of shape `[..., M, N]`, containing the combined lower and upper
+   *   triangular matrices. (lower triangular = implicit unit diagonal)
+   * - `Pivots` is of shape `[..., min(M, N)]`, containing the row swaps.
+   * - `Permutation` is of shape `[..., M]`, containing the permutation vector
+   *   such that `P = eye(M).slice(Permutation)` -> `P @ A = L @ U`.
+   */
+  LU = "LU",
 }
 
 export interface RoutineType {
@@ -72,6 +102,8 @@ export function runCpuRoutine(
       return runTriangularSolve(type, inputAr, outputAr, routine.params);
     case Routines.Cholesky:
       return runCholesky(type, inputAr, outputAr);
+    case Routines.LU:
+      return runLU(type, inputAr, outputAr);
     default:
       name satisfies never; // Exhaustiveness check
   }
@@ -161,6 +193,64 @@ function runCholesky(type: RoutineType, [x]: DataArray[], [y]: DataArray[]) {
           sum -= out[i * n + k] * out[j * n + k];
         }
         out[i * n + j] = i === j ? Math.sqrt(sum) : sum / out[j * n + j];
+      }
+    }
+  }
+}
+
+function runLU(
+  type: RoutineType,
+  [a]: DataArray[],
+  [lu, pivots, perm]: DataArray[],
+) {
+  const shape = type.inputShapes[0];
+  if (shape.length < 2) throw new Error("lu: input must be at least 2D");
+  const m = shape[shape.length - 2]; // rows
+  const n = shape[shape.length - 1]; // cols
+  const r = Math.min(m, n);
+
+  for (let offset = 0; offset < a.length; offset += m * n) {
+    const ar = a.subarray(offset, offset + m * n);
+    const out = lu.subarray(offset, offset + m * n);
+    const batchIdx = offset / (m * n);
+    const piv = pivots.subarray(batchIdx * r, (batchIdx + 1) * r);
+    const p = perm.subarray(batchIdx * m, (batchIdx + 1) * m);
+
+    out.set(ar);
+    for (let i = 0; i < m; i++) p[i] = i;
+
+    for (let j = 0; j < r; j++) {
+      // Partial pivoting on column j
+      let maxVal = Math.abs(out[j * n + j]);
+      let maxRow = j;
+      for (let i = j + 1; i < m; i++) {
+        const val = Math.abs(out[i * n + j]);
+        if (val > maxVal) {
+          maxVal = val;
+          maxRow = i;
+        }
+      }
+      piv[j] = maxRow;
+      if (maxRow !== j) {
+        for (let col = 0; col < n; col++) {
+          const tmp = out[j * n + col];
+          out[j * n + col] = out[maxRow * n + col];
+          out[maxRow * n + col] = tmp;
+        }
+        const tmpP = p[j];
+        p[j] = p[maxRow];
+        p[maxRow] = tmpP;
+      }
+
+      // Update L[j+1:,j] and U[j+1:,j+1:] matrices
+      const diag = out[j * n + j];
+      if (diag !== 0) {
+        for (let i = j + 1; i < m; i++) {
+          const factor = out[i * n + j] / diag;
+          out[i * n + j] = factor; // L
+          for (let col = j + 1; col < n; col++)
+            out[i * n + col] -= factor * out[j * n + col];
+        }
       }
     }
   }

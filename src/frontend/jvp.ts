@@ -1,11 +1,12 @@
 import { AluOp, isFloatDtype } from "../alu";
+import { Pair } from "../shape";
 import {
   JsTree,
   flatten as treeFlatten,
   unflatten as treeUnflatten,
 } from "../tree";
-import { unzip2, zip } from "../utils";
-import { pureArray, triu, zerosLike } from "./array";
+import { checkAxis, unzip2, zip } from "../utils";
+import { arange, eye, pureArray, tril, triu, zerosLike } from "./array";
 import {
   AbstractValue,
   argsort,
@@ -28,12 +29,14 @@ import {
   idiv,
   less,
   log,
+  lu,
   max,
   min,
   mod,
   neg,
   newMain,
   notEqual,
+  pad,
   Primitive,
   PrimitiveParams,
   reciprocal,
@@ -147,10 +150,19 @@ function batchMatmulT(a: Tracer, b: Tracer): Tracer {
     b.reshape(b.shape.toSpliced(-2, 0, 1)),
   );
 }
-
 /** Batch matrix transpose. */
 function mT(a: Tracer): Tracer {
   return moveaxis(a, -2, -1);
+}
+function sliceAxis(a: Tracer, axis: number, p: Pair): Tracer {
+  const slices = Array(a.shape.length).fill([]);
+  slices[checkAxis(axis, a.ndim)] = p;
+  return a.slice(...slices);
+}
+function padAxis(a: Tracer, axis: number, p: Pair): Tracer {
+  const pads = Array(a.shape.length).fill([0, 0]);
+  pads[checkAxis(axis, a.ndim)] = p;
+  return pad(a, pads);
 }
 
 const jvpRules: { [P in Primitive]: JvpRule<P> } = {
@@ -333,6 +345,48 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
         .mul(0.5),
     );
     return [[L], [dL]];
+  },
+  [Primitive.LU]([a], [da]) {
+    // https://github.com/jax-ml/jax/blob/jax-v0.8.2/jax/_src/lax/linalg.py#L1484
+    const [luMatrix, pivots, permutation] = lu(a);
+    const [m, n] = a.shape.slice(-2);
+    const k = Math.min(m, n);
+    // Extract full L: lower triangular with unit diagonal, shape [..., m, m]
+    const luSliceL = sliceAxis(luMatrix.ref, -1, [0, k]);
+    const lLower = tril(luSliceL as any, -1);
+    const lPadded = m > k ? padAxis(lLower, -1, [0, m - k]) : lLower;
+    const L = lPadded.add(eye(m));
+    // Extract full U: upper triangular, shape [..., n, n]
+    // U = triu(lu[:k, :]) padded to [..., n, n] + eye for remaining rows
+    const luSliceU = sliceAxis(luMatrix.ref, -2, [0, k]);
+    const uUpper = triu(luSliceU as any);
+    const uPadded = n > k ? padAxis(uUpper, -2, [0, n - k]) : uUpper;
+    const uEye =
+      n > k
+        ? padAxis(padAxis(eye(n - k), -1, [k, 0]), -2, [k, 0])
+        : zerosLike(uPadded.ref);
+    const U = uPadded.add(uEye);
+    // Apply permutation to da: P @ da (reorder rows)
+    const P = permutation.ref
+      .reshape([...permutation.shape, 1])
+      .equal(arange(m))
+      .astype(da.dtype);
+    const pda = batchMatmulT(P, mT(da));
+    // Solve L @ la = P @ da for la (la = L^{-1} @ P @ da)
+    const la = mT(
+      triangularSolve(L.ref, mT(pda), {
+        lower: true,
+        unitDiagonal: true,
+      }),
+    );
+    // Solve lau @ U = la for lau (lau = la @ U^{-1})
+    const lau = triangularSolve(mT(U.ref), la, { lower: true });
+    const lDot = batchMatmulT(L, mT(tril(lau.ref as any, -1))); // L' = L @ tril(lau)
+    const uDot = batchMatmulT(triu(lau as any), mT(U)); // U' = triu(lau) @ U
+    return [
+      [luMatrix, pivots, permutation],
+      [lDot.add(uDot), zerosLike(pivots.ref), zerosLike(permutation.ref)],
+    ];
   },
   [Primitive.Jit](primals, tangents, { name, jaxpr }) {
     const newJaxpr = jvpJaxpr(jaxpr);
