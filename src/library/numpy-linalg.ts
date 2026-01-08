@@ -2,7 +2,6 @@ import * as lax from "./lax";
 import { triangularSolve } from "./lax-linalg";
 import * as np from "./numpy";
 import { Array, ArrayLike, fudgeArray } from "../frontend/array";
-import { vmap } from "../frontend/vmap";
 import { generalBroadcast } from "../utils";
 
 function checkSquare(name: string, a: Array) {
@@ -185,13 +184,11 @@ export function solve(a: ArrayLike, b: ArrayLike): Array {
   pivots.dispose();
 
   // L @ U @ x = P @ b
-  const Pb = (
-    vmap((x: Array, y: Array) => np.take(x, y, -2), [0, 0])(
-      b.reshape([-1, n, m]),
-      permutation.reshape([-1, n]),
-    ) as Array
-  ).reshape([...batchDims, n, m]); // Janky vmap until we get `takeAlongAxis()`
-  const LPb = triangularSolve(lu.ref, Pb, {
+  const P = np
+    .arange(n)
+    .equal(permutation.reshape([...permutation.shape, 1]))
+    .astype(b.dtype);
+  const LPb = triangularSolve(lu.ref, np.matmul(P, b), {
     leftSide: true,
     lower: true,
     unitDiagonal: true,

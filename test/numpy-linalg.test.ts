@@ -6,6 +6,7 @@ import {
   jvp,
   numpy as np,
   random,
+  valueAndGrad,
 } from "@jax-js/jax";
 import { beforeEach, expect, suite, test } from "vitest";
 
@@ -40,6 +41,14 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
       ]);
       const detA = np.linalg.det(a.ref);
       expect(detA).toBeAllclose(10.0);
+    });
+
+    test("gradient of det is adjugate.mT", () => {
+      const a = random.uniform(random.key(0), [15, 15]);
+      const g = valueAndGrad(np.linalg.det);
+      const [detA, da] = g(a.ref);
+      const adjA = np.linalg.inv(a).mul(detA);
+      expect(da).toBeAllclose(np.matrixTranspose(adjA), { rtol: 1e-3 });
     });
   });
 

@@ -145,6 +145,31 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
       const LU = np.matmul(L, U);
       expect(PA).toBeAllclose(LU, { rtol: 1e-5, atol: 1e-6 });
     });
+
+    test("works with jvp", () => {
+      const A = np.array([
+        [4.0, 3.0, 6.3],
+        [6.0, 3.0, -2.4],
+      ]);
+      const dA = np.array([
+        [0.1, 0.2, -0.2],
+        [0.3, 0.4, -0.1],
+      ]);
+
+      const luFn = (x: np.Array) => {
+        const [lu, pivots, permutation] = lax.linalg.lu(x);
+        pivots.dispose();
+        permutation.dispose();
+        return lu;
+      };
+      const [lu, dlu] = jvp(luFn, [A.ref], [dA.ref]);
+
+      // Verify dlu by finite differences
+      const eps = 1e-4;
+      const lu2 = lax.linalg.lu(A.add(dA.mul(eps)))[0];
+      const dlu_fd = lu2.sub(lu).div(eps);
+      expect(dlu).toBeAllclose(dlu_fd, { rtol: 1e-2, atol: 1e-3 });
+    });
   });
 
   suite("jax.lax.linalg.triangularSolve()", () => {
