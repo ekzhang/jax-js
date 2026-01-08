@@ -32,6 +32,38 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
     });
   });
 
+  suite("numpy.linalg.det()", () => {
+    test("computes determinant of simple matrix", () => {
+      const a = np.array([
+        [4.0, 7.0],
+        [2.0, 6.0],
+      ]);
+      const detA = np.linalg.det(a.ref);
+      expect(detA).toBeAllclose(10.0);
+    });
+  });
+
+  suite("numpy.linalg.inv()", () => {
+    test("computes inverse of simple matrix", () => {
+      const a = np.array([
+        [4.0, 7.0],
+        [2.0, 6.0],
+      ]);
+      const aInv = np.linalg.inv(a.ref);
+      const identity = np.matmul(a, aInv);
+      expect(identity).toBeAllclose(np.eye(2));
+    });
+
+    test("computes inverse of batched matrices", () => {
+      const a = random.uniform(random.key(0), [2, 3, 4, 4]);
+      const aInv = np.linalg.inv(a.ref);
+      const identity = np.matmul(a, aInv);
+      expect(identity).toBeAllclose(np.broadcastTo(np.eye(4), [2, 3, 4, 4]), {
+        atol: 1e-4,
+      });
+    });
+  });
+
   suite("numpy.linalg.lstsq()", () => {
     test("solves overdetermined system (M > N)", () => {
       // 3x2 system: more equations than unknowns
@@ -180,6 +212,18 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
     });
   });
 
+  suite("numpy.linalg.slogdet()", () => {
+    test("computes slogdet of simple matrix", () => {
+      const a = np.array([
+        [4.0, 7.0],
+        [2.0, 6.0],
+      ]);
+      const [sign, logdet] = np.linalg.slogdet(a.ref);
+      expect(sign).toBeAllclose(1);
+      expect(logdet).toBeAllclose(Math.log(10));
+    });
+  });
+
   suite("numpy.linalg.solve()", () => {
     test("solves simple Ax = b", () => {
       const a = np.array([
@@ -201,27 +245,6 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
       const xPred = np.linalg.solve(a, b);
       expect(xPred.shape).toEqual(xTrue.shape);
       expect(xPred).toBeAllclose(xTrue, { rtol: 1e-2, atol: 1e-4 });
-    });
-  });
-
-  suite("numpy.linalg.inv()", () => {
-    test("computes inverse of simple matrix", () => {
-      const a = np.array([
-        [4.0, 7.0],
-        [2.0, 6.0],
-      ]);
-      const aInv = np.linalg.inv(a.ref);
-      const identity = np.matmul(a, aInv);
-      expect(identity).toBeAllclose(np.eye(2));
-    });
-
-    test("computes inverse of batched matrices", () => {
-      const a = random.uniform(random.key(0), [2, 3, 4, 4]);
-      const aInv = np.linalg.inv(a.ref);
-      const identity = np.matmul(a, aInv);
-      expect(identity).toBeAllclose(np.broadcastTo(np.eye(4), [2, 3, 4, 4]), {
-        atol: 1e-4,
-      });
     });
   });
 });

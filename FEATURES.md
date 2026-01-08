@@ -511,7 +511,7 @@ Cholesky but are missing other building blocks like:
 | `cholesky`         | 🟢      |                                         |
 | `cond`             | 🔴      |                                         |
 | `cross`            | 🟠      |                                         |
-| `det`              | 🔴      |                                         |
+| `det`              | 🟢      |                                         |
 | `diagonal`         | 🟢      |                                         |
 | `eig`              | 🔴      |                                         |
 | `eigh`             | 🔴      |                                         |
@@ -529,7 +529,7 @@ Cholesky but are missing other building blocks like:
 | `outer`            | 🟢      |                                         |
 | `pinv`             | 🔴      |                                         |
 | `qr`               | 🔴      |                                         |
-| `slogdet`          | 🔴      |                                         |
+| `slogdet`          | 🟢      |                                         |
 | `solve`            | 🟢      |                                         |
 | `svd`              | 🔴      |                                         |
 | `svdvals`          | 🔴      |                                         |

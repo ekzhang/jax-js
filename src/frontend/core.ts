@@ -733,6 +733,11 @@ export abstract class Tracer {
   mul(other: this | TracerValue) {
     return mul(this, other) as this;
   }
+  mod(other: this | TracerValue) {
+    // Note: Unlike `jax.numpy.remainder()`, this has JS rounding behavior where
+    // the result matches the sign of the numerator. `1 % -2 === 1`.
+    return mod(this, other) as this;
+  }
   greater(other: this | TracerValue) {
     return greater(this, other) as this;
   }

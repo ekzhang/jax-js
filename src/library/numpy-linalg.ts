@@ -1,18 +1,18 @@
 import * as lax from "./lax";
 import { triangularSolve } from "./lax-linalg";
-import {
-  Array,
-  ArrayLike,
-  broadcastTo,
-  eye,
-  matmul,
-  matrixTranspose,
-  squeeze,
-  take,
-} from "./numpy";
-import { fudgeArray } from "../frontend/array";
+import * as np from "./numpy";
+import { Array, ArrayLike, fudgeArray } from "../frontend/array";
 import { vmap } from "../frontend/vmap";
 import { generalBroadcast } from "../utils";
+
+function checkSquare(name: string, a: Array) {
+  if (a.ndim < 2 || a.shape[a.ndim - 1] !== a.shape[a.ndim - 2]) {
+    throw new Error(
+      `${name}: input must be at least 2D square matrix, got ${a.aval}`,
+    );
+  }
+  return a.shape[a.ndim - 1];
+}
 
 /**
  * Compute the Cholesky decomposition of a (batched) positive-definite matrix.
@@ -31,15 +31,24 @@ export function cholesky(
   } = {},
 ): Array {
   a = fudgeArray(a);
-  if (a.ndim < 2 || a.shape[a.ndim - 1] !== a.shape[a.ndim - 2]) {
-    throw new Error(
-      `cholesky: input must be at least 2D square matrix, got ${a.aval}`,
-    );
-  }
+  checkSquare("cholesky", a);
   if (symmetrizeInput) {
-    a = a.ref.add(matrixTranspose(a)).mul(0.5);
+    a = a.ref.add(np.matrixTranspose(a)).mul(0.5);
   }
   return lax.linalg.cholesky(a, { upper });
+}
+
+/** Compute the determinant of a square matrix (batched). */
+export function det(a: ArrayLike): Array {
+  a = fudgeArray(a);
+  const n = checkSquare("det", a);
+  const [lu, pivots, permutation] = lax.linalg.lu(a);
+  permutation.dispose();
+
+  const parity = pivots.notEqual(np.arange(n)).astype(np.int32).sum(-1).mod(2);
+  const sign = parity.mul(-2).add(1); // (-1)^parity
+  const diag = lu.diagonal(0, -1, -2);
+  return np.prod(diag, -1).mul(sign);
 }
 
 export { diagonal } from "./numpy";
@@ -47,13 +56,8 @@ export { diagonal } from "./numpy";
 /** Compute the inverse of a square matrix (batched). */
 export function inv(a: ArrayLike): Array {
   a = fudgeArray(a);
-  if (a.ndim < 2 || a.shape[a.ndim - 1] !== a.shape[a.ndim - 2]) {
-    throw new Error(
-      `inv: input must be at least 2D square matrix, got ${a.aval}`,
-    );
-  }
-  const n = a.shape[a.ndim - 1];
-  return solve(a, eye(n));
+  const n = checkSquare("inv", a);
+  return solve(a, np.eye(n));
 }
 
 /**
@@ -79,19 +83,19 @@ export function lstsq(a: ArrayLike, b: ArrayLike): Array {
     throw new Error(
       `lstsq: leading dimension of 'b' must match number of rows of 'a', got ${b.aval}`,
     );
-  const at = matrixTranspose(a.ref);
+  const at = np.matrixTranspose(a.ref);
   if (m <= n) {
     // Underdetermined or square system: A.T @ (A @ A.T)^-1 @ B
-    const aat = matmul(a, at.ref); // A @ A.T, shape (M, M)
+    const aat = np.matmul(a, at.ref); // A @ A.T, shape (M, M)
     const l = cholesky(aat, { symmetrizeInput: false }); // L @ L.T = A @ A.T
     const lb = triangularSolve(l.ref, b, { leftSide: true, lower: true }); // L^-1 @ B
     const llb = triangularSolve(l, lb, { leftSide: true, transposeA: true }); // (A @ A.T)^-1 @ B
-    return matmul(at, llb.ref); // A.T @ (A @ A.T)^-1 @ B
+    return np.matmul(at, llb.ref); // A.T @ (A @ A.T)^-1 @ B
   } else {
     // Overdetermined system: (A.T @ A)^-1 @ A.T @ B
-    const ata = matmul(at.ref, a); // A.T @ A, shape (N, N)
+    const ata = np.matmul(at.ref, a); // A.T @ A, shape (N, N)
     const l = cholesky(ata, { symmetrizeInput: false }); // L @ L.T = A.T @ A
-    const atb = matmul(at, b); // A.T @ B
+    const atb = np.matmul(at, b); // A.T @ B
     const lb = triangularSolve(l.ref, atb, { leftSide: true, lower: true }); // L^-1 @ A.T @ B
     const llb = triangularSolve(l, lb, { leftSide: true, transposeA: true }); // (A.T @ A)^-1 @ A.T @ B
     return llb;
@@ -101,6 +105,21 @@ export function lstsq(a: ArrayLike, b: ArrayLike): Array {
 export { matmul } from "./numpy";
 export { matrixTranspose } from "./numpy";
 export { outer } from "./numpy";
+
+/** Return sign and natural logarithm of the determinant of `a`. */
+export function slogdet(a: ArrayLike): [Array, Array] {
+  a = fudgeArray(a);
+  const n = checkSquare("slogdet", a);
+  const [lu, pivots, permutation] = lax.linalg.lu(a);
+  permutation.dispose();
+
+  let parity = pivots.notEqual(np.arange(n)).astype(np.int32).sum(-1);
+  const diag = lu.diagonal(0, -1, -2);
+  parity = parity.add(diag.ref.less(0).astype(np.int32).sum(-1)).mod(2);
+  const logabsdet = np.log(np.abs(diag)).sum(-1);
+  const sign = parity.mul(-2).add(1); // (-1)^parity
+  return [sign, logabsdet];
+}
 
 /**
  * Solve a linear system of equations.
@@ -115,10 +134,7 @@ export { outer } from "./numpy";
 export function solve(a: ArrayLike, b: ArrayLike): Array {
   a = fudgeArray(a);
   b = fudgeArray(b);
-  if (a.ndim < 2)
-    throw new Error(`solve: a must be at least 2D, got ${a.aval}`);
-  const [n, n2] = a.shape.slice(-2);
-  if (n !== n2) throw new Error(`solve: a must be square, got ${a.aval}`);
+  const n = checkSquare("solve", a);
   if (b.ndim === 0) throw new Error(`solve: b cannot be scalar`);
   const bIs1d = b.ndim === 1;
   if (bIs1d) {
@@ -134,8 +150,8 @@ export function solve(a: ArrayLike, b: ArrayLike): Array {
     a.shape.slice(0, -2),
     b.shape.slice(0, -2),
   );
-  a = broadcastTo(a, [...batchDims, n, n]);
-  b = broadcastTo(b, [...batchDims, n, m]);
+  a = np.broadcastTo(a, [...batchDims, n, n]);
+  b = np.broadcastTo(b, [...batchDims, n, m]);
 
   // Compute the LU decomposition with partial pivoting.
   const [lu, pivots, permutation] = lax.linalg.lu(a);
@@ -143,7 +159,7 @@ export function solve(a: ArrayLike, b: ArrayLike): Array {
 
   // L @ U @ x = P @ b
   const Pb = (
-    vmap((x: Array, y: Array) => take(x, y, -2), [0, 0])(
+    vmap((x: Array, y: Array) => np.take(x, y, -2), [0, 0])(
       b.reshape([-1, n, m]),
       permutation.reshape([-1, n]),
     ) as Array
@@ -155,7 +171,7 @@ export function solve(a: ArrayLike, b: ArrayLike): Array {
   });
   let x = triangularSolve(lu, LPb.ref, { leftSide: true, lower: false });
   if (bIs1d) {
-    x = squeeze(x, -1);
+    x = np.squeeze(x, -1);
   }
   return x;
 }
