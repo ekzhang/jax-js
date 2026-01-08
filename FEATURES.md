@@ -429,7 +429,7 @@ Most operations behave the same way as they do in JAX.
 | `subtract`            | 🟢      |                                         |
 | `sum`                 | 🟢      |                                         |
 | `swapaxes`            | 🟠      | `transpose` is supported                |
-| `take`                | 🟠      |                                         |
+| `take`                | 🟢      |                                         |
 | `take_along_axis`     | 🟠      |                                         |
 | `tan`                 | 🟢      |                                         |
 | `tanh`                | 🟢      |                                         |
@@ -530,7 +530,7 @@ Cholesky but are missing other building blocks like:
 | `pinv`             | 🔴      |                                         |
 | `qr`               | 🔴      |                                         |
 | `slogdet`          | 🔴      |                                         |
-| `solve`            | 🔴      |                                         |
+| `solve`            | 🟢      |                                         |
 | `svd`              | 🔴      |                                         |
 | `svdvals`          | 🔴      |                                         |
 | `tensordot`        | 🟢      |                                         |
