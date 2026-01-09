@@ -433,6 +433,24 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.swapaxes()", () => {
+    test("swaps axis of an array", () => {
+      const x = np.arange(12).reshape([2, 2, 3]);
+      expect(np.swapaxes(x, 1, 2).js()).toEqual([
+        [
+          [0, 3],
+          [1, 4],
+          [2, 5],
+        ],
+        [
+          [6, 9],
+          [7, 10],
+          [8, 11],
+        ],
+      ]);
+    });
+  });
+
   suite("jax.numpy.reshape()", () => {
     test("reshapes a 1D array", () => {
       const x = np.array([1, 2, 3, 4]);
