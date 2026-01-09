@@ -633,6 +633,18 @@ export function fliplr(x: ArrayLike): Array {
 
 export { transpose as permuteDims };
 
+/** Interchange two axes of an array. */
+export function swapaxes(a: ArrayLike, axis1: number, axis2: number): Array {
+  a = fudgeArray(a);
+  axis1 = checkAxis(axis1, a.ndim);
+  axis2 = checkAxis(axis2, a.ndim);
+  if (axis1 === axis2) return a;
+  const perm = range(a.ndim);
+  perm[axis1] = axis2;
+  perm[axis2] = axis1;
+  return transpose(a, perm);
+}
+
 /** Transpose the last two dimensions of an array. */
 export function matrixTranspose(a: ArrayLike): Array {
   if (ndim(a) < 2)
