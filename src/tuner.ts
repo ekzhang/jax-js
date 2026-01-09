@@ -253,7 +253,7 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
   // 3. Apply heuristic optimizations based on the shape trackers.
   const dim = new TuneDims(shape);
 
-  // Try to do upcasts of non-reduce axes, with amount = 3,4.
+  // Try to do upcasts of non-reduce axes for global memory coalescing.
   // Heuristic is based on strides, and borrowed from tinygrad.
   const upcastedAxis = new Set<number>();
   while (prod(dim.st.shape.slice(0, dim.groups)) >= 1024) {
@@ -292,9 +292,9 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
   }
 
   // Try to do loop unrolling on the reduce axis, with an upcast limit.
-  // Only do this on Chrome/Blink, other WebGPU implementations seem worse right now.
+  // Skip doing this on mobile browsers, as it may reduce performance.
   if (
-    /chrome/i.test(navigator.userAgent) &&
+    !/Mobi|Android/i.test(navigator.userAgent) &&
     dim.reduce < dim.unroll &&
     (prod(dim.st.shape.slice(dim.unroll)) <= 4 ||
       (dim.unroll === dim.upcast && prod(dim.st.shape.slice(dim.upcast)) < 64))
@@ -305,7 +305,7 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
       dim.applyUnroll(dim.reduce, s);
     } else {
       // Partially unroll the reduce axis.
-      for (const splits of [4]) {
+      for (const splits of [8, 4]) {
         if (s % splits === 0) {
           dim.applyUnroll(dim.unroll - 1, splits);
           break;
