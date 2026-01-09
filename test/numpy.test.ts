@@ -435,7 +435,7 @@ suite.each(devices)("device:%s", (device) => {
 
   suite("jax.numpy.swapaxes()", () => {
     test("swaps axis of an array", () => {
-      const x = np.arange([12]).reshape([2, 2, 3]);
+      const x = np.arange(12).reshape([2, 2, 3]);
       expect(np.swapaxes(x, 1, 2).js()).toEqual([
         [
           [0, 3],
