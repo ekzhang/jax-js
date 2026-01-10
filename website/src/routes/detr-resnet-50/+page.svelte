@@ -85,9 +85,9 @@
   function getImageUrl() {
     const imageUrls = [
       "https://upload.wikimedia.org/wikipedia/commons/0/00/Gats_domestics.png",
-      "https://upload.wikimedia.org/wikipedia/commons/d/d9/Desk333.JPG",
-      "https://upload.wikimedia.org/wikipedia/commons/3/36/Afrykarium_tunel.jpg",
-      "https://upload.wikimedia.org/wikipedia/commons/b/b4/Stanton_Cafe_and_Bar_in_Brisbane%2C_Queensland_09.jpg",
+      "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d9/Desk333.JPG/1280px-Desk333.JPG",
+      "https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/Afrykarium_tunel.jpg/1280px-Afrykarium_tunel.jpg",
+      "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b4/Stanton_Cafe_and_Bar_in_Brisbane%2C_Queensland_09.jpg/1280px-Stanton_Cafe_and_Bar_in_Brisbane%2C_Queensland_09.jpg",
     ];
     return imageUrls[runCount++ % imageUrls.length];
   }
