@@ -188,7 +188,7 @@ Most operations behave the same way as they do in JAX.
 | `conjugate`           | ⚪️      | complex numbers                         |
 | `convolve`            | 🟢      | `lax.conv_general_dilated` is supported |
 | `copy`                | ⚪️      | move semantics                          |
-| `copysign`            | 🟠      |                                         |
+| `copysign`            | 🟢      |                                         |
 | `corrcoef`            | 🟢      |                                         |
 | `correlate`           | 🟢      | `lax.conv_general_dilated` is supported |
 | `cos`                 | 🟢      |                                         |
@@ -309,8 +309,8 @@ Most operations behave the same way as they do in JAX.
 | `log10`               | 🟢      |                                         |
 | `log1p`               | 🟡      | implemented as `log(1+x)`               |
 | `log2`                | 🟢      |                                         |
-| `logaddexp`           | 🟠      |                                         |
-| `logaddexp2`          | 🟠      |                                         |
+| `logaddexp`           | 🟢      |                                         |
+| `logaddexp2`          | 🟢      |                                         |
 | `logical_and`         | 🟠      |                                         |
 | `logical_not`         | 🟠      |                                         |
 | `logical_or`          | 🟠      |                                         |
@@ -401,7 +401,7 @@ Most operations behave the same way as they do in JAX.
 | `rollaxis`            | 🟠      |                                         |
 | `roots`               | 🔴      |                                         |
 | `rot90`               | 🟠      |                                         |
-| `round`               | 🟠      |                                         |
+| `round`               | 🟢      |                                         |
 | `s_`                  | ⚪️      | Python-specific                         |
 | `save`                | ⚪️      | file I/O                                |
 | `savez`               | ⚪️      | file I/O                                |
