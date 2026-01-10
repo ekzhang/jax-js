@@ -1,6 +1,7 @@
 /** @file Core library internals and interpreter stack, based on Autodidax. */
 
 import { AluGroup, AluOp, DType, isFloatDtype, promoteTypes } from "../alu";
+import { Routines } from "../routine";
 import { type Pair } from "../shape";
 import {
   JsTreeDef,
@@ -133,6 +134,16 @@ export enum CompareOp {
   NotEqual = "not_equal",
   LessEqual = "less_equal",
 }
+
+// These primitives are handled via `Routine` instead of `Kernel` and are not
+// compatible with operator fusion.
+export const routinePrimitives = new Map([
+  [Primitive.Sort, Routines.Sort],
+  [Primitive.Argsort, Routines.Argsort],
+  [Primitive.TriangularSolve, Routines.TriangularSolve],
+  [Primitive.Cholesky, Routines.Cholesky],
+  [Primitive.LU, Routines.LU],
+]);
 
 export function add(x: TracerValue, y: TracerValue) {
   return bind1(Primitive.Add, [x, y]);

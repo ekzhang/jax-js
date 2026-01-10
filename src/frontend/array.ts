@@ -13,7 +13,7 @@ import {
   Reduction,
 } from "../alu";
 import { Backend, Device, Executable, getBackend, Slot } from "../backend";
-import { Routine, Routines } from "../routine";
+import { Routine } from "../routine";
 import { Pair, ShapeTracker, unravelAlu } from "../shape";
 import {
   deepEqual,
@@ -42,6 +42,7 @@ import {
   Primitive,
   PrimitiveParams,
   promoteAvals,
+  routinePrimitives,
   ShapedArray,
   Trace,
   Tracer,
@@ -49,6 +50,7 @@ import {
   UseAfterFreeError,
   where,
 } from "./core";
+import { abstractEvalRules } from "./jaxpr";
 import { jitCompile } from "./jit";
 
 const JsArray = globalThis.Array;
@@ -616,36 +618,47 @@ export class Array extends Tracer {
   }
 
   /** Apply an operation with custom lowering to this array. */
-  static #routine(
-    routine: Routine,
-    arrays: Array[],
-    outputWeakType: boolean[],
-  ): Array[] {
-    const { backend, committed } = Array.#computeBackend(routine.name, arrays);
-    for (const ar of arrays) ar.#realize();
+  static #routine<P extends Primitive>(prim: P): ImplRule<P> {
+    return (arrays: Array[], params: PrimitiveParams<P>) => {
+      const { backend, committed } = Array.#computeBackend(prim, arrays);
+      for (const ar of arrays) ar.#realize();
 
-    const inputs = arrays.map((ar) => ar.#source as Slot);
-    const outputs = routine.type.outputDtypes.map((dtype, i) =>
-      backend.malloc(byteWidth(dtype) * prod(routine.type.outputShapes[i])),
-    );
-    const pending = arrays.flatMap((ar) => ar.#pending);
-    for (const exe of pending) exe.updateRc(+outputs.length);
-    pending.push(new PendingExecute(backend, routine, inputs, outputs));
-    pending[pending.length - 1].updateRc(+outputs.length - 1);
+      const avals = arrays.map((ar) => ar.aval);
+      const avalsOut = abstractEvalRules[prim](avals, params);
+      const routine = new Routine(
+        routinePrimitives.get(prim)!,
+        {
+          inputShapes: avals.map((a) => a.shape),
+          inputDtypes: avals.map((a) => a.dtype),
+          outputShapes: avalsOut.map((a) => a.shape),
+          outputDtypes: avalsOut.map((a) => a.dtype),
+        },
+        params,
+      );
 
-    arrays.forEach((ar) => ar.dispose()); // Dispose of inputs after creating PendingExecute.
-    return outputs.map(
-      (output, i) =>
-        new Array({
-          source: output,
-          st: ShapeTracker.fromShape(routine.type.outputShapes[i]),
-          dtype: routine.type.outputDtypes[i],
-          weakType: outputWeakType[i],
-          backend,
-          committed,
-          pending,
-        }),
-    );
+      const inputs = arrays.map((ar) => ar.#source as Slot);
+      const outputs = avalsOut.map((x) =>
+        backend.malloc(byteWidth(x.dtype) * x.size),
+      );
+      const pending = arrays.flatMap((ar) => ar.#pending);
+      for (const exe of pending) exe.updateRc(+outputs.length);
+      pending.push(new PendingExecute(backend, routine, inputs, outputs));
+      pending[pending.length - 1].updateRc(+outputs.length - 1);
+
+      arrays.forEach((ar) => ar.dispose()); // Dispose of inputs after creating PendingExecute.
+      return outputs.map(
+        (output, i) =>
+          new Array({
+            source: output,
+            st: ShapeTracker.fromShape(avalsOut[i].shape),
+            dtype: avalsOut[i].dtype,
+            weakType: avalsOut[i].weakType,
+            backend,
+            committed,
+            pending,
+          }),
+      );
+    };
   }
 
   /**
@@ -1063,57 +1076,11 @@ export class Array extends Tracer {
       [Primitive.Pad]([x], { width }) {
         return [x.#reshape(x.#st.pad(width))];
       },
-      [Primitive.Sort]([x]) {
-        const routine = new Routine(Routines.Sort, {
-          inputShapes: [x.shape],
-          inputDtypes: [x.dtype],
-          outputShapes: [x.shape],
-          outputDtypes: [x.dtype],
-        });
-        return Array.#routine(routine, [x], [x.#weakType]);
-      },
-      [Primitive.Argsort]([x]) {
-        const routine = new Routine(Routines.Argsort, {
-          inputShapes: [x.shape],
-          inputDtypes: [x.dtype],
-          outputShapes: [x.shape, x.shape],
-          outputDtypes: [x.dtype, DType.Int32],
-        });
-        return Array.#routine(routine, [x], [x.#weakType, false]);
-      },
-      [Primitive.TriangularSolve]([a, b], { unitDiagonal }) {
-        const routine = new Routine(
-          Routines.TriangularSolve,
-          {
-            inputShapes: [a.shape, b.shape],
-            inputDtypes: [a.dtype, b.dtype],
-            outputShapes: [b.shape],
-            outputDtypes: [b.dtype],
-          },
-          { unitDiagonal },
-        );
-        return Array.#routine(routine, [a, b], [a.#weakType && b.#weakType]);
-      },
-      [Primitive.Cholesky]([a]) {
-        const routine = new Routine(Routines.Cholesky, {
-          inputShapes: [a.shape],
-          inputDtypes: [a.dtype],
-          outputShapes: [a.shape],
-          outputDtypes: [a.dtype],
-        });
-        return Array.#routine(routine, [a], [a.#weakType]);
-      },
-      [Primitive.LU]([a]) {
-        const batch = a.shape.slice(0, -2);
-        const [m, n] = a.shape.slice(-2);
-        const routine = new Routine(Routines.LU, {
-          inputShapes: [a.shape],
-          inputDtypes: [a.dtype],
-          outputShapes: [a.shape, [...batch, Math.min(m, n)], [...batch, m]],
-          outputDtypes: [a.dtype, DType.Int32, DType.Int32],
-        });
-        return Array.#routine(routine, [a], [a.#weakType, false, false]);
-      },
+      [Primitive.Sort]: Array.#routine(Primitive.Sort),
+      [Primitive.Argsort]: Array.#routine(Primitive.Argsort),
+      [Primitive.TriangularSolve]: Array.#routine(Primitive.TriangularSolve),
+      [Primitive.Cholesky]: Array.#routine(Primitive.Cholesky),
+      [Primitive.LU]: Array.#routine(Primitive.LU),
       [Primitive.Jit](args, { jaxpr }) {
         if (jaxpr.inBinders.length !== args.length) {
           throw new Error(
