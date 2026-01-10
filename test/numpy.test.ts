@@ -392,6 +392,71 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.logicalAnd()", () => {
+    test("computes element-wise AND", () => {
+      const x = np.array([true, true, false, false]);
+      const y = np.array([true, false, true, false]);
+      expect(np.logicalAnd(x, y).js()).toEqual([true, false, false, false]);
+    });
+
+    test("works with numeric arrays", () => {
+      const x = np.array([1, 1, 0, 0]);
+      const y = np.array([1, 0, 1, 0]);
+      expect(np.logicalAnd(x, y).js()).toEqual([true, false, false, false]);
+    });
+
+    test("broadcasts correctly", () => {
+      const x = np.array([[true], [false]]);
+      const y = np.array([true, false]);
+      const result = np.logicalAnd(x, y);
+      expect(result.shape).toEqual([2, 2]);
+      expect(result.js()).toEqual([
+        [true, false],
+        [false, false],
+      ]);
+    });
+  });
+
+  suite("jax.numpy.logicalOr()", () => {
+    test("computes element-wise OR", () => {
+      const x = np.array([true, true, false, false]);
+      const y = np.array([true, false, true, false]);
+      expect(np.logicalOr(x, y).js()).toEqual([true, true, true, false]);
+    });
+
+    test("works with numeric arrays", () => {
+      const x = np.array([1, 1, 0, 0]);
+      const y = np.array([1, 0, 1, 0]);
+      expect(np.logicalOr(x, y).js()).toEqual([true, true, true, false]);
+    });
+  });
+
+  suite("jax.numpy.logicalNot()", () => {
+    test("computes element-wise NOT", () => {
+      const x = np.array([true, false]);
+      expect(np.logicalNot(x).js()).toEqual([false, true]);
+    });
+
+    test("works with numeric arrays", () => {
+      const x = np.array([0, 1, 2, -1]);
+      expect(np.logicalNot(x).js()).toEqual([true, false, false, false]);
+    });
+  });
+
+  suite("jax.numpy.logicalXor()", () => {
+    test("computes element-wise XOR", () => {
+      const x = np.array([true, true, false, false]);
+      const y = np.array([true, false, true, false]);
+      expect(np.logicalXor(x, y).js()).toEqual([false, true, true, false]);
+    });
+
+    test("works with numeric arrays", () => {
+      const x = np.array([1, 1, 0, 0]);
+      const y = np.array([1, 0, 1, 0]);
+      expect(np.logicalXor(x, y).js()).toEqual([false, true, true, false]);
+    });
+  });
+
   suite("jax.numpy.transpose()", () => {
     test("transposes a 1D array (no-op)", () => {
       const x = np.array([1, 2, 3]);
