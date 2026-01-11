@@ -25,6 +25,7 @@ import {
   concatenate,
   conv,
   flattenFun,
+  flattenFunWithAux,
   flip,
   fullRaise,
   mul,
@@ -953,9 +954,63 @@ function vjpFlat(
 
 export function vjp(
   f: (...primals: any) => any,
-  ...primalsIn: any
-): [any, OwnedFunction<(...cotangents: any) => any>] {
+  ...args: any[]
+): [any, OwnedFunction<(...cotangents: any) => any>];
+export function vjp(
+  f: (...primals: any) => any,
+  opts: { hasAux: true },
+  ...args: any[]
+): [any, OwnedFunction<(...cotangents: any) => any>, any];
+export function vjp(
+  f: (...primals: any) => any,
+  ...args: any[]
+):
+  | [any, OwnedFunction<(...cotangents: any) => any>]
+  | [any, OwnedFunction<(...cotangents: any) => any>, any] {
+  // Check if second argument (first in args) is options object with hasAux
+  let opts: { hasAux?: boolean } | undefined;
+  let primalsIn = args;
+
+  const firstArg = args[0];
+  if (firstArg && typeof firstArg === "object" && "hasAux" in firstArg) {
+    opts = firstArg;
+    primalsIn = args.slice(1);
+  }
+
   const [primalsInFlat, inTree] = treeFlatten(primalsIn);
+
+  if (opts?.hasAux) {
+    const [fFlat, mainTree, auxTree] = flattenFunWithAux(f, inTree);
+    const [primalsOutFlat, fVjpFlat, dispose] = vjpFlat(
+      fFlat,
+      primalsInFlat.map(pureArray),
+    );
+
+    if (mainTree.value === undefined || auxTree.value === undefined) {
+      throw new Error("Trees were not set in vjp with hasAux");
+    }
+
+    const mainSize = mainTree.value.size;
+    const mainPrimalsFlat = primalsOutFlat.slice(0, mainSize);
+    const auxPrimalsFlat = primalsOutFlat.slice(mainSize);
+
+    const primalsOut = treeUnflatten(mainTree.value, mainPrimalsFlat);
+    const aux = treeUnflatten(auxTree.value, auxPrimalsFlat);
+
+    const fVjp = ((cotangentsOut: any) => {
+      const [cotangentsOutFlat, cotangentTree] = treeFlatten(cotangentsOut);
+      if (!mainTree.value!.equals(cotangentTree)) {
+        throw new TreeMismatchError("vjp", mainTree.value!, cotangentTree);
+      }
+      const cotangentsInFlat = fVjpFlat(...cotangentsOutFlat.map(pureArray));
+      return treeUnflatten(inTree, cotangentsInFlat);
+    }) as OwnedFunction<(cotangents: any) => any>;
+    fVjp.dispose = dispose;
+
+    return [primalsOut, fVjp, aux];
+  }
+
+  // Normal path: no aux
   const [fFlat, outTree] = flattenFun(f, inTree);
   const [primalsOutFlat, fVjpFlat, dispose] = vjpFlat(
     fFlat,
@@ -980,20 +1035,53 @@ export function vjp(
   return [primalsOut, fVjp];
 }
 
-export function grad(f: (...primals: any) => Tracer) {
-  const valueAndGradFn = valueAndGrad(f);
+export function grad(
+  f: (...primals: any) => Tracer,
+  opts?: { hasAux?: boolean },
+): (...x: any) => any {
+  const valueAndGradFn = valueAndGrad(f, opts as any);
   return (...x: any) => {
+    if (opts?.hasAux) {
+      const [y, dx, aux] = valueAndGradFn(...x) as [any, any, any];
+      y.dispose();
+      return [dx, aux];
+    }
     const [y, dx] = valueAndGradFn(...x);
     y.dispose();
     return dx;
   };
 }
 
-export function valueAndGrad(f: (...primals: any) => Tracer) {
+export function valueAndGrad(
+  f: (...primals: any) => Tracer,
+  opts?: { hasAux?: boolean },
+): (...x: any) => any {
   return (...x: any) => {
     if (x.length === 0) {
       throw new Error("grad requires at least one argument to differentiate");
     }
+
+    if (opts?.hasAux) {
+      // Aux path: expects f to return [scalar, aux] tuple
+      const [y, fVjp, aux] = vjp(
+        f,
+        { hasAux: true },
+        x[0],
+        ...x.slice(1).map(stopGradient),
+      ) as unknown as [any, OwnedFunction<(cotangents: any) => any>, any];
+      if (!(y instanceof Tracer) || ndim(y) !== 0) {
+        throw new TypeError("grad requires a scalar output");
+      }
+      if (!isFloatDtype(y.dtype)) {
+        throw new TypeError("grad only supports floating-point dtypes");
+      }
+      const [ct, ...rest] = fVjp(onesLike(y.ref)); // backprop from scalar 1
+      for (const r of rest) treeDispose(r);
+      fVjp.dispose();
+      return [y, ct, aux] as [any, any, any];
+    }
+
+    // Normal path: no aux
     // JAX convention, differentiate with respect to the first argument.
     const [y, fVjp] = vjp(f, x[0], ...x.slice(1).map(stopGradient));
     if (!(y instanceof Tracer) || ndim(y) !== 0) {

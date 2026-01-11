@@ -126,43 +126,122 @@ export const linearize = linearizeModule.linearize as <
 /**
  * @function
  * Calculate the reverse-mode vector-Jacobian product for a function.
+ *
+ * When `{ hasAux: true }` is passed as the second argument, the function `f` is
+ * expected to return a `[output, aux]` tuple, and `vjp` returns `[output, vjpFn, aux]`.
+ *
+ * @example
+ * ```ts
+ * // Without hasAux
+ * const [y, vjpFn] = vjp(f, x);
+ *
+ * // With hasAux
+ * const [y, vjpFn, aux] = vjp(f, { hasAux: true }, x);
+ * ```
  */
-export const vjp = linearizeModule.vjp as <
-  F extends (...args: any[]) => JsTree<Array>,
->(
+// vjp overloads - discriminate on opts parameter
+export function vjp<F extends (...args: any[]) => JsTree<Array>>(
   f: F,
   ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
-) => [
+): [
   ReturnType<F>,
-  (
-    cotangents: MapJsTree<ReturnType<F>, Array, ArrayLike>,
-  ) => MapJsTree<Parameters<F>, ArrayLike, Array>,
+  OwnedFunction<
+    (
+      cotangents: MapJsTree<ReturnType<F>, Array, ArrayLike>,
+    ) => MapJsTree<Parameters<F>, ArrayLike, Array>
+  >,
 ];
+export function vjp<
+  F extends (...args: any[]) => [JsTree<Array>, JsTree<Array>],
+>(
+  f: F,
+  opts: { hasAux: true },
+  ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
+): [
+  ReturnType<F>[0],
+  OwnedFunction<
+    (
+      cotangents: MapJsTree<ReturnType<F>[0], Array, ArrayLike>,
+    ) => MapJsTree<Parameters<F>, ArrayLike, Array>
+  >,
+  ReturnType<F>[1],
+];
+export function vjp(f: any, ...args: any[]): any {
+  return linearizeModule.vjp(f, ...args);
+}
 
 /**
  * @function
  * Compute the gradient of a scalar-valued function `f` with respect to its
  * first argument.
+ *
+ * When `{ hasAux: true }` is passed, the function `f` is expected to return a
+ * `[scalar, aux]` tuple, and the returned function returns `[gradient, aux]`.
+ *
+ * @example
+ * ```ts
+ * // Without hasAux
+ * const gradient = grad(f)(x);
+ *
+ * // With hasAux
+ * const [gradient, aux] = grad(f, { hasAux: true })(x);
+ * ```
  */
-export const grad = linearizeModule.grad as <
-  F extends (...args: any[]) => JsTree<Array>,
->(
+// grad overloads - discriminate on opts parameter
+export function grad<F extends (...args: any[]) => JsTree<Array>>(
   f: F,
-) => (
+): (
   ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
 ) => MapJsTree<Parameters<F>[0], ArrayLike, Array>;
+export function grad<
+  F extends (...args: any[]) => [JsTree<Array>, JsTree<Array>],
+>(
+  f: F,
+  opts: { hasAux: true },
+): (
+  ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
+) => [MapJsTree<Parameters<F>[0], ArrayLike, Array>, ReturnType<F>[1]];
+export function grad(f: any, opts?: any): any {
+  return linearizeModule.grad(f, opts);
+}
 
 /**
  * @function
  * Create a function that evaluates both `f` and the gradient of `f`.
+ *
+ * When `{ hasAux: true }` is passed, the function `f` is expected to return a
+ * `[scalar, aux]` tuple, and the returned function returns `[value, gradient, aux]`.
+ *
+ * @example
+ * ```ts
+ * // Without hasAux
+ * const [value, gradient] = valueAndGrad(f)(x);
+ *
+ * // With hasAux
+ * const [value, gradient, aux] = valueAndGrad(f, { hasAux: true })(x);
+ * ```
  */
-export const valueAndGrad = linearizeModule.valueAndGrad as <
-  F extends (...args: any[]) => JsTree<Array>,
->(
+// valueAndGrad overloads - discriminate on opts parameter
+export function valueAndGrad<F extends (...args: any[]) => JsTree<Array>>(
   f: F,
-) => (
+): (
   ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
 ) => [ReturnType<F>, MapJsTree<Parameters<F>[0], ArrayLike, Array>];
+export function valueAndGrad<
+  F extends (...args: any[]) => [JsTree<Array>, JsTree<Array>],
+>(
+  f: F,
+  opts: { hasAux: true },
+): (
+  ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
+) => [
+  ReturnType<F>[0],
+  MapJsTree<Parameters<F>[0], ArrayLike, Array>,
+  ReturnType<F>[1],
+];
+export function valueAndGrad(f: any, opts?: any): any {
+  return linearizeModule.valueAndGrad(f, opts);
+}
 
 /**
  * @function

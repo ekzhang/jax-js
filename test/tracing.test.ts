@@ -7,6 +7,7 @@ import {
   nn,
   numpy as np,
   tree,
+  valueAndGrad,
   vjp,
   vmap,
 } from "@jax-js/jax";
@@ -145,6 +146,129 @@ suite("jax.vjp()", () => {
     expect(y).toBeAllclose(np.sin(3));
     expect(backward(1)[0]).toBeAllclose(np.cos(3));
   });
+
+  test("hasAux returns aux and computes correct gradients", () => {
+    const f = (x: np.Array): [np.Array, np.Array] => {
+      const loss = x.ref.sum();
+      const aux = x.mul(2);
+      return [loss, aux];
+    };
+
+    const x = np.array([1, 2, 3]);
+    const [loss, vjpFn, aux] = vjp(f, { hasAux: true }, x);
+
+    expect(loss).toBeAllclose(6);
+    expect(aux).toBeAllclose([2, 4, 6]);
+
+    const [grad] = vjpFn(np.ones([]));
+    expect(grad).toBeAllclose([1, 1, 1]);
+
+    vjpFn.dispose();
+  });
+
+  test("hasAux handles pytree aux", () => {
+    type Aux = { predictions: np.Array; squared: np.Array };
+    const f = (x: np.Array): [np.Array, Aux] => {
+      const loss = x.ref.sum();
+      const aux = {
+        predictions: x.ref.mul(2),
+        squared: x.ref.mul(x),
+      };
+      return [loss, aux];
+    };
+
+    const x = np.array([1, 2, 3]);
+    const [loss, vjpFn, aux] = vjp(f, { hasAux: true }, x);
+
+    expect(loss).toBeAllclose(6);
+    expect(aux.predictions).toBeAllclose([2, 4, 6]);
+    expect(aux.squared).toBeAllclose([1, 4, 9]);
+
+    vjpFn.dispose();
+  });
+
+  test("hasAux handles pytree main output", () => {
+    type Main = { a: np.Array; b: np.Array };
+    const f = (x: np.Array): [Main, np.Array] => {
+      const main = { a: x.ref.sum(), b: x.ref.prod() };
+      const aux = x.mul(2);
+      return [main, aux];
+    };
+
+    const x = np.array([1, 2, 3]);
+    const [main, vjpFn, _aux] = vjp(f, { hasAux: true }, x);
+
+    expect(main.a).toBeAllclose(6);
+    expect(main.b).toBeAllclose(6);
+
+    const [grad] = vjpFn({ a: np.ones([]), b: np.ones([]) });
+    expect(grad).toBeAllclose([7, 4, 3]);
+
+    vjpFn.dispose();
+  });
+
+  test("hasAux throws if function does not return tuple", () => {
+    const f = (x: np.Array) => x.sum();
+    const x = np.array([1, 2, 3]);
+    expect(() => vjp(f as any, { hasAux: true }, x)).toThrow(/tuple/);
+  });
+
+  test("hasAux gradients match vjp without aux", () => {
+    const fWithAux = (x: np.Array): [np.Array, np.Array] => [
+      x.ref.sum(),
+      x.mul(2),
+    ];
+    const fWithoutAux = (x: np.Array): np.Array => x.sum();
+
+    const x = np.array([1, 2, 3]);
+
+    const [, vjpFn1] = vjp(fWithAux, { hasAux: true }, x.ref);
+    const [, vjpFn2] = vjp(fWithoutAux, x);
+
+    const [grad1] = vjpFn1(np.ones([]));
+    const [grad2] = vjpFn2(np.ones([]));
+
+    expect(grad1).toBeAllclose(grad2);
+
+    vjpFn1.dispose();
+  });
+
+  test("hasAux works with jit wrapper", () => {
+    const f = jit((x: np.Array): [np.Array, np.Array] => [
+      x.ref.sum(),
+      x.mul(2),
+    ]);
+
+    const x = np.array([1, 2, 3]);
+    const [loss, vjpFn, aux] = vjp(f, { hasAux: true }, x);
+
+    expect(loss).toBeAllclose(6);
+    expect(aux).toBeAllclose([2, 4, 6]);
+    const [grad] = vjpFn(np.ones([]));
+    expect(grad).toBeAllclose([1, 1, 1]);
+
+    vjpFn.dispose();
+  });
+
+  test("hasAux works inside jit", () => {
+    const inner = (x: np.Array): [np.Array, np.Array] => [
+      x.ref.sum(),
+      x.mul(2),
+    ];
+
+    const outer = jit((x: np.Array): [np.Array, np.Array] => {
+      const [, vjpFn, aux] = vjp(inner, { hasAux: true }, x);
+      const [grad] = vjpFn(np.ones([]));
+      vjpFn.dispose();
+      return [grad, aux];
+    });
+
+    const x = np.array([1, 2, 3]);
+    const [grad, aux] = outer(x);
+
+    expect(grad).toBeAllclose([1, 1, 1]);
+    expect(aux).toBeAllclose([2, 4, 6]);
+  });
 });
 
 suite("jax.grad()", () => {
@@ -233,6 +357,121 @@ suite("jax.grad()", () => {
     expect(grads.b).toBeAllclose([
       0.7319144, -0.2342123, -0.24015564, -0.25754642,
     ]);
+  });
+
+  test("hasAux returns aux and computes correct gradient", () => {
+    const f = (x: np.Array): [np.Array, np.Array] => {
+      const loss = x.ref.sum();
+      const aux = x.mul(2);
+      return [loss, aux];
+    };
+
+    const x = np.array([1, 2, 3]);
+    const [gradient, aux] = grad(f, { hasAux: true })(x);
+
+    expect(gradient).toBeAllclose([1, 1, 1]);
+    expect(aux).toBeAllclose([2, 4, 6]);
+  });
+
+  test("hasAux handles pytree aux", () => {
+    type Aux = { predictions: np.Array; squared: np.Array };
+    const f = (x: np.Array): [np.Array, Aux] => {
+      const loss = x.ref.sum();
+      const aux = {
+        predictions: x.ref.mul(2),
+        squared: x.ref.mul(x),
+      };
+      return [loss, aux];
+    };
+
+    const x = np.array([1, 2, 3]);
+    const [gradient, aux] = grad(f, { hasAux: true })(x);
+
+    expect(gradient).toBeAllclose([1, 1, 1]);
+    expect(aux.predictions).toBeAllclose([2, 4, 6]);
+    expect(aux.squared).toBeAllclose([1, 4, 9]);
+  });
+
+  test("hasAux gradients match grad without aux", () => {
+    const fWithAux = (x: np.Array): [np.Array, np.Array] => [
+      x.ref.sum(),
+      x.mul(2),
+    ];
+    const fWithoutAux = (x: np.Array) => x.sum();
+
+    const x = np.array([1, 2, 3]);
+
+    const [grad1] = grad(fWithAux, { hasAux: true })(x.ref);
+    const grad2 = grad(fWithoutAux)(x);
+
+    expect(grad1).toBeAllclose(grad2);
+  });
+
+  test("hasAux works with jit wrapper", () => {
+    const f = jit((x: np.Array): [np.Array, np.Array] => [
+      x.ref.sum(),
+      x.mul(2),
+    ]);
+
+    const x = np.array([1, 2, 3]);
+    const [gradient, aux] = grad(f, { hasAux: true })(x);
+
+    expect(gradient).toBeAllclose([1, 1, 1]);
+    expect(aux).toBeAllclose([2, 4, 6]);
+  });
+
+  test("hasAux throws on non-scalar output", () => {
+    const f = (x: np.Array): [np.Array, np.Array] => [x.ref, x.mul(2)];
+    const x = np.array([1, 2, 3]);
+    expect(() => grad(f, { hasAux: true })(x)).toThrow("scalar");
+  });
+
+  test("hasAux throws on non-float dtype", () => {
+    const f = (x: np.Array): [np.Array, np.Array] => [x.ref.sum(), x.mul(2)];
+    const x = np.array([1, 2, 3], { dtype: np.int32 });
+    expect(() => grad(f, { hasAux: true })(x)).toThrow("floating-point");
+  });
+});
+
+suite("jax.valueAndGrad()", () => {
+  test("returns value and gradient", () => {
+    const f = (x: np.Array) => x.ref.mul(x).sum();
+    const x = np.array([2, 3]);
+    const [value, gradient] = valueAndGrad(f)(x);
+
+    expect(value).toBeAllclose(13); // 4 + 9 = 13
+    expect(gradient).toBeAllclose([4, 6]); // 2x = [4, 6]
+  });
+
+  test("hasAux returns value, gradient, and aux", () => {
+    const f = (x: np.Array): [np.Array, np.Array] => {
+      const loss = x.ref.sum();
+      const aux = x.mul(2);
+      return [loss, aux];
+    };
+
+    const x = np.array([1, 2, 3]);
+    const [value, gradient, aux] = valueAndGrad(f, { hasAux: true })(x);
+
+    expect(value).toBeAllclose(6);
+    expect(gradient).toBeAllclose([1, 1, 1]);
+    expect(aux).toBeAllclose([2, 4, 6]);
+  });
+
+  test("hasAux matches valueAndGrad for value and gradient", () => {
+    const fWithAux = (x: np.Array): [np.Array, np.Array] => [
+      x.ref.sum(),
+      x.mul(2),
+    ];
+    const fWithoutAux = (x: np.Array) => x.sum();
+
+    const x = np.array([1, 2, 3]);
+
+    const [value1, grad1] = valueAndGrad(fWithAux, { hasAux: true })(x.ref);
+    const [value2, grad2] = valueAndGrad(fWithoutAux)(x);
+
+    expect(value1).toBeAllclose(value2);
+    expect(grad1).toBeAllclose(grad2);
   });
 });
 
