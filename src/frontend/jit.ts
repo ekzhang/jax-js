@@ -11,7 +11,7 @@ import {
 } from "../alu";
 import { Backend, Slot } from "../backend";
 import { PPrint } from "../pprint";
-import { Routine, Routines } from "../routine";
+import { Routine } from "../routine";
 import { Pair, ShapeTracker, unravelAlu } from "../shape";
 import {
   DEBUG,
@@ -24,18 +24,14 @@ import {
 } from "../utils";
 import { aluCompare, PendingExecute } from "./array";
 import { pool, poolTranspose, prepareConv } from "./convolution";
-import { Primitive, PrimitiveParams, promoteAvals, ShapedArray } from "./core";
+import {
+  Primitive,
+  PrimitiveParams,
+  promoteAvals,
+  routinePrimitives,
+  ShapedArray,
+} from "./core";
 import { Jaxpr, Lit, Var } from "./jaxpr";
-
-// These primitives are handled via `Routine` instead of `Kernel` and are not
-// compatible with operator fusion.
-const routinePrimitives = new Map([
-  [Primitive.Sort, Routines.Sort],
-  [Primitive.Argsort, Routines.Argsort],
-  [Primitive.TriangularSolve, Routines.TriangularSolve],
-  [Primitive.Cholesky, Routines.Cholesky],
-  [Primitive.LU, Routines.LU],
-]);
 
 export type JitId = number;
 

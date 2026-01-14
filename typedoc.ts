@@ -31,7 +31,7 @@ function sourceLinkOptions(dir: string): string {
     // Disable automatic Git detection and pass in specific link.
     "--disableGit",
     "--gitRevision main",
-    `--sourceLinkTemplate "https://github.com/ekzhang/jax-js/blob/{gitRevision}/${dir}/{path}#L{line}"`,
+    `--sourceLinkTemplate "https://github.com/ekzhang/jax-js/blob/{gitRevision}/${dir}{path}#L{line}"`,
   ].join(" ");
 }
 
@@ -39,13 +39,13 @@ const cmds: Promise<void>[] = [];
 
 // Docs for @jax-js/jax.
 cmds.push(
-  sh`pnpm typedoc src/index.ts ${sourceLinkOptions("src")} --readme none --json docs-json/jax.json`,
+  sh`pnpm typedoc src/index.ts ${sourceLinkOptions("")} --readme none --json docs-json/jax.json`,
 );
 
 // Generate docs for each package in the packages directory.
 for (const pkg of await readdir("packages")) {
   cmds.push(
-    sh`pnpm typedoc packages/${pkg}/src/index.ts ${sourceLinkOptions(`packages/${pkg}/src`)} --json docs-json/${pkg}.json`,
+    sh`pnpm typedoc packages/${pkg}/src/index.ts ${sourceLinkOptions(`packages/${pkg}/src/`)} --json docs-json/${pkg}.json`,
   );
 }
 
