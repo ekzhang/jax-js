@@ -1064,39 +1064,27 @@ export function valueAndGrad(
       throw new Error("grad requires at least one argument to differentiate");
     }
 
-    if (opts?.hasAux) {
-      // Aux path: expects f to return [scalar, aux] tuple
-      const [y, fVjp, aux] = vjp(
-        f,
-        { hasAux: true },
-        x[0],
-        ...x.slice(1).map(stopGradient),
-      ) as unknown as [any, OwnedFunction<(cotangents: any) => any>, any];
-      if (!(y instanceof Tracer) || ndim(y) !== 0) {
-        throw new TypeError("grad requires a scalar output");
-      }
-      if (!isFloatDtype(y.dtype)) {
-        throw new TypeError("grad only supports floating-point dtypes");
-      }
-      const [ct, ...rest] = fVjp(onesLike(y.ref)); // backprop from scalar 1
-      for (const r of rest) treeDispose(r);
-      fVjp.dispose();
-      return [y, ct, aux] as [any, any, any];
-    }
+    // JAX convention: differentiate with respect to the first argument.
+    const primals = [x[0], ...x.slice(1).map(stopGradient)];
+    const vjpResult: [any, OwnedFunction<(cotangents: any) => any>, any?] =
+      opts?.hasAux
+        ? vjp(f, { hasAux: true }, ...primals)
+        : vjp(f, ...primals);
 
-    // Normal path: no aux
-    // JAX convention, differentiate with respect to the first argument.
-    const [y, fVjp] = vjp(f, x[0], ...x.slice(1).map(stopGradient));
+    const [y, fVjp] = vjpResult;
+
     if (!(y instanceof Tracer) || ndim(y) !== 0) {
       throw new TypeError("grad requires a scalar output");
     }
     if (!isFloatDtype(y.dtype)) {
       throw new TypeError("grad only supports floating-point dtypes");
     }
+
     const [ct, ...rest] = fVjp(onesLike(y.ref)); // backprop from scalar 1
     for (const r of rest) treeDispose(r);
     fVjp.dispose();
-    return [y, ct] as [any, any];
+
+    return opts?.hasAux ? [y, ct, vjpResult[2]] : [y, ct];
   };
 }
 
