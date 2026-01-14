@@ -2,9 +2,9 @@
 
 import { AluOp, isFloatDtype } from "../alu";
 import {
+  type JsTreeDef,
   dispose as treeDispose,
   flatten as treeFlatten,
-  type JsTreeDef,
   unflatten as treeUnflatten,
 } from "../tree";
 import {
@@ -1067,9 +1067,7 @@ export function valueAndGrad(
     // JAX convention: differentiate with respect to the first argument.
     const primals = [x[0], ...x.slice(1).map(stopGradient)];
     const vjpResult: [any, OwnedFunction<(cotangents: any) => any>, any?] =
-      opts?.hasAux
-        ? vjp(f, { hasAux: true }, ...primals)
-        : vjp(f, ...primals);
+      opts?.hasAux ? vjp(f, { hasAux: true }, ...primals) : vjp(f, ...primals);
 
     const [y, fVjp] = vjpResult;
 
