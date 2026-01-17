@@ -4,9 +4,11 @@ import { AluOp, isFloatDtype } from "../alu";
 import {
   dispose as treeDispose,
   flatten as treeFlatten,
+  map as treeMap,
   unflatten as treeUnflatten,
 } from "../tree";
 import {
+  checkInts,
   DEBUG,
   deepEqual,
   generalBroadcast,
@@ -980,8 +982,19 @@ export function vjp(
   return [primalsOut, fVjp];
 }
 
-export function grad(f: (...primals: any) => Tracer) {
-  const valueAndGradFn = valueAndGrad(f);
+/** @inline */
+export type GradOpts = {
+  /**
+   * Integer or sequence of integers. Specifies which positional argument(s) to
+   * differentiate with respect to.
+   *
+   * Defaults to `0` (the first argument).
+   */
+  argnums?: number | number[];
+};
+
+export function grad(f: (...primals: any) => Tracer, opts?: GradOpts) {
+  const valueAndGradFn = valueAndGrad(f, opts);
   return (...x: any) => {
     const [y, dx] = valueAndGradFn(...x);
     y.dispose();
@@ -989,23 +1002,33 @@ export function grad(f: (...primals: any) => Tracer) {
   };
 }
 
-export function valueAndGrad(f: (...primals: any) => Tracer) {
+export function valueAndGrad(f: (...primals: any) => Tracer, opts?: GradOpts) {
+  const argnums = opts?.argnums ?? 0; // By default, differentiate w.r.t. first arg.
+  checkInts(argnums);
+  const argnumsSet = new Set(typeof argnums === "number" ? [argnums] : argnums);
   return (...x: any) => {
     if (x.length === 0) {
       throw new Error("grad requires at least one argument to differentiate");
     }
-    // JAX convention, differentiate with respect to the first argument.
-    const [y, fVjp] = vjp(f, [x[0], ...x.slice(1).map(stopGradient)]);
+    // Differentiate only with respect to the argnums.
+    for (let i = 0; i < x.length; i++) {
+      if (!argnumsSet.has(i)) x[i] = treeMap(stopGradient, x[i]);
+    }
+    const [y, fVjp] = vjp(f, x);
     if (!(y instanceof Tracer) || ndim(y) !== 0) {
       throw new TypeError("grad requires a scalar output");
     }
     if (!isFloatDtype(y.dtype)) {
       throw new TypeError("grad only supports floating-point dtypes");
     }
-    const [ct, ...rest] = fVjp(onesLike(y.ref)); // backprop from scalar 1
-    for (const r of rest) treeDispose(r);
+    const cts = fVjp(onesLike(y.ref)); // backprop from scalar 1
     fVjp.dispose();
-    return [y, ct] as [any, any];
+    for (let i = 0; i < cts.length; i++) {
+      if (!argnumsSet.has(i)) treeDispose(cts[i]);
+    }
+    const grads =
+      typeof argnums === "number" ? cts[argnums] : argnums.map((i) => cts[i]);
+    return [y, grads];
   };
 }
 

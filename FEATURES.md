@@ -43,7 +43,7 @@ In the tables below, we use a color legend to refer to functions in JAX:
 | `copy_to_host_async` | ⚪️      | no separate "host" device                       |
 | `make_mesh`          | ⚪️      | device sharding                                 |
 | `set_mesh`           | ⚪️      | device sharding                                 |
-| `grad`               | 🟢      | need to add `argnums` and `has_aux`             |
+| `grad`               | 🟢      | need to add `has_aux`                           |
 | `value_and_grad`     | 🟢      |                                                 |
 | `jacobian`           | 🟢      |                                                 |
 | `jacfwd`             | 🟢      |                                                 |
