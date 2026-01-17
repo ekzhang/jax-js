@@ -285,6 +285,26 @@ export const jacrev = linearizeModule.jacrev as typeof jacfwd;
 export { jacrev as jacobian };
 
 /**
+ * @function
+ * Compute the Hessian matrix of a scalar-valued function.
+ *
+ * The Hessian is the matrix of second-order partial derivatives of a function.
+ * This is implemented as `jacfwd(grad(f))`.
+ *
+ * @example
+ * ```ts
+ * const f = (x: np.Array) => np.sum(x.ref.mul(x.ref).mul(x)); // x^3
+ * const H = hessian(f)(np.array([1, 2, 3]));
+ * // H[i,j] = d^2f / dx_i dx_j
+ * ```
+ */
+export const hessian = linearizeModule.hessian as <
+  F extends (x: Array) => Array,
+>(
+  f: F,
+) => (...args: MapJsTree<Parameters<F>, Array, ArrayLike>) => ReturnType<F>;
+
+/**
  * Wait until all `Array` leaves are ready by calling `Array.blockUntilReady()`.
  *
  * This can be used to wait for the results of an intermediate computation to

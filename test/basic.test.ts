@@ -1,4 +1,4 @@
-import { jacfwd, jacrev, jvp, numpy as np, vmap } from "@jax-js/jax";
+import { hessian, jacfwd, jacrev, jvp, numpy as np, vmap } from "@jax-js/jax";
 import { expect, suite, test } from "vitest";
 
 test("can create array", () => {
@@ -223,5 +223,59 @@ suite("jax.jacfwd()", () => {
     const jFwd = jacfwd(f)(x.ref);
     const jRev = jacrev(f)(x);
     expect(jFwd).toBeAllclose(jRev);
+  });
+});
+
+suite("jax.hessian()", () => {
+  test("computes hessian of sum of squares", () => {
+    // f(x) = sum(x^2) => gradient = 2x, hessian = 2*I
+    const f = (x: np.Array) => np.sum(x.ref.mul(x));
+    const x = np.array([1, 2, 3]);
+    const H = hessian(f)(x);
+    expect(H).toBeAllclose(
+      np.array([
+        [2, 0, 0],
+        [0, 2, 0],
+        [0, 0, 2],
+      ]),
+    );
+  });
+
+  test("computes hessian of quadratic form", () => {
+    // f(x) = x0^2 + 2*x1^2 + 3*x2^2
+    // gradient = [2*x0, 4*x1, 6*x2]
+    // hessian = diag([2, 4, 6])
+    const f = (x: np.Array) => {
+      const coeffs = np.array([1, 2, 3]);
+      return np.sum(coeffs.mul(x.ref).mul(x));
+    };
+    const x = np.array([1, 1, 1]);
+    const H = hessian(f)(x);
+    expect(H).toBeAllclose(
+      np.array([
+        [2, 0, 0],
+        [0, 4, 0],
+        [0, 0, 6],
+      ]),
+    );
+  });
+
+  test("computes hessian with cross terms", () => {
+    // f(x) = x0 * x1 + x1 * x2
+    // gradient = [x1, x0 + x2, x1]
+    // hessian = [[0, 1, 0], [1, 0, 1], [0, 1, 0]]
+    const f = (x: np.Array) => {
+      const [x0, x1, x2] = x;
+      return x0.mul(x1.ref).add(x1.mul(x2));
+    };
+    const x = np.array([1, 2, 3]);
+    const H = hessian(f)(x);
+    expect(H).toBeAllclose(
+      np.array([
+        [0, 1, 0],
+        [1, 0, 1],
+        [0, 1, 0],
+      ]),
+    );
   });
 });

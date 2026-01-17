@@ -65,7 +65,7 @@ import {
   Var,
 } from "./jaxpr";
 import { jvp, lowerAux } from "./jvp";
-import { moveaxis, vmap } from "./vmap";
+import { jacfwd, moveaxis, vmap } from "./vmap";
 
 /** Array value that can either be known or unknown. */
 class PartialVal {
@@ -1081,4 +1081,9 @@ export function jacrev(f: any) {
     };
     return vmap(pullback, [1])(eye(size, undefined, { dtype: x.dtype }));
   };
+}
+
+// See also: jacfwd()
+export function hessian(f: any) {
+  return jacfwd(grad(f));
 }

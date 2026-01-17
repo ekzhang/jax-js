@@ -48,7 +48,7 @@ In the tables below, we use a color legend to refer to functions in JAX:
 | `jacobian`           | 🟢      |                                                 |
 | `jacfwd`             | 🟢      |                                                 |
 | `jacrev`             | 🟢      |                                                 |
-| `hessian`            | 🟠      |                                                 |
+| `hessian`            | 🟢      |                                                 |
 | `jvp`                | 🟢      |                                                 |
 | `linearize`          | 🟢      |                                                 |
 | `linear_transpose`   | 🟠      |                                                 |
