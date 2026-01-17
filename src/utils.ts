@@ -183,6 +183,23 @@ export function normalizeAxis(
   }
 }
 
+/** Check for an array of integers with no duplicates. */
+export function checkInts(indices: number | number[]) {
+  if (typeof indices === "number") {
+    if (!Number.isInteger(indices))
+      throw new TypeError(`Expected integer index, got ${indices}`);
+  } else {
+    const seen = new Set<number>();
+    for (const i of indices) {
+      if (!Number.isInteger(i))
+        throw new TypeError(`Expected integer indices, got ${i}`);
+      if (seen.has(i))
+        throw new Error(`Duplicate index ${i} passed to function`);
+      seen.add(i);
+    }
+  }
+}
+
 export function range(
   start: number,
   stop?: number,

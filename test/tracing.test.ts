@@ -174,6 +174,27 @@ suite("jax.grad()", () => {
     expect(gradProd.js()).toEqual([24, 12, 8, 6]);
   });
 
+  test("passing const argnums", () => {
+    const f = (x: np.Array, y: [np.Array, np.Array]) =>
+      x.ref.mul(y[0]).add(y[1]).sum();
+    const df_dx = grad(f, { argnums: 0 });
+    const df_dy = grad(f, { argnums: 1 });
+    const x = np.array([2, 3]);
+    const y: [np.Array, np.Array] = [np.array([4, 5]), np.array([10, 20])];
+
+    expect(df_dx(x.ref, tree.ref(y)).js()).toEqual([4, 5]); // dy/dx = y0
+    const w = df_dy(x.ref, tree.ref(y));
+    expect(w[0].js()).toEqual([2, 3]); // dy/dy0 = x
+    expect(w[1].js()).toEqual([1, 1]); // dy/dy1 = 1
+
+    // Now try with a tuple of argnums
+    const df_both = grad(f, { argnums: [1, 0] });
+    const [[dy0, dy1], dx] = df_both(x, y);
+    expect(dx.js()).toEqual([4, 5]);
+    expect(dy0.js()).toEqual([2, 3]);
+    expect(dy1.js()).toEqual([1, 1]);
+  });
+
   test("backprops through auto-broadcast", () => {
     const [dx, dy] = grad(([x, y]: [np.Array, np.Array]) => x.mul(y).sum())([
       np.array([[2], [4]]),

@@ -139,18 +139,37 @@ export const vjp = linearizeModule.vjp as <
   ) => MapJsTree<Parameters<F>, ArrayLike, Array>,
 ];
 
+/** @inline */
+type GradOutputType<I, F extends (...args: any[]) => any> = MapJsTree<
+  I extends undefined
+    ? Parameters<F>[0]
+    : I extends number
+      ? Parameters<F>[I]
+      : I extends number[]
+        ? { [K in keyof I]: I[K] extends number ? Parameters<F>[I[K]] : never }
+        : never,
+  ArrayLike,
+  Array
+>;
+
 /**
  * @function
  * Compute the gradient of a scalar-valued function `f` with respect to its
  * first argument.
+ *
+ * Pass in different `argnums` to differentiate with respect to other
+ * arguments. If a tuple is provided, the return value will be a tuple of
+ * gradients corresponding to each argument index.
  */
 export const grad = linearizeModule.grad as <
   F extends (...args: any[]) => JsTree<Array>,
+  const I extends undefined | number | number[] = undefined,
 >(
   f: F,
+  opts?: Omit<linearizeModule.GradOpts, "argnums"> & { argnums: I },
 ) => (
   ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
-) => MapJsTree<Parameters<F>[0], ArrayLike, Array>;
+) => GradOutputType<I, F>;
 
 /**
  * @function
@@ -158,11 +177,13 @@ export const grad = linearizeModule.grad as <
  */
 export const valueAndGrad = linearizeModule.valueAndGrad as <
   F extends (...args: any[]) => JsTree<Array>,
+  I extends undefined | number | number[] = undefined,
 >(
   f: F,
+  opts?: Omit<linearizeModule.GradOpts, "argnums"> & { argnums: I },
 ) => (
   ...primals: MapJsTree<Parameters<F>, Array, ArrayLike>
-) => [ReturnType<F>, MapJsTree<Parameters<F>[0], ArrayLike, Array>];
+) => [ReturnType<F>, GradOutputType<I, F>];
 
 /**
  * @function
