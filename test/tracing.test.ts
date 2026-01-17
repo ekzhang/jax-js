@@ -456,6 +456,18 @@ suite("jax.grad()", () => {
     const x = np.array([1, 2, 3], { dtype: np.int32 });
     expect(() => grad(f, { hasAux: true })(x)).toThrow("floating-point");
   });
+
+  test("grad is not stopped in aux values", () => {
+    const f = grad((x: np.Array) => {
+      const [one, xsquare] = grad(
+        (y: np.Array): [np.Array, np.Array] => [y.ref, y.ref.mul(y)],
+        { hasAux: true },
+      )(x);
+      one.dispose();
+      return xsquare;
+    });
+    expect(f(10)).toBeAllclose(20);
+  });
 });
 
 suite("jax.valueAndGrad()", () => {

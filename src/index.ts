@@ -121,13 +121,29 @@ export const jit = jaxprModule.jit as <
  */
 export const linearize = linearizeModule.linearize as <
   F extends (...args: any[]) => JsTree<Array>,
+  HA extends boolean = false,
 >(
   f: F,
   primals: MapJsTree<Parameters<F>, Array, ArrayLike>,
-) => [
-  ReturnType<F>,
-  (...tangents: MapJsTree<Parameters<F>, Array, ArrayLike>) => ReturnType<F>,
-];
+  opts?: { hasAux?: HA },
+) => HA extends true
+  ? ReturnType<F> extends [infer Out, infer Aux]
+    ? [
+        Out,
+        OwnedFunction<
+          (...tangents: MapJsTree<Parameters<F>, Array, ArrayLike>) => Out
+        >,
+        Aux,
+      ]
+    : never
+  : [
+      ReturnType<F>,
+      OwnedFunction<
+        (
+          ...tangents: MapJsTree<Parameters<F>, Array, ArrayLike>
+        ) => ReturnType<F>
+      >,
+    ];
 
 /**
  * @function

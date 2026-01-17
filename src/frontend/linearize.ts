@@ -157,9 +157,15 @@ function linearizeFlat(
 export function linearize(
   f: (...primals: any[]) => any,
   primalsIn: any[],
-): [any, OwnedFunction<(...tangents: any[]) => any>] {
+  { hasAux = false } = {},
+): [any, OwnedFunction<(...tangents: any[]) => any>, any?] {
   const [primalsInFlat, inTree] = treeFlatten(primalsIn);
-  const [fFlat, outTree] = flattenFun(f, inTree);
+  let fFlat, outTree, aux;
+  if (hasAux) {
+    [fFlat, outTree, aux] = flattenFunWithAux(f, inTree);
+  } else {
+    [fFlat, outTree] = flattenFun(f, inTree);
+  }
   const [primalsOutFlat, fLinFlat, dispose] = linearizeFlat(
     fFlat,
     primalsInFlat.map(pureArray),
@@ -177,6 +183,9 @@ export function linearize(
     return treeUnflatten(outTree.value!, tangentsOutFlat);
   }) as OwnedFunction<(...tangents: any[]) => any>;
   fLin.dispose = dispose;
+  if (hasAux) {
+    return [primalsOut, fLin, lowerAux(aux!.value)];
+  }
   return [primalsOut, fLin];
 }
 

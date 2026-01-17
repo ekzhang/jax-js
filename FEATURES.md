@@ -50,7 +50,7 @@ In the tables below, we use a color legend to refer to functions in JAX:
 | `jacrev`             | 🟢      |                                                 |
 | `hessian`            | 🟠      |                                                 |
 | `jvp`                | 🟢      |                                                 |
-| `linearize`          | 🟢      | need to add `has_aux`                           |
+| `linearize`          | 🟢      |                                                 |
 | `linear_transpose`   | 🟠      |                                                 |
 | `vjp`                | 🟢      |                                                 |
 | `custom_gradient`    | 🔴      | core engine feature                             |
