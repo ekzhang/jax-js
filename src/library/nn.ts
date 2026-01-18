@@ -7,7 +7,9 @@ import {
   Array,
   ArrayLike,
   clip,
+  einsum,
   exp,
+  expandDims,
   expm1,
   less,
   log,
@@ -20,6 +22,7 @@ import {
   square,
   squeeze,
   tanh,
+  tile,
   where,
   zerosLike,
 } from "./numpy";
@@ -33,7 +36,7 @@ import {
 } from "../frontend/core";
 import { jit } from "../frontend/jaxpr";
 import { Pair } from "../shape";
-import { checkAxis, normalizeAxis } from "../utils";
+import { checkAxis, deepEqual, normalizeAxis } from "../utils";
 
 /**
  * Rectified Linear Unit (ReLU) activation function:
@@ -409,4 +412,124 @@ export function oneHot(x: Array, numClasses: number): Array {
     throw new TypeError(`oneHot expects integers, got ${x.dtype}`);
   }
   return eye(numClasses, undefined, { device: x.device }).slice(x);
+}
+
+/**
+ * Scaled dot product attention (SDPA).
+ *
+ * Computes `softmax((Q @ K^T) / sqrt(d) + bias) @ V`, where `Q` is the query,
+ * `K` is the key, `V` is the value, and `d` is the dimensionality of each key
+ * and query vector.
+ *
+ * Multi-query attention is applied when input `key` and `value` tensors have
+ * fewer heads than `query`.
+ *
+ * We use the following uppercase letters to denote array shapes:
+ * - `B` = batch size
+ * - `S` = length of key/value sequences (source)
+ * - `L` = length of query sequences
+ * - `N` = number of attention heads
+ * - `H` = dimensionality of each attention head
+ * - `K` = number of key/value heads (for grouped-query attention)
+ *
+ * The batch size `B` may be omitted, which is equivalent to `B = 1`. In this
+ * case it must be omitted from all inputs.
+ *
+ * @param query - Query array; shape `[B, L, N, H]`
+ * @param key - Key array; shape `[B, S, K, H]`
+ * @param value - Value array; same shape as `key`
+ * @param opts.bias - Optional bias to add to the attention logits; shape
+ *   `[B, N, L, S]` or broadcastable to it.
+ * @param opts.mask - Optional mask to apply to the attention logits; should be
+ *   a boolean array broadcastable to `[B, N, L, S]`, where `true` indicates
+ *   the element should take part in attention.
+ * @param opts.scale - Scaling factor override, default is `1 / sqrt(H)`.
+ * @param opts.isCausal - If true, applies a casual mask.
+ * @param opts.querySeqLengths - Optional sequence lengths for the queries;
+ *   shape `(B,)`. Taken from the beginning of the tensor.
+ * @param opts.keyValueSeqLengths - Optional sequence lengths for the keys and
+ *   values; shape `(B,)`. Taken from the beginning of the tensor.
+ * @param opts.localWindowSize - If specified, applies a local attention window
+ *   of the given size. Can be a single number or a tuple `[left, right]`.
+ *
+ * @returns The result of the attention operation; shape is the same as query
+ *   `[B, L, N, H]`, or `[L, N, H]` if `B` is omitted.
+ */
+export function dotProductAttention(
+  query: ArrayLike,
+  key: ArrayLike,
+  value: ArrayLike,
+  opts: {
+    bias?: ArrayLike;
+    mask?: ArrayLike; // TODO
+    scale?: number;
+    isCausal?: boolean; // TODO
+    querySeqLengths?: ArrayLike; // TODO
+    keyValueSeqLengths?: ArrayLike; // TODO
+    localWindowSize?: number | [number, number]; // TODO
+  } = {},
+): Array {
+  if (opts.isCausal || opts.mask)
+    throw new Error("Attention masks are not yet implemented");
+  if (
+    opts.querySeqLengths !== undefined ||
+    opts.keyValueSeqLengths !== undefined
+  )
+    throw new Error("Sequence length masking is not yet implemented");
+  if (opts.localWindowSize !== undefined)
+    throw new Error("Local attention is not yet implemented");
+
+  query = fudgeArray(query);
+  key = fudgeArray(key);
+  value = fudgeArray(value);
+
+  if (
+    (query.ndim !== 3 && query.ndim !== 4) ||
+    query.ndim !== key.ndim ||
+    query.ndim !== value.ndim
+  )
+    throw new Error(
+      `dotProductAttention: expected all tensors to have rank 3 or 4, ` +
+        `got Q=${query.aval}, K=${key.aval}, V=${value.aval}`,
+    );
+  if (!deepEqual(key.shape, value.shape))
+    throw new Error(
+      `dotProductAttention: key and value shapes must match, ` +
+        `got K=${key.shape}, V=${value.shape}`,
+    );
+
+  const isRank3 = query.ndim === 3;
+  if (isRank3) {
+    query = expandDims(query, 0);
+    key = expandDims(key, 0);
+    value = expandDims(value, 0);
+  }
+
+  const [B, L, N, H] = query.shape;
+  if (key.shape[0] !== B || key.shape[3] !== H)
+    throw new Error(
+      `dotProductAttention: query and key shapes mismatch, ` +
+        `got Q=${query.aval}, K=${key.aval}`,
+    );
+
+  const _S = key.shape[1];
+  const K = key.shape[2];
+
+  if (N < K || (N != K && N % K !== 0))
+    throw new Error(
+      `dotProductAttention: number of query heads N=${N} must be ` +
+        `divisible by number of key/value heads K=${K} for GQA`,
+    );
+  const G = N / K; // number of query groups
+  key = tile(key, [1, 1, G, 1]);
+  value = tile(value, [1, 1, G, 1]);
+
+  const scale = opts.scale ?? 1 / Math.sqrt(H);
+  let scores = einsum("BLNH,BSNH->BNLS", query, key).mul(scale);
+  if (opts.bias !== undefined) {
+    scores = scores.add(opts.bias);
+  }
+  const attn = softmax(scores, -1); // BNLS
+  const out = einsum("BNLS,BSNH->BLNH", attn, value);
+  return isRank3 ? out.reshape([L, N, H]) : out;
 }

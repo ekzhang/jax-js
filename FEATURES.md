@@ -649,19 +649,19 @@ would need substantial changes to work well in JavaScript.
 
 **Other functions:**
 
-| API                             | Support | Notes                    |
-| ------------------------------- | ------- | ------------------------ |
-| `softmax`                       | 🟢      |                          |
-| `log_softmax`                   | 🟢      |                          |
-| `logmeanexp`                    | 🟢      |                          |
-| `logsumexp`                     | 🟢      |                          |
-| `standardize`                   | 🟢      |                          |
-| `one_hot`                       | 🟢      |                          |
-| `dot_product_attention`         | 🟠      | FlashAttention is tricky |
-| `scaled_matmul`                 | 🟠      | for microscaling         |
-| `get_scaled_dot_general_config` | 🔴      |                          |
-| `scaled_dot_general`            | 🟠      | for microscaling         |
-| `log1mexp`                      | 🟠      |                          |
+| API                             | Support | Notes                                             |
+| ------------------------------- | ------- | ------------------------------------------------- |
+| `softmax`                       | 🟢      |                                                   |
+| `log_softmax`                   | 🟢      |                                                   |
+| `logmeanexp`                    | 🟢      |                                                   |
+| `logsumexp`                     | 🟢      |                                                   |
+| `standardize`                   | 🟢      |                                                   |
+| `one_hot`                       | 🟢      |                                                   |
+| `dot_product_attention`         | 🟢      | correct, but can custom-optimize (FlashAttention) |
+| `scaled_matmul`                 | 🟠      | for microscaling                                  |
+| `get_scaled_dot_general_config` | 🔴      |                                                   |
+| `scaled_dot_general`            | 🟠      | for microscaling                                  |
+| `log1mexp`                      | 🟠      |                                                   |
 
 ## Other `jax.*` modules
 
