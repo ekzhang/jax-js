@@ -308,6 +308,25 @@ suite.each(devices)("device:%s", (device) => {
       expect(out.slice(0, 0, 0)).toBeAllclose([1, 0], { atol: 1e-3 });
     });
 
+    test("attention with mask", () => {
+      // Shape: [B=1, L=2, N=1, H=2]
+      const query = np.array([[[[1, 0]], [[0, 1]]]]);
+      const key = np.array([[[[1, 0]], [[0, 1]]]]);
+      const value = np.array([[[[1, 0]], [[0, 1]]]]);
+
+      // Mask shape: [B=1, N=1, L=2, S=2]
+      // true = attend, false = mask out
+      // Block second key for first query, block first key for second query
+      const mask = np.array([[[[true, false], [false, true]]]]);
+
+      const out = nn.dotProductAttention(query, key, value, { mask });
+      expect(out.shape).toEqual([1, 2, 1, 2]);
+      // First query attends only to first key (value [1, 0])
+      expect(out.ref.slice(0, 0, 0)).toBeAllclose([1, 0], { atol: 1e-5 });
+      // Second query attends only to second key (value [0, 1])
+      expect(out.slice(0, 1, 0)).toBeAllclose([0, 1], { atol: 1e-5 });
+    });
+
     test("multi-head attention", () => {
       // B=1, L=2, N=2 (heads), H=2
       const query = np.array([

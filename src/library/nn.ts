@@ -461,7 +461,7 @@ export function dotProductAttention(
   value: ArrayLike,
   opts: {
     bias?: ArrayLike;
-    mask?: ArrayLike; // TODO
+    mask?: ArrayLike;
     scale?: number;
     isCausal?: boolean; // TODO
     querySeqLengths?: ArrayLike; // TODO
@@ -469,8 +469,7 @@ export function dotProductAttention(
     localWindowSize?: number | [number, number]; // TODO
   } = {},
 ): Array {
-  if (opts.isCausal || opts.mask)
-    throw new Error("Attention masks are not yet implemented");
+  if (opts.isCausal) throw new Error("Causal masking is not yet implemented");
   if (
     opts.querySeqLengths !== undefined ||
     opts.keyValueSeqLengths !== undefined
@@ -528,6 +527,9 @@ export function dotProductAttention(
   let scores = einsum("BLNH,BSNH->BNLS", query, key).mul(scale);
   if (opts.bias !== undefined) {
     scores = scores.add(opts.bias);
+  }
+  if (opts.mask !== undefined) {
+    scores = where(opts.mask, scores, -Infinity);
   }
   const attn = softmax(scores, -1); // BNLS
   const out = einsum("BNLS,BSNH->BLNH", attn, value);
