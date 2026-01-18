@@ -311,10 +311,10 @@ Most operations behave the same way as they do in JAX.
 | `log2`                | 🟢      |                                         |
 | `logaddexp`           | 🟠      |                                         |
 | `logaddexp2`          | 🟠      |                                         |
-| `logical_and`         | 🟠      |                                         |
-| `logical_not`         | 🟠      |                                         |
-| `logical_or`          | 🟠      |                                         |
-| `logical_xor`         | 🟠      |                                         |
+| `logical_and`         | 🟢      |                                         |
+| `logical_not`         | 🟢      |                                         |
+| `logical_or`          | 🟢      |                                         |
+| `logical_xor`         | 🟢      |                                         |
 | `logspace`            | 🟢      |                                         |
 | `mask_indices`        | 🟠      |                                         |
 | `matmul`              | 🟢      |                                         |
