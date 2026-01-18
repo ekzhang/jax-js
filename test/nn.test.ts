@@ -300,7 +300,10 @@ suite.each(devices)("device:%s", (device) => {
 
       // Bias shape: [B=1, N=1, L=2, S=2]
       // Add large negative bias to block second key for first query
-      const bias = np.array([[[[0, -1000], [0, 0]]]]);
+      const bias = np.array([
+        [0, -1000],
+        [0, 0],
+      ]);
 
       const out = nn.dotProductAttention(query, key, value, { bias });
       expect(out.shape).toEqual([1, 2, 1, 2]);
@@ -317,14 +320,38 @@ suite.each(devices)("device:%s", (device) => {
       // Mask shape: [B=1, N=1, L=2, S=2]
       // true = attend, false = mask out
       // Block second key for first query, block first key for second query
-      const mask = np.array([[[[true, false], [false, true]]]]);
+      const mask = np.array([
+        [true, false],
+        [false, true],
+      ]);
 
       const out = nn.dotProductAttention(query, key, value, { mask });
       expect(out.shape).toEqual([1, 2, 1, 2]);
       // First query attends only to first key (value [1, 0])
-      expect(out.ref.slice(0, 0, 0)).toBeAllclose([1, 0], { atol: 1e-5 });
+      expect(out.ref.slice(0, 0, 0)).toBeAllclose([1, 0]);
       // Second query attends only to second key (value [0, 1])
-      expect(out.slice(0, 1, 0)).toBeAllclose([0, 1], { atol: 1e-5 });
+      expect(out.slice(0, 1, 0)).toBeAllclose([0, 1]);
+    });
+
+    test("causal attention (isCausal)", () => {
+      // Shape: [B=1, L=3, N=1, H=2]
+      // 3 query positions, each can only attend to itself and previous positions
+      const query = np.array([[[[1, 0]], [[0.2, 0.2]], [[1, 1]]]]);
+      const key = np.array([[[[1, 0]], [[0, 1]], [[1, 1]]]]);
+      const value = np.array([[[[1, 0]], [[0, 1]], [[0, 0]]]]);
+
+      const out = nn.dotProductAttention(query, key, value, { isCausal: true });
+      expect(out.shape).toEqual([1, 3, 1, 2]);
+
+      // Position 0 can only attend to position 0 -> outputs value[0] = [1, 0]
+      expect(out.ref.slice(0, 0, 0)).toBeAllclose([1, 0]);
+      // Position 1 can attend to positions 0 and 1
+      expect(out.ref.slice(0, 1, 0)).toBeAllclose([0.5, 0.5]);
+      // Position 2 can attend to positions 0, 1, and 2
+      expect(out.slice(0, 2, 0)).toBeAllclose([
+        1 / (2 + Math.exp(Math.SQRT1_2)),
+        1 / (2 + Math.exp(Math.SQRT1_2)),
+      ]);
     });
 
     test("multi-head attention", () => {

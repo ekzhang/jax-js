@@ -1,6 +1,6 @@
 // Common functions for neural network libraries, mirroring `jax.nn` in JAX.
 
-import { isFloatDtype } from "../alu";
+import { DType, isFloatDtype } from "../alu";
 import {
   absolute,
   add,
@@ -26,7 +26,7 @@ import {
   where,
   zerosLike,
 } from "./numpy";
-import { eye, fudgeArray } from "../frontend/array";
+import { eye, fudgeArray, tri } from "../frontend/array";
 import {
   type Axis,
   erfc,
@@ -463,13 +463,12 @@ export function dotProductAttention(
     bias?: ArrayLike;
     mask?: ArrayLike;
     scale?: number;
-    isCausal?: boolean; // TODO
+    isCausal?: boolean;
     querySeqLengths?: ArrayLike; // TODO
     keyValueSeqLengths?: ArrayLike; // TODO
     localWindowSize?: number | [number, number]; // TODO
   } = {},
 ): Array {
-  if (opts.isCausal) throw new Error("Causal masking is not yet implemented");
   if (
     opts.querySeqLengths !== undefined ||
     opts.keyValueSeqLengths !== undefined
@@ -511,7 +510,7 @@ export function dotProductAttention(
         `got Q=${query.aval}, K=${key.aval}`,
     );
 
-  const _S = key.shape[1];
+  const S = key.shape[1];
   const K = key.shape[2];
 
   if (N < K || (N != K && N % K !== 0))
@@ -530,6 +529,12 @@ export function dotProductAttention(
   }
   if (opts.mask !== undefined) {
     scores = where(opts.mask, scores, -Infinity);
+  }
+  if (opts.isCausal) {
+    // Causal mask: position i can only attend to positions j <= i
+    // tri(L, S) creates a lower triangular boolean mask of shape [L, S]
+    const causalMask = tri(L, S, 0, { dtype: DType.Bool });
+    scores = where(causalMask, scores, -Infinity);
   }
   const attn = softmax(scores, -1); // BNLS
   const out = einsum("BNLS,BSNH->BLNH", attn, value);
