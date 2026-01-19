@@ -1,3 +1,10 @@
+import { fromBinary } from "@bufbuild/protobuf";
+import {
+  type ModelProto,
+  ModelProto_SentencePiece_Type,
+  ModelProtoSchema,
+} from "sentencepiece-buf/model";
+
 import { cachedFetch } from "./opfs";
 
 /** Supported tokenizer types. */
@@ -506,4 +513,298 @@ async function loadTiktokenBpe(url: string): Promise<Map<string, number>> {
     );
   }
   return encoder;
+}
+
+/** The whitespace meta-symbol used by SentencePiece. */
+const SPIECE_UNDERLINE = "\u2581"; // ▁
+
+/** Trie node for efficient vocabulary lookup. */
+interface TrieNode {
+  children: Map<string, TrieNode>;
+  /** Token info if this node represents a complete piece. */
+  token?: { id: number; score: number };
+}
+
+function createTrieNode(): TrieNode {
+  return { children: new Map() };
+}
+
+/**
+ * SentencePiece Unigram tokenizer.
+ *
+ * This implements the Viterbi-based unigram language model tokenization
+ * algorithm used by SentencePiece. It finds the most likely segmentation
+ * of input text based on learned piece scores (log probabilities).
+ *
+ * Uses a trie for efficient O(n * maxPieceLen) vocabulary lookup.
+ */
+export class Unigram {
+  #trie: TrieNode; // trie for piece lookup
+  #decoder: Map<number, string>; // id -> piece
+  #byteFallback: Map<string, number>; // byte hex -> id (for <0xXX> tokens)
+  #unkId: number;
+  #bosId: number;
+  #eosId: number;
+
+  /** Normalizer settings */
+  #addDummyPrefix: boolean;
+  #removeExtraWhitespaces: boolean;
+
+  constructor(model: ModelProto) {
+    this.#trie = createTrieNode();
+    this.#decoder = new Map();
+    this.#byteFallback = new Map();
+
+    // Get special token IDs from trainer spec or use defaults
+    this.#unkId = model.trainerSpec?.unkId ?? 0;
+    this.#bosId = model.trainerSpec?.bosId ?? 1;
+    this.#eosId = model.trainerSpec?.eosId ?? 2;
+
+    // Get normalizer settings
+    this.#addDummyPrefix = model.normalizerSpec?.addDummyPrefix ?? true;
+    this.#removeExtraWhitespaces =
+      model.normalizerSpec?.removeExtraWhitespaces ?? true;
+
+    // Build vocabulary maps
+    for (let i = 0; i < model.pieces.length; i++) {
+      const piece = model.pieces[i];
+      const pieceStr = piece.piece;
+      const score = piece.score;
+      const type = piece.type;
+
+      this.#decoder.set(i, pieceStr);
+
+      if (type === ModelProto_SentencePiece_Type.BYTE) {
+        // Byte fallback tokens like <0x00>, <0x01>, etc.
+        const match = pieceStr.match(/^<0x([0-9A-Fa-f]{2})>$/);
+        if (match) {
+          this.#byteFallback.set(match[1].toLowerCase(), i);
+        }
+      } else if (
+        type === ModelProto_SentencePiece_Type.NORMAL ||
+        type === ModelProto_SentencePiece_Type.USER_DEFINED
+      ) {
+        // Insert into trie
+        this.#insertIntoTrie(pieceStr, i, score);
+      }
+      // CONTROL, UNKNOWN, UNUSED types are handled specially
+    }
+  }
+
+  static fromBinary(data: Uint8Array): Unigram {
+    const model = fromBinary(ModelProtoSchema, data);
+    return new Unigram(model);
+  }
+
+  /** Insert a piece into the trie. */
+  #insertIntoTrie(piece: string, id: number, score: number): void {
+    let node = this.#trie;
+    for (const char of piece) {
+      let child = node.children.get(char);
+      if (!child) {
+        child = createTrieNode();
+        node.children.set(char, child);
+      }
+      node = child;
+    }
+    node.token = { id, score };
+  }
+
+  /**
+   * Find all pieces in the vocabulary that start at position `start` in `text`.
+   * Returns array of [endPosition, tokenId, score] tuples.
+   */
+  #findPiecesAt(text: string, start: number): Array<[number, number, number]> {
+    const results: Array<[number, number, number]> = [];
+    let node = this.#trie;
+
+    for (let i = start; i < text.length; i++) {
+      const char = text[i];
+      const child = node.children.get(char);
+      if (!child) break;
+      node = child;
+      if (node.token) {
+        results.push([i + 1, node.token.id, node.token.score]);
+      }
+    }
+
+    return results;
+  }
+
+  /** Normalize input text according to SentencePiece rules. */
+  #normalize(text: string): string {
+    if (this.#removeExtraWhitespaces) {
+      text = text.replace(/\s+/g, " ").trim();
+    }
+    if (text.length === 0) return "";
+    if (this.#addDummyPrefix) {
+      text = " " + text;
+    }
+    // Replace spaces with the SentencePiece meta-symbol
+    text = text.replace(/ /g, SPIECE_UNDERLINE);
+    return text;
+  }
+
+  /**
+   * Encode text into token IDs using Viterbi algorithm.
+   *
+   * Finds the most likely segmentation by computing the best path through
+   * all possible segmentations, where scores are log probabilities.
+   */
+  encode(text: string): number[] {
+    text = this.#normalize(text);
+    if (text.length === 0) return [];
+
+    const n = text.length;
+
+    // best[i] = best score to reach position i
+    // prev[i] = [start position, token ids] of the best path ending at i
+    // We store an array of token IDs to handle multi-byte characters
+    const best: number[] = new Array(n + 1).fill(-Infinity);
+    const prev: [number, number[]][] = new Array(n + 1).fill(null);
+    best[0] = 0;
+
+    for (let i = 0; i < n; i++) {
+      if (best[i] === -Infinity) continue;
+
+      // Try all possible pieces starting at position i using trie
+      const matches = this.#findPiecesAt(text, i);
+      for (const [end, id, score] of matches) {
+        const newScore = best[i] + score;
+        if (newScore > best[end]) {
+          best[end] = newScore;
+          prev[end] = [i, [id]];
+        }
+      }
+
+      // Byte fallback: only use if no vocabulary piece covers position i+1
+      // This ensures vocabulary matches are always preferred over byte fallback
+      if (prev[i + 1] === null) {
+        const char = text[i];
+        const bytes = new TextEncoder().encode(char);
+        const byteTokens: number[] = [];
+
+        for (const byte of bytes) {
+          const hex = byte.toString(16).padStart(2, "0");
+          const byteId = this.#byteFallback.get(hex);
+          if (byteId !== undefined) {
+            byteTokens.push(byteId);
+          } else {
+            byteTokens.push(this.#unkId);
+          }
+        }
+
+        if (byteTokens.length > 0) {
+          best[i + 1] = best[i]; // Byte fallback has score 0
+          prev[i + 1] = [i, byteTokens];
+        }
+      }
+    }
+
+    // Backtrack to get the best segmentation
+    const tokens: number[] = [];
+    let pos = n;
+    while (pos > 0) {
+      if (prev[pos] === null) {
+        // Should not happen if algorithm is correct, but fallback just in case
+        const char = text[pos - 1];
+        const bytes = new TextEncoder().encode(char);
+        for (let j = bytes.length - 1; j >= 0; j--) {
+          const hex = bytes[j].toString(16).padStart(2, "0");
+          const byteId = this.#byteFallback.get(hex);
+          tokens.push(byteId ?? this.#unkId);
+        }
+        pos--;
+      } else {
+        const [start, tokenIds] = prev[pos];
+        // Add tokens in reverse order (we'll reverse at the end)
+        for (let j = tokenIds.length - 1; j >= 0; j--) {
+          tokens.push(tokenIds[j]);
+        }
+        pos = start;
+      }
+    }
+
+    tokens.reverse();
+    return tokens;
+  }
+
+  /** Decode token IDs back to text. */
+  decode(tokens: number[]): string {
+    const pieces: string[] = [];
+
+    let i = 0;
+    while (i < tokens.length) {
+      const tokenId = tokens[i];
+      const piece = this.#decoder.get(tokenId);
+
+      if (piece === undefined) {
+        // Unknown token
+        pieces.push("�");
+        i++;
+        continue;
+      }
+
+      // Check if this is a byte token
+      const byteMatch = piece.match(/^<0x([0-9A-Fa-f]{2})>$/);
+      if (byteMatch) {
+        // Collect consecutive byte tokens
+        const bytes: number[] = [parseInt(byteMatch[1], 16)];
+        i++;
+
+        while (i < tokens.length) {
+          const nextPiece = this.#decoder.get(tokens[i]);
+          const nextByteMatch = nextPiece?.match(/^<0x([0-9A-Fa-f]{2})>$/);
+          if (nextByteMatch) {
+            bytes.push(parseInt(nextByteMatch[1], 16));
+            i++;
+          } else {
+            break;
+          }
+        }
+        pieces.push(new TextDecoder().decode(new Uint8Array(bytes)));
+      } else {
+        pieces.push(piece);
+        i++;
+      }
+    }
+
+    // Join and convert meta-symbol back to space
+    let result = pieces
+      .join("")
+      .replace(new RegExp(SPIECE_UNDERLINE, "g"), " ");
+
+    // Remove leading space if dummy prefix was added
+    if (this.#addDummyPrefix && result.startsWith(" ")) {
+      result = result.slice(1);
+    }
+
+    return result;
+  }
+
+  /** Get the beginning-of-sequence token ID. */
+  get bosToken(): number {
+    return this.#bosId;
+  }
+
+  /** Get the end-of-sequence token ID. */
+  get eosToken(): number {
+    return this.#eosId;
+  }
+
+  /** Get the unknown token ID. */
+  get unkToken(): number {
+    return this.#unkId;
+  }
+
+  /** Get vocabulary size. */
+  get vocabSize(): number {
+    return this.#decoder.size;
+  }
+}
+
+/** Load a SentencePiece model from a URL. */
+export async function loadSentencePiece(url: string): Promise<Unigram> {
+  const data = await cachedFetch(url);
+  return Unigram.fromBinary(data);
 }
