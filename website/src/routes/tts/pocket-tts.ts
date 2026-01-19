@@ -55,7 +55,6 @@ export function runFlowLMStep(
 
   // Project input from 32 -> 1024
   let input = runLinear(inputLinear, sequence);
-  console.log("Input after linear:", input.shape);
 
   // Concatenate text embeddings with input
   input = np.concatenate([textEmbeddings, input], 0);
@@ -79,9 +78,10 @@ export function runFlowLMStep(
   const eosLogit = runLinear(outEos, transformerOut.ref);
   const isEos = np.greater(eosLogit, eosThreshold);
 
-  const noiseShape = [ldim];
+  const noiseShape = [1, ldim];
   const std = Math.sqrt(temp);
   let noise = random.normal(random.key(0), noiseShape).mul(std); // TODO: Actual random key
+  // let noise = np.zeros(noiseShape, { dtype: transformerOut.dtype });
   if (noiseClamp !== null) {
     // Truncated normal - clamp to [-noiseClamp, noiseClamp]
     noise = np.clip(noise, -noiseClamp, noiseClamp);
@@ -114,7 +114,6 @@ export function runSimpleMLPAdaLN(
   t: np.Array, // target time tensor
   x: np.Array, // input [N, C]
 ): np.Array {
-  // Project input
   x = runLinear(inputProj, x);
 
   // Combine time conditions (average of s and t embeddings)
@@ -658,6 +657,7 @@ const weightMapper = new WeightMapper({
   substring: {
     ".conv.conv.": ".conv.",
     ".convtr.convtr.": ".convtr.",
+    ".in_ln.": ".inLN.",
     ".transformer.layers.": ".transformer.",
   },
   autoCamelCase: true,
