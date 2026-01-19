@@ -1,4 +1,4 @@
-import { lax, nn, numpy as np, random } from "@jax-js/jax";
+import { lax, nn, numpy as np, random, tree } from "@jax-js/jax";
 import { safetensors, WeightMapper } from "@jax-js/loaders";
 
 // Kyutai Pocket TTS model weights interfaces and forward pass.
@@ -72,13 +72,13 @@ export function runFlowLMStep(
   let transformerOut = runLayerNorm(outNorm, input);
 
   // Get last position output (for next token prediction)
-  transformerOut = transformerOut.slice(-1, null); // [dim]
+  transformerOut = transformerOut.slice([-1]); // [1, dim]
 
   // Check EOS
   const eosLogit = runLinear(outEos, transformerOut.ref);
-  const isEos = np.greater(eosLogit, eosThreshold);
+  const isEos = np.greater(eosLogit, eosThreshold); // [1, 1]
 
-  const noiseShape = [1, ldim];
+  const noiseShape = [1, ldim]; // [T, ldim] with T=1
   const std = Math.sqrt(temp);
   let noise = random.normal(random.key(0), noiseShape).mul(std); // TODO: Actual random key
   // let noise = np.zeros(noiseShape, { dtype: transformerOut.dtype });
@@ -211,7 +211,9 @@ export function runMimiStreamingMultiheadAttention(
   const [q_, k_, v] = np.split(qkv, 3, 1); // each is [T, 1, H, D]
   const [q, k] = runRope(q_, k_, offset, maxPeriod);
 
-  let x = nn.dotProductAttention(q, k, v, { localWindowSize: [context, 0] });
+  let x = nn.dotProductAttention(q, k, v, {
+    localWindowSize: [context - 1, 0],
+  });
   x = x.reshape([T, embedDim]);
   x = runLinear(outProj, x);
   return x;
@@ -280,7 +282,7 @@ export function runSEANetResnetBlock(
   { block }: SEANetResnetBlock,
   x: np.Array, // [C, T]
 ): np.Array {
-  let v = x;
+  let v = x.ref;
   for (const layer of block) {
     if (layer === undefined) {
       // ELU activation
@@ -328,6 +330,7 @@ export function runSEANetEncoder(
   const ratios = [4, 5, 6]; // reversed from decoder [6, 5, 4]
 
   // Initial conv (index 0)
+  x = np.expandDims(x, 0); // [1, C, T]
   x = runConv1d(model[0].conv, x);
 
   // Encoder blocks (ratio=4, ratio=5, ratio=6)
@@ -349,7 +352,7 @@ export function runSEANetEncoder(
   x = nn.elu(x);
   x = runConv1d((model[11] as StreamingConv1d).conv, x);
 
-  return x;
+  return x.slice(0);
 }
 
 export type SEANetDecoder = {
@@ -386,6 +389,7 @@ export function runSEANetDecoder(
   const ratios = [6, 5, 4]; // upsampling ratios
 
   // Initial conv (index 0)
+  x = np.expandDims(x, 0); // [1, C, T]
   x = runConv1d(model[0].conv, x);
 
   // Decoder blocks
@@ -411,7 +415,7 @@ export function runSEANetDecoder(
   x = nn.elu(x);
   x = runConv1d((model[11] as StreamingConv1d).conv, x);
 
-  return x;
+  return x.slice(0);
 }
 
 export type MimiModel = {
@@ -420,16 +424,26 @@ export type MimiModel = {
   encoderTransformer: StreamingTransformerLayer[];
   decoderTransformer: StreamingTransformerLayer[];
   quantizer: {
-    outputProj: Conv1d; // DummyQuantizer
+    outputProj: { weight: np.Array }; // DummyQuantizer, plain conv1d [512, 32, 1], kernel size 1
   };
   downsample: StreamingConv1d;
-  upsample: StreamingConvTranspose1d;
+  upsample: StreamingConvTranspose1d; // note: depthwise
 };
 
 export function runMimiEncode(
-  { encoder, encoderTransformer, downsample }: MimiModel,
+  {
+    encoder,
+    encoderTransformer,
+    decoder,
+    decoderTransformer,
+    quantizer,
+    downsample,
+    upsample,
+  }: MimiModel,
   x: np.Array, // [C, T] - audio waveform at 24kHz
 ): np.Array {
+  tree.dispose([decoder, decoderTransformer, quantizer, upsample]);
+
   // Encode through SEANet encoder
   let emb = runSEANetEncoder(encoder, x);
 
@@ -440,28 +454,43 @@ export function runMimiEncode(
   }
   emb = emb.transpose([1, 0]); // back to [C, T]
 
-  // Downsample (stride 2)
-  emb = runConv1d(downsample.conv, emb, 2);
+  // Downsample (stride 16)
+  emb = runConv1d(downsample.conv, emb, 16);
 
   return emb;
 }
 
 export function runMimiDecode(
-  { decoder, decoderTransformer, upsample }: MimiModel,
-  latent: np.Array, // [C, T] - latent representation
+  {
+    encoder,
+    encoderTransformer,
+    decoder,
+    decoderTransformer,
+    quantizer,
+    downsample,
+    upsample,
+  }: MimiModel,
+  latent: np.Array, // [T, 32] - bottleneck representation
 ): np.Array {
-  // Upsample (stride 2)
-  let emb = runConvTranspose1d(upsample.convtr, latent, 2);
+  tree.dispose([encoder, encoderTransformer, downsample]);
+
+  // Run through "dummy quantizer"
+  latent = np.expandDims(latent.transpose([1, 0]), 0); // [1, 32, T]
+  latent = lax.conv(latent, quantizer.outputProj.weight, [1], "VALID"); // [1, 512, T]
+
+  // Upsample (stride 16), depthwise
+  let emb = runConvTranspose1d(upsample.convtr, latent, 16, latent.shape[1]); // [1, 512, 16*T]
+  emb = emb.slice(0);
 
   // Decoder transformer
-  emb = emb.transpose([1, 0]); // [C, T] -> [T, C]
+  emb = emb.transpose([1, 0]); // [C, 16*T] -> [16*T, C]
   for (const layer of decoderTransformer) {
     emb = runStreamingTransformerLayer(layer, emb, 250, 8);
   }
-  emb = emb.transpose([1, 0]); // [C, T]
+  emb = emb.transpose([1, 0]); // [C, 16*T]
 
   // Decode through SEANet decoder
-  const out = runSEANetDecoder(decoder, emb);
+  const out = runSEANetDecoder(decoder, emb); // [1, 1920*T]
 
   return out;
 }
@@ -608,8 +637,14 @@ export function runConv1d(
   stride: number = 1,
 ): np.Array {
   // x: [C_in, T_in]
-  const y = lax.conv(x, weight, [stride], "SAME");
-  if (bias) return y.add(bias);
+  const y = lax.conv(
+    x,
+    weight,
+    [stride],
+    // All the padding is at the front. We have streaming convolution later.
+    [[weight.shape[2] - stride, 0]],
+  );
+  if (bias) return y.add(np.expandDims(bias, -1));
   return y;
 }
 
@@ -622,12 +657,33 @@ export function runConvTranspose1d(
   { weight, bias }: ConvTranspose1d,
   x: np.Array,
   stride: number = 1,
+  groups: number = 1,
 ): np.Array {
-  // x: [C_in, T_in]
-  const y = lax.convTranspose(x, weight, [stride], "SAME", {
-    transposeKernel: true,
-  });
-  if (bias) return y.add(bias);
+  // Depthwise needs to flip spatial dims and flip C_in,C_out -> C_out,C_in.
+  const [cIn, cOut, kernelSize] = weight.shape;
+  weight = np.flip(weight, -1);
+  if (groups > 1) {
+    weight = weight
+      .reshape([groups, cIn / groups, cOut, kernelSize])
+      .transpose([0, 2, 1, 3])
+      .reshape([cOut * groups, cIn / groups, kernelSize]);
+  } else {
+    weight = weight.transpose([1, 0, 2]);
+  }
+
+  const y = lax.convGeneralDilated(
+    x, // x: [C_in, T_in]
+    weight,
+    [1],
+    // To match padding, we need to pad left with (kernel_size-1) and pad right
+    // with (stride-1). This is different from JAX's `lax.convTranspose()`!
+    [[kernelSize - 1, stride - 1]],
+    {
+      lhsDilation: [stride],
+      featureGroupCount: groups,
+    },
+  );
+  if (bias) return y.add(np.expandDims(bias, -1));
   return y;
 }
 
@@ -667,7 +723,6 @@ export function fromSafetensors(file: safetensors.File): PocketTTS {
   const mappedWeights = weightMapper.mapObject(file.tensors);
   const hydrated: Record<string, np.Array> = {};
   for (const [key, value] of Object.entries(mappedWeights)) {
-    // console.log(key, value);
     if (value.dtype === "F16") {
       hydrated[key] = np.array(value.data as Float16Array<ArrayBuffer>, {
         dtype: np.float16,

@@ -11,7 +11,13 @@
   import { cachedFetch, opfs, safetensors, tokenizers } from "@jax-js/loaders";
 
   import DownloadManager from "$lib/common/DownloadManager.svelte";
-  import { fromSafetensors, type PocketTTS, runFlowLMStep } from "./pocket-tts";
+  import { playPcm } from "./audio";
+  import {
+    fromSafetensors,
+    type PocketTTS,
+    runFlowLMStep,
+    runMimiDecode,
+  } from "./pocket-tts";
 
   // Model configuration
   const latentDim = 32;
@@ -116,7 +122,20 @@
       embeds,
     );
     console.log("isEos?", isEos.js());
-    console.log("Generated latent:", latent.js());
+    console.log("Generated latent:", latent.ref.js());
+
+    let mimiInput = latent
+      .mul(model.flowLM.embStd.ref)
+      .add(model.flowLM.embMean.ref);
+    const audio = runMimiDecode(tree.ref(model.mimi), mimiInput);
+    console.log(audio.shape);
+    console.log("Generated audio:", audio.ref.js());
+
+    const audioPcm = (await np
+      .clip(audio, -1, 1)
+      .astype(np.float32)
+      .data()) as Float32Array;
+    await playPcm(audioPcm);
   }
 </script>
 
