@@ -4,6 +4,7 @@ export interface WeightMapperParams {
   prefix: Record<string, string>;
   suffix: Record<string, string>;
   substring: Record<string, string>;
+  autoCamelCase: boolean;
 }
 
 /**
@@ -19,6 +20,7 @@ export class WeightMapper {
       prefix: params.prefix ?? {},
       suffix: params.suffix ?? {},
       substring: params.substring ?? {},
+      autoCamelCase: params.autoCamelCase ?? false,
     };
   }
 
@@ -42,12 +44,23 @@ export class WeightMapper {
     for (const [from, to] of Object.entries(this.#params.substring)) {
       mappedKey = mappedKey.replaceAll(from, to);
     }
+    if (this.#params.autoCamelCase) {
+      mappedKey = mappedKey.replace(/_([a-z])/g, (_, char) =>
+        char.toUpperCase(),
+      );
+    }
     return mappedKey;
   }
 
   unmapKey(key: string): string {
     let unmappedKey = key;
     // Apply the operations in reverse order.
+    if (this.#params.autoCamelCase) {
+      unmappedKey = unmappedKey.replace(
+        /[A-Z]/g,
+        (char) => `_${char.toLowerCase()}`,
+      );
+    }
     for (const [from, to] of Object.entries(this.#params.substring).reverse()) {
       unmappedKey = unmappedKey.replaceAll(to, from);
     }
