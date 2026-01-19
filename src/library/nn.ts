@@ -466,7 +466,7 @@ export function dotProductAttention(
     isCausal?: boolean;
     querySeqLengths?: ArrayLike; // TODO
     keyValueSeqLengths?: ArrayLike; // TODO
-    localWindowSize?: number | [number, number]; // TODO
+    localWindowSize?: number | [number, number];
   } = {},
 ): Array {
   if (
@@ -474,8 +474,6 @@ export function dotProductAttention(
     opts.keyValueSeqLengths !== undefined
   )
     throw new Error("Sequence length masking is not yet implemented");
-  if (opts.localWindowSize !== undefined)
-    throw new Error("Local attention is not yet implemented");
 
   query = fudgeArray(query);
   key = fudgeArray(key);
@@ -535,6 +533,27 @@ export function dotProductAttention(
     // tri(L, S) creates a lower triangular boolean mask of shape [L, S]
     const causalMask = tri(L, S, 0, { dtype: DType.Bool });
     scores = where(causalMask, scores, -Infinity);
+  }
+  if (opts.localWindowSize !== undefined) {
+    const [before, after] =
+      typeof opts.localWindowSize === "number"
+        ? [opts.localWindowSize, opts.localWindowSize]
+        : opts.localWindowSize;
+    if (
+      before < 0 ||
+      after < 0 ||
+      !Number.isInteger(before) ||
+      !Number.isInteger(after)
+    ) {
+      throw new Error(
+        `dotProductAttention: localWindowSize values must be non-negative, ` +
+          `got ${opts.localWindowSize}`,
+      );
+    }
+    const localMask = tri(L, S, after, { dtype: DType.Bool }).mul(
+      tri(L, S, -before - 1, { dtype: DType.Bool }).notEqual(true),
+    );
+    scores = where(localMask, scores, -Infinity);
   }
   const attn = softmax(scores, -1); // BNLS
   const out = einsum("BNLS,BSNH->BLNH", attn, value);
