@@ -38,5 +38,9 @@
   "scripts": {
     "prepublishOnly": "pnpm -C ../.. build",
     "postpublish": "git tag loaders/v$npm_package_version && git push --tags"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.10.2",
+    "sentencepiece-buf": "^0.2.1-0"
   }
 }

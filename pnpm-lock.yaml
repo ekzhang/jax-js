@@ -66,7 +66,14 @@ importers:
         specifier: ^4.0.9
         version: 4.0.9(@types/debug@4.1.12)(@types/node@24.1.0)(@vitest/browser-playwright@4.0.9)(jiti@2.4.2)(lightningcss@1.30.1)(msw@2.10.4(@types/node@24.1.0)(typescript@5.9.3))(tsx@4.20.3)(yaml@2.8.1)
 
-  packages/loaders: {}
+  packages/loaders:
+    dependencies:
+      '@bufbuild/protobuf':
+        specifier: ^2.10.2
+        version: 2.10.2
+      sentencepiece-buf:
+        specifier: ^0.2.1-0
+        version: 0.2.1-0
 
   packages/onnx:
     dependencies:
@@ -2695,6 +2702,10 @@ packages:
     resolution: {integrity: sha512-RF0Fw+rO5AMf9MAyaRXI4AV0Ulj5lMHqVxxdSgiVbixSCXoEmmX/jk0CuJw4+3SqroYO9VoUh+HcuJivvtJemA==}
     engines: {node: '>=10'}
     hasBin: true
+
+  sentencepiece-buf@0.2.1-0:
+    resolution: {integrity: sha512-EUNi6hvPjHr2Jcmy3gFdV+elNNsrDTnkVyJJEMGVFSbXAWacW8gNP0cQEIAG5eGk5Kz46Vc23XZ7udOQeX126Q==}
+    engines: {pnpm: '>=10.0.0'}
 
   set-cookie-parser@2.7.1:
     resolution: {integrity: sha512-IOc8uWeOZgnb3ptbCURJWNjWUPcO3ZnTTdzsurqERrP6nPyv+paC55vJM0LpOlT2ne+Ix+9+CRG1MNLlyZ4GjQ==}
@@ -5769,6 +5780,10 @@ snapshots:
   semver@6.3.1: {}
 
   semver@7.7.2: {}
+
+  sentencepiece-buf@0.2.1-0:
+    dependencies:
+      '@bufbuild/protobuf': 2.10.2
 
   set-cookie-parser@2.7.1: {}
 
