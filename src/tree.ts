@@ -1,6 +1,7 @@
 // Utilities for working with tree-like container data structures ("pytrees").
 
-import type { Array } from "./library/numpy";
+import type { Array } from "./frontend/array";
+import { Tracer } from "./frontend/core";
 import { deepEqual, unzip2 } from "./utils";
 
 const JsArray = globalThis.Array;
@@ -174,15 +175,15 @@ export function map<T, U, Tree extends JsTree<T>>(
 }
 
 /** Take a reference of every array in a tree. */
-export function ref<Tree extends JsTree<Array>>(tree: Tree): Tree {
-  return map((x: Array) => x.ref, tree) as unknown as Tree;
+export function ref<Tree extends JsTree<any>>(tree: Tree): Tree {
+  return map((x) => (x instanceof Tracer ? x.ref : x), tree) as unknown as Tree;
 }
 
 /** Dispose every array in a tree. */
-export function dispose<Tree extends JsTree<Array>>(
+export function dispose<Tree extends JsTree<any>>(
   tree: Tree | null | undefined,
 ): void {
   if (tree) {
-    map((x: Array) => x.dispose(), tree);
+    map((x) => (x instanceof Tracer ? x.dispose() : undefined), tree);
   }
 }

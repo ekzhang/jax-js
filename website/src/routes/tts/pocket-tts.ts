@@ -22,22 +22,40 @@ export type FlowLMModel = {
 };
 
 export function runFlowLMStep(
-  { bosEmb, flowNet, inputLinear, outNorm, outEos, transformer }: FlowLMModel,
+  {
+    bosEmb,
+    conditionerEmbed,
+    embMean,
+    embStd,
+    flowNet,
+    inputLinear,
+    outNorm,
+    outEos,
+    speakerProjWeight,
+    transformer,
+  }: FlowLMModel,
   sequence: np.Array, // [S, ldim] - latent sequence, NaN for BOS
-  textEmbeddings: np.Array, // [T, dim] - text conditioning
+  textEmbeddings: np.Array, // [T, dim] - conditioning
   lsdDecodeSteps: number = 1,
-  temp: number = 1.0,
+  temp: number = 0.7,
   noiseClamp: number | null = null,
-  eosThreshold: number = 0.0,
+  eosThreshold: number = -4.0,
 ): { latent: np.Array; isEos: np.Array } {
+  // unused fields
+  conditionerEmbed.dispose();
+  embMean.dispose();
+  embStd.dispose();
+  speakerProjWeight.dispose();
+
   const ldim = bosEmb.shape[0];
 
   // Replace NaN values with BOS embedding
-  const isNan = np.isnan(sequence);
-  const seq = np.where(isNan, bosEmb, sequence);
+  const isNan = np.isnan(sequence.ref);
+  sequence = np.where(isNan, bosEmb, sequence);
 
-  // Project input
-  let input = runLinear(inputLinear, seq);
+  // Project input from 32 -> 1024
+  let input = runLinear(inputLinear, sequence);
+  console.log("Input after linear:", input.shape);
 
   // Concatenate text embeddings with input
   input = np.concatenate([textEmbeddings, input], 0);
@@ -110,7 +128,7 @@ export function runSimpleMLPAdaLN(
 
   // Apply residual blocks
   for (const block of resBlocks) {
-    x = runResBlock(block, x, y);
+    x = runResBlock(block, x, y.ref);
   }
 
   // Final layer: LayerNorm (no affine) + AdaLN modulation + Linear
@@ -226,7 +244,7 @@ export function runStreamingTransformerLayer(
   maxPeriod: number = 10000,
 ): np.Array {
   // Self-attention block with pre-norm
-  const xOrig = x;
+  const xOrig = x.ref;
   x = runLayerNorm(norm1, x);
   let update = runMimiStreamingMultiheadAttention(
     selfAttn,
@@ -241,7 +259,7 @@ export function runStreamingTransformerLayer(
   x = xOrig.add(update);
 
   // FFN block with pre-norm
-  const xOrig2 = x;
+  const xOrig2 = x.ref;
   x = runLayerNorm(norm2, x);
   let ffnOut = runLinear(linear1, x);
   ffnOut = nn.gelu(ffnOut, { approximate: false });
@@ -462,7 +480,7 @@ export function lsdDecode(
     const t = (i + 1) / numSteps;
     const sArr = np.full(x0.shape.slice(0, -1).concat([1]), s);
     const tArr = np.full(x0.shape.slice(0, -1).concat([1]), t);
-    const flowDir = flowNet(sArr, tArr, current);
+    const flowDir = flowNet(sArr, tArr, current.ref);
     current = current.add(flowDir.div(numSteps));
   }
   return current;
@@ -482,7 +500,7 @@ export function runTimestepEmbedder(
   // mlp: [Linear, SiLU, Linear, RMSNorm]
   const [linear1, , linear2, rmsNorm] = mlp;
   const args = t.mul(freqs); // [N, 128] or [128]
-  const embedding = np.concatenate([np.cos(args), np.sin(args)], -1); // [N, 256]
+  const embedding = np.concatenate([np.cos(args.ref), np.sin(args)], -1); // [N, 256]
   let x = runLinear(linear1, embedding);
   x = nn.silu(x);
   x = runLinear(linear2, x);
@@ -513,7 +531,7 @@ export function runResBlock(
   const [shiftMlp, scaleMlp, gateMlp] = np.split(modulation, 3, -1);
 
   // Apply AdaLN then MLP
-  let h = runLayerNorm(inLN, x, 1e-6);
+  let h = runLayerNorm(inLN, x.ref, 1e-6);
   h = modulate(h, shiftMlp, scaleMlp);
 
   // MLP: [Linear, SiLU, Linear]
@@ -532,7 +550,7 @@ export type Linear = {
 };
 
 export function runLinear({ weight, bias }: Linear, x: np.Array): np.Array {
-  x = np.vecdot(x, weight);
+  x = np.dot(x, weight.transpose());
   if (bias) x = x.add(bias);
   return x;
 }

@@ -8,10 +8,15 @@
     tree,
     vmap,
   } from "@jax-js/jax";
-  import { safetensors, tokenizers } from "@jax-js/loaders";
+  import { cachedFetch, opfs, safetensors, tokenizers } from "@jax-js/loaders";
 
   import DownloadManager from "$lib/common/DownloadManager.svelte";
-  import { fromSafetensors, type PocketTTS } from "./pocket-tts";
+  import { fromSafetensors, type PocketTTS, runFlowLMStep } from "./pocket-tts";
+
+  // Model configuration
+  const latentDim = 32;
+  const flowDim = 512;
+  const modelDim = 1024;
 
   // Cached large objects to download.
   let _weights: safetensors.File | null = null;
@@ -50,8 +55,25 @@
     return _model;
   }
 
-  async function getTokenizer() {
-    if (!_tokenizer) _tokenizer = await tokenizers.getBpe("clip");
+  const HF_URL_PREFIX =
+    "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning/resolve/fbf8280";
+
+  const predefinedVoices = {
+    alba: HF_URL_PREFIX + `/embeddings/alba.safetensors`,
+    azelma: HF_URL_PREFIX + `/embeddings/azelma.safetensors`,
+    cosette: HF_URL_PREFIX + `/embeddings/cosette.safetensors`,
+    eponine: HF_URL_PREFIX + `/embeddings/eponine.safetensors`,
+    fantine: HF_URL_PREFIX + `/embeddings/fantine.safetensors`,
+    javert: HF_URL_PREFIX + `/embeddings/javert.safetensors`,
+    jean: HF_URL_PREFIX + `/embeddings/jean.safetensors`,
+    marius: HF_URL_PREFIX + `/embeddings/marius.safetensors`,
+  };
+
+  async function getTokenizer(): Promise<tokenizers.Unigram> {
+    if (!_tokenizer)
+      _tokenizer = await tokenizers.loadSentencePiece(
+        "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning/resolve/fbf8280/tokenizer.model",
+      );
     return _tokenizer;
   }
 
@@ -66,8 +88,35 @@
 
     const model = await getModel();
     const tokenizer = await getTokenizer();
-
     console.log("Model:", model);
+
+    const prompt = "This is TTS generated from jax-js!";
+    const tokens = tokenizer.encode(prompt);
+    console.log("Tokenizer:", tokens);
+
+    const audioPrompt = safetensors.parse(
+      await cachedFetch(predefinedVoices["azelma"]),
+    ).tensors.audio_prompt;
+    const voiceEmbed = np
+      .array(audioPrompt.data as Float32Array<ArrayBuffer>, {
+        shape: audioPrompt.shape,
+        dtype: np.float32,
+      })
+      .slice(0)
+      .astype(np.float16);
+
+    const tokensAr = np.array(tokens, { dtype: np.uint32 });
+    let embeds = model.flowLM.conditionerEmbed.ref.slice(tokensAr); // [seq_len, 1024]
+    embeds = np.concatenate([voiceEmbed, embeds], 0);
+
+    const sequence = np.full([1, latentDim], np.nan, { dtype: np.float16 });
+    const { latent, isEos } = runFlowLMStep(
+      tree.ref(model.flowLM),
+      sequence,
+      embeds,
+    );
+    console.log("isEos?", isEos.js());
+    console.log("Generated latent:", latent.js());
   }
 </script>
 
