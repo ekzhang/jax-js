@@ -1,14 +1,8 @@
 <script lang="ts">
   /* eslint-disable @typescript-eslint/no-unused-vars */
-  import {
-    defaultDevice,
-    init,
-    jit,
-    numpy as np,
-    tree,
-    vmap,
-  } from "@jax-js/jax";
-  import { cachedFetch, opfs, safetensors, tokenizers } from "@jax-js/loaders";
+  import { defaultDevice, init, jit, numpy as np, tree } from "@jax-js/jax";
+  import { cachedFetch, safetensors, tokenizers } from "@jax-js/loaders";
+  import { AudioLinesIcon } from "@lucide/svelte";
 
   import DownloadManager from "$lib/common/DownloadManager.svelte";
   import { createStreamingPlayer } from "./audio";
@@ -34,6 +28,10 @@
 
   let isDownloadingWeights = $state(false);
   let hasModel = $state(false);
+
+  let prompt = $state("The sun is shining, and the birds are singing.");
+  let selectedVoice = $state("azelma");
+  let playing = $state(false);
 
   async function downloadClipWeights(): Promise<safetensors.File> {
     if (_weights) return _weights;
@@ -65,7 +63,7 @@
   const HF_URL_PREFIX =
     "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning/resolve/fbf8280";
 
-  const predefinedVoices = {
+  const predefinedVoices: Record<string, string> = {
     alba: HF_URL_PREFIX + `/embeddings/alba.safetensors`,
     azelma: HF_URL_PREFIX + `/embeddings/azelma.safetensors`,
     cosette: HF_URL_PREFIX + `/embeddings/cosette.safetensors`,
@@ -99,12 +97,11 @@
     const tokenizer = await getTokenizer();
     console.log("Model:", model);
 
-    const prompt = "The sun is shining, and the birds are singing.";
     const tokens = tokenizer.encode(prompt);
     console.log("Tokenizer:", tokens);
 
     const audioPrompt = safetensors.parse(
-      await cachedFetch(predefinedVoices["fantine"]),
+      await cachedFetch(predefinedVoices[selectedVoice]),
     ).tensors.audio_prompt;
     const voiceEmbed = np
       .array(audioPrompt.data as Float32Array<ArrayBuffer>, {
@@ -175,20 +172,65 @@
       sequence.dispose();
       embeds.dispose();
       jitMimiDecode.dispose();
-      await audioPromise;
+      await player.close();
     }
   }
 </script>
 
 <DownloadManager bind:this={downloadManager} />
 
-<button class="btn" onclick={run}>Run</button>
+<main class="mx-4 my-8">
+  <h1 class="text-2xl font-semibold mb-1">Kyutai Pocket TTS</h1>
+  <p class="text-lg text-gray-500">
+    Text-to-speech AI model that runs in your browser with <a
+      href="/"
+      class="text-primary hover:underline">jax-js</a
+    >.
+  </p>
+
+  <form
+    class="mt-6"
+    onsubmit={async (event) => {
+      event.preventDefault();
+      playing = true;
+      try {
+        await run();
+      } finally {
+        playing = false;
+      }
+    }}
+  >
+    <textarea
+      class="border-2 rounded p-2 w-full max-w-sm"
+      rows={4}
+      placeholder="Enter your prompt here…"
+      bind:value={prompt}
+    ></textarea>
+
+    <div class="flex gap-3 mt-1 h-9">
+      <select class="border-2 rounded p-1" bind:value={selectedVoice}>
+        {#each Object.keys(predefinedVoices) as voice}
+          <option value={voice}
+            >{voice.charAt(0).toLocaleUpperCase() + voice.slice(1)}</option
+          >
+        {/each}
+      </select>
+      <button class="btn" type="submit" disabled={playing}>
+        {#if playing}
+          <AudioLinesIcon size={20} class="animate-pulse" />
+        {:else}
+          Play
+        {/if}
+      </button>
+    </div>
+  </form>
+</main>
 
 <style lang="postcss">
   @reference "$app.css";
 
   .btn {
-    @apply flex items-center justify-center gap-2 px-5 py-2.5 border-2 border-black;
-    @apply enabled:hover:bg-black enabled:hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors;
+    @apply flex items-center justify-center gap-2 px-3 rounded py-1 border-2 border-black;
+    @apply enabled:hover:bg-black enabled:hover:text-white disabled:opacity-50 disabled:cursor-wait transition-colors;
   }
 </style>

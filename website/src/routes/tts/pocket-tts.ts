@@ -90,7 +90,7 @@ export function runFlowLMStep(
   const noiseShape = [1, ldim]; // [T, ldim] with T=1
   const std = Math.sqrt(temp);
   let noise = random
-    .normal(random.key(Math.floor(Math.random() * 1e5)), noiseShape)
+    .normal(random.key(Math.floor(Math.random() * 2 ** 32)), noiseShape)
     .mul(std); // TODO: Actual random key
   // let noise = np.zeros(noiseShape, { dtype: transformerOut.dtype });
   if (noiseClamp !== null) {

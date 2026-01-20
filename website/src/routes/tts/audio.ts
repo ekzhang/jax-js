@@ -1,4 +1,4 @@
-/** Audio playback utilities for TTS output. */
+// Audio playback utilities for TTS output.
 
 const SAMPLE_RATE = 24000; // 24kHz sample rate for Mimi codec
 
@@ -9,6 +9,7 @@ const SAMPLE_RATE = 24000; // 24kHz sample rate for Mimi codec
 export function createStreamingPlayer() {
   const audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
   let nextStartTime = audioCtx.currentTime;
+  let lastEndedPromise: Promise<void> = Promise.resolve();
 
   return {
     /** Play a chunk of PCM samples (Float32Array in range [-1, 1]). */
@@ -24,6 +25,11 @@ export function createStreamingPlayer() {
       const startTime = Math.max(nextStartTime, audioCtx.currentTime);
       source.start(startTime);
       nextStartTime = startTime + buffer.duration;
+
+      // Track when this source finishes playing
+      lastEndedPromise = new Promise((resolve) => {
+        source.onended = () => resolve();
+      });
     },
 
     /** Resume audio context if suspended (required after user interaction). */
@@ -33,9 +39,10 @@ export function createStreamingPlayer() {
       }
     },
 
-    /** Close the audio context and release resources. */
-    close() {
-      audioCtx.close();
+    /** Wait for all queued audio to finish, then close the audio context. */
+    async close() {
+      await lastEndedPromise;
+      await audioCtx.close();
     },
 
     /** Get the underlying AudioContext. */
