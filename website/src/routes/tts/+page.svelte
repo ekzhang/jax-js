@@ -214,6 +214,8 @@
   }
 </script>
 
+<title>Kyutai Pocket TTS (Web)</title>
+
 <DownloadManager bind:this={downloadManager} />
 
 <main class="mx-4 my-8">
