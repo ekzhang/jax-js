@@ -36,6 +36,7 @@ export function runFlowLMStep(
   }: FlowLMModel,
   sequence: np.Array, // [S, ldim] - latent sequence, NaN for BOS
   embeds: np.Array, // [T, dim] - conditioning, text and voice
+  offset: np.Array, // scalar, position offset
   seqLength: number = 0,
   lsdDecodeSteps: number = 1,
   temp: number = 0.7,
@@ -59,29 +60,19 @@ export function runFlowLMStep(
 
   // Concatenate text/voice embeddings with input
   input = np.concatenate([embeds, input], 0);
-  if (input.shape[0] < 256) {
-    // Hack: pad to length 256
-    const padLength = 256 - input.shape[0];
+  if (input.shape[0] % 256 !== 0) {
+    // Hack: pad to multiple of length 256
+    const padLength = 256 - (input.shape[0] % 256);
     input = np.pad(input, [
       [0, padLength],
       [0, 0],
     ]);
-  } else if (input.shape[0] > 256) {
-    // We only need 250 tokens of context with local attention.
-    // TODO: Jank, need to fix RoPE handling properly.
-    seqLength -= input.shape[0] - 256;
-    input = input.slice([-256]);
   }
 
-  // Run through transformer layers
   for (const layer of transformer) {
-    input = runStreamingTransformerLayer(
-      layer,
-      input,
-      4096, // context
-      16, // numHeads for flow LM transformer
-    );
+    input = runStreamingTransformerLayer(layer, input, offset.ref, 0, 16);
   }
+  offset.dispose();
 
   let transformerOut = runLayerNorm(outNorm, input);
 
@@ -161,7 +152,7 @@ export const runSimpleMLPAdaLN = jit(function runSimpleMLPAdaLN(
 export function runRope(
   q: np.Array, // [T, H, D]
   k: np.Array, // [T, H, D]
-  offset: number = 0,
+  offset: np.Array,
   maxPeriod: number = 10000,
 ): [np.Array, np.Array] {
   const [T, H, D] = q.shape;
@@ -172,10 +163,7 @@ export function runRope(
   const freqs = np.exp(ds.mul((-Math.log(maxPeriod) * 2) / D));
 
   // Position indices
-  const ts = np
-    .arange(T, undefined, undefined, { dtype: np.float32 })
-    .add(offset)
-    .reshape([T, 1, 1]);
+  const ts = np.arange(T).add(offset).astype(np.float32).reshape([T, 1, 1]);
 
   // Reshape q and k to separate real and imaginary parts
   const qReshaped = q.reshape([T, H, halfD, 2]);
@@ -214,6 +202,7 @@ export type MimiStreamingMultiheadAttention = {
 export function runMimiStreamingMultiheadAttention(
   { inProj, outProj }: MimiStreamingMultiheadAttention,
   query: np.Array, // [T, embed_dim]
+  offset: np.Array, // scalar, position offset
   context: number,
   numHeads: number,
   maxPeriod: number = 10000,
@@ -222,13 +211,13 @@ export function runMimiStreamingMultiheadAttention(
   const headDim = embedDim / numHeads;
 
   const projected = runLinear(inProj, query); // [T, 3 * embed_dim]
-  const offset = 0;
   const qkv = projected.reshape([T, 3 * numHeads, headDim]);
   const [q_, k_, v] = np.split(qkv, 3, 1); // each is [T, 1, H, D]
   const [q, k] = runRope(q_, k_, offset, maxPeriod);
 
   let x = nn.dotProductAttention(q, k, v, {
-    localWindowSize: [context - 1, 0],
+    isCausal: true,
+    localWindowSize: context ? [context - 1, 0] : undefined,
   });
   x = x.reshape([T, embedDim]);
   x = runLinear(outProj, x);
@@ -257,6 +246,7 @@ export const runStreamingTransformerLayer = jit(
       layerScale2,
     }: StreamingTransformerLayer,
     x: np.Array, // [T, D]
+    offset: np.Array, // scalar, position offset
     context: number,
     numHeads: number,
     maxPeriod: number = 10000,
@@ -267,6 +257,7 @@ export const runStreamingTransformerLayer = jit(
     let update = runMimiStreamingMultiheadAttention(
       selfAttn,
       x,
+      offset,
       context,
       numHeads,
       maxPeriod,
@@ -289,7 +280,7 @@ export const runStreamingTransformerLayer = jit(
 
     return x;
   },
-  { staticArgnums: [2, 3, 4] },
+  { staticArgnums: [3, 4, 5] },
 );
 
 export type SEANetResnetBlock = {
@@ -462,21 +453,20 @@ export function runMimiEncode(
   x: np.Array, // [C, T] - audio waveform at 24kHz
 ): np.Array {
   tree.dispose([decoder, decoderTransformer, quantizer, upsample]);
-
-  // Encode through SEANet encoder
-  let emb = runSEANetEncoder(encoder, x);
+  x = runSEANetEncoder(encoder, x);
 
   // Encoder transformer (with transpose for [T, D] format)
-  emb = emb.transpose([1, 0]); // [C, T] -> [T, C]
+  x = x.transpose([1, 0]); // [C, T] -> [T, C]
+  const offset = np.array(0, { dtype: np.int32, device: x.device });
   for (const layer of encoderTransformer) {
-    emb = runStreamingTransformerLayer(layer, emb, 250, 8);
+    x = runStreamingTransformerLayer(layer, x, offset.ref, 250, 8);
   }
-  emb = emb.transpose([1, 0]); // back to [C, T]
+  offset.dispose();
+  x = x.transpose([1, 0]); // back to [C, T]
 
   // Downsample (stride 16)
-  emb = runConv1d(downsample.conv, emb, 16);
-
-  return emb;
+  x = runConv1d(downsample.conv, x, 16);
+  return x;
 }
 
 export function runMimiDecode(
@@ -490,6 +480,7 @@ export function runMimiDecode(
     upsample,
   }: MimiModel,
   latent: np.Array, // [T, 32] - bottleneck representation
+  offset: np.Array, // scalar, position offset
 ): np.Array {
   tree.dispose([encoder, encoderTransformer, downsample]);
 
@@ -503,9 +494,11 @@ export function runMimiDecode(
 
   // Decoder transformer
   emb = emb.transpose([1, 0]); // [C, 16*T] -> [16*T, C]
+  offset = offset.mul(16);
   for (const layer of decoderTransformer) {
-    emb = runStreamingTransformerLayer(layer, emb, 250, 8);
+    emb = runStreamingTransformerLayer(layer, emb, offset.ref, 250, 8);
   }
+  offset.dispose();
   emb = emb.transpose([1, 0]); // [C, 16*T]
 
   // Decode through SEANet decoder

@@ -154,12 +154,14 @@
       let eosStep: number | null = null;
       let baseSeqLength = embeds.shape[0] + sequence.shape[0];
       for (let step = 0; step < 1000; step++) {
-        if (step >= 12) startPlaying?.();
+        if (step >= 16) startPlaying?.();
 
+        let offset = np.array(0, { dtype: np.int32 });
         const { latent, isEos } = runFlowLMStep(
           tree.ref(model.flowLM),
           sequence.ref,
           embeds.ref,
+          offset.ref,
           baseSeqLength + step,
         );
 
@@ -179,16 +181,17 @@
         sequence = np.concatenate([sequence, latent]);
         console.log("Sequence shape:", sequence.shape);
 
-        // Hack: for mimi decode, actually pass the last 4 latents since we
-        // don't have stateful convolution yet.
+        // Hack: for mimi decode, actually pass the last 250/16=16 latents since
+        // we don't have stateful convolution yet.
         let mimiInput = sequence.ref.slice([
-          Math.max(1, sequence.shape[0] - 4),
+          Math.max(1, sequence.shape[0] - 16),
         ]);
 
         mimiInput = mimiInput
           .mul(model.flowLM.embStd.ref)
           .add(model.flowLM.embMean.ref);
-        const audio = jitMimiDecode(tree.ref(model.mimi), mimiInput);
+        offset = offset.add(sequence.shape[0] - 1 - mimiInput.shape[0]);
+        const audio = jitMimiDecode(tree.ref(model.mimi), mimiInput, offset);
 
         const lastAudioPromise = audioPromise;
         audioPromise = (async () => {
@@ -205,6 +208,7 @@
       sequence.dispose();
       embeds.dispose();
       jitMimiDecode.dispose();
+      await audioPromise;
       await player.close();
     }
   }
