@@ -66,6 +66,11 @@ export function runFlowLMStep(
       [0, padLength],
       [0, 0],
     ]);
+  } else if (input.shape[0] > 256) {
+    // We only need 250 tokens of context with local attention.
+    // TODO: Jank, need to fix RoPE handling properly.
+    seqLength -= input.shape[0] - 256;
+    input = input.slice([-256]);
   }
 
   // Run through transformer layers
@@ -91,7 +96,7 @@ export function runFlowLMStep(
   const std = Math.sqrt(temp);
   let noise = random
     .normal(random.key(Math.floor(Math.random() * 2 ** 32)), noiseShape)
-    .mul(std); // TODO: Actual random key
+    .mul(std); // TODO: Less janky random key
   // let noise = np.zeros(noiseShape, { dtype: transformerOut.dtype });
   if (noiseClamp !== null) {
     // Truncated normal - clamp to [-noiseClamp, noiseClamp]

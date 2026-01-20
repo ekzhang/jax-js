@@ -17,7 +17,6 @@
   const latentDim = 32;
   const flowDim = 512;
   const modelDim = 1024;
-  const framesAfterEos = 5;
 
   // Cached large objects to download.
   let _weights: safetensors.File | null = null;
@@ -82,6 +81,35 @@
     return _tokenizer;
   }
 
+  function prepareTextPrompt(text: string): [string, number] {
+    // Ported from the Python repository.
+    text = text.trim();
+    if (text === "") throw new Error("Prompt cannot be empty");
+    text = text.replace(/\s+/g, " ");
+    const numberOfWords = text.split(" ").length;
+    let framesAfterEosGuess = 3;
+    if (numberOfWords <= 4) {
+      framesAfterEosGuess = 5;
+    }
+
+    // Make sure it starts with an uppercase letter
+    text = text.replace(/^(\p{Ll})/u, (c) => c.toLocaleUpperCase());
+
+    // Let's make sure it ends with some kind of punctuation
+    // If it ends with a letter or digit, we add a period.
+    if (/[\p{L}\p{N}]$/u.test(text)) {
+      text = text + ".";
+    }
+
+    // The model does not perform well when there are very few tokens, so
+    // we can add empty spaces at the beginning to increase the token count.
+    if (text.split(" ").length < 5) {
+      text = " ".repeat(8) + text;
+    }
+
+    return [text, framesAfterEosGuess];
+  }
+
   let audioPromise: Promise<void> | null = null;
 
   async function run() {
@@ -97,7 +125,8 @@
     const tokenizer = await getTokenizer();
     console.log("Model:", model);
 
-    const tokens = tokenizer.encode(prompt);
+    const [text, framesAfterEos] = prepareTextPrompt(prompt);
+    const tokens = tokenizer.encode(text);
     console.log("Tokenizer:", tokens);
 
     const audioPrompt = safetensors.parse(
@@ -116,7 +145,8 @@
     embeds = np.concatenate([voiceEmbed, embeds], 0);
 
     let sequence = np.full([1, latentDim], np.nan, { dtype: np.float16 });
-    audioPromise = new Promise((resolve) => setTimeout(resolve, 2_000));
+    let startPlaying: any;
+    audioPromise = new Promise((resolve) => (startPlaying = resolve));
     const player = createStreamingPlayer();
 
     const jitMimiDecode = jit(runMimiDecode);
@@ -124,6 +154,8 @@
       let eosStep: number | null = null;
       let baseSeqLength = embeds.shape[0] + sequence.shape[0];
       for (let step = 0; step < 1000; step++) {
+        if (step >= 12) startPlaying?.();
+
         const { latent, isEos } = runFlowLMStep(
           tree.ref(model.flowLM),
           sequence.ref,
@@ -169,6 +201,7 @@
         })();
       }
     } finally {
+      startPlaying?.(); // If not called yet
       sequence.dispose();
       embeds.dispose();
       jitMimiDecode.dispose();
@@ -182,7 +215,7 @@
 <main class="mx-4 my-8">
   <h1 class="text-2xl font-semibold mb-1">Kyutai Pocket TTS</h1>
   <p class="text-lg text-gray-500">
-    Text-to-speech AI model that runs in your browser with <a
+    Text-to-speech AI voice model, running in your browser with <a
       href="/"
       class="text-primary hover:underline">jax-js</a
     >.
@@ -215,7 +248,11 @@
           >
         {/each}
       </select>
-      <button class="btn" type="submit" disabled={playing}>
+      <button
+        class="btn"
+        type="submit"
+        disabled={playing || prompt.trim() === ""}
+      >
         {#if playing}
           <AudioLinesIcon size={20} class="animate-pulse" />
         {:else}
