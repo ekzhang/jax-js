@@ -1,4 +1,4 @@
-import { lax, nn, numpy as np, random, tree } from "@jax-js/jax";
+import { jit, lax, nn, numpy as np, random, tree } from "@jax-js/jax";
 import { safetensors, WeightMapper } from "@jax-js/loaders";
 
 // Kyutai Pocket TTS model weights interfaces and forward pass.
@@ -35,7 +35,8 @@ export function runFlowLMStep(
     transformer,
   }: FlowLMModel,
   sequence: np.Array, // [S, ldim] - latent sequence, NaN for BOS
-  textEmbeddings: np.Array, // [T, dim] - conditioning
+  embeds: np.Array, // [T, dim] - conditioning, text and voice
+  seqLength: number = 0,
   lsdDecodeSteps: number = 1,
   temp: number = 0.7,
   noiseClamp: number | null = null,
@@ -56,8 +57,16 @@ export function runFlowLMStep(
   // Project input from 32 -> 1024
   let input = runLinear(inputLinear, sequence);
 
-  // Concatenate text embeddings with input
-  input = np.concatenate([textEmbeddings, input], 0);
+  // Concatenate text/voice embeddings with input
+  input = np.concatenate([embeds, input], 0);
+  if (input.shape[0] < 256) {
+    // Hack: pad to length 256
+    const padLength = 256 - input.shape[0];
+    input = np.pad(input, [
+      [0, padLength],
+      [0, 0],
+    ]);
+  }
 
   // Run through transformer layers
   for (const layer of transformer) {
@@ -72,7 +81,7 @@ export function runFlowLMStep(
   let transformerOut = runLayerNorm(outNorm, input);
 
   // Get last position output (for next token prediction)
-  transformerOut = transformerOut.slice([-1]); // [1, dim]
+  transformerOut = transformerOut.slice([seqLength - 1, seqLength]); // [1, dim]
 
   // Check EOS
   const eosLogit = runLinear(outEos, transformerOut.ref);
@@ -80,7 +89,9 @@ export function runFlowLMStep(
 
   const noiseShape = [1, ldim]; // [T, ldim] with T=1
   const std = Math.sqrt(temp);
-  let noise = random.normal(random.key(0), noiseShape).mul(std); // TODO: Actual random key
+  let noise = random
+    .normal(random.key(Math.floor(Math.random() * 1e5)), noiseShape)
+    .mul(std); // TODO: Actual random key
   // let noise = np.zeros(noiseShape, { dtype: transformerOut.dtype });
   if (noiseClamp !== null) {
     // Truncated normal - clamp to [-noiseClamp, noiseClamp]
@@ -107,7 +118,7 @@ export type SimpleMLPAdaLN = {
   };
 };
 
-export function runSimpleMLPAdaLN(
+export const runSimpleMLPAdaLN = jit(function runSimpleMLPAdaLN(
   { timeEmbed, condEmbed, inputProj, resBlocks, finalLayer }: SimpleMLPAdaLN,
   c: np.Array, // conditioning from AR transformer
   s: np.Array, // start time tensor
@@ -140,7 +151,7 @@ export function runSimpleMLPAdaLN(
   x = runLinear(finalLayer.linear, x);
 
   return x;
-}
+});
 
 export function runRope(
   q: np.Array, // [T, H, D]
@@ -229,49 +240,52 @@ export type StreamingTransformerLayer = {
   layerScale2?: np.Array; // shape [1024], just multiplicative if present
 };
 
-export function runStreamingTransformerLayer(
-  {
-    selfAttn,
-    norm1,
-    norm2,
-    linear1,
-    linear2,
-    layerScale1,
-    layerScale2,
-  }: StreamingTransformerLayer,
-  x: np.Array, // [T, D]
-  context: number,
-  numHeads: number,
-  maxPeriod: number = 10000,
-): np.Array {
-  // Self-attention block with pre-norm
-  const xOrig = x.ref;
-  x = runLayerNorm(norm1, x);
-  let update = runMimiStreamingMultiheadAttention(
-    selfAttn,
-    x,
-    context,
-    numHeads,
-    maxPeriod,
-  );
-  if (layerScale1) {
-    update = update.mul(layerScale1);
-  }
-  x = xOrig.add(update);
+export const runStreamingTransformerLayer = jit(
+  function runStreamingTransformerLayer(
+    {
+      selfAttn,
+      norm1,
+      norm2,
+      linear1,
+      linear2,
+      layerScale1,
+      layerScale2,
+    }: StreamingTransformerLayer,
+    x: np.Array, // [T, D]
+    context: number,
+    numHeads: number,
+    maxPeriod: number = 10000,
+  ): np.Array {
+    // Self-attention block with pre-norm
+    const xOrig = x.ref;
+    x = runLayerNorm(norm1, x);
+    let update = runMimiStreamingMultiheadAttention(
+      selfAttn,
+      x,
+      context,
+      numHeads,
+      maxPeriod,
+    );
+    if (layerScale1) {
+      update = update.mul(layerScale1);
+    }
+    x = xOrig.add(update);
 
-  // FFN block with pre-norm
-  const xOrig2 = x.ref;
-  x = runLayerNorm(norm2, x);
-  let ffnOut = runLinear(linear1, x);
-  ffnOut = nn.gelu(ffnOut, { approximate: false });
-  ffnOut = runLinear(linear2, ffnOut);
-  if (layerScale2) {
-    ffnOut = ffnOut.mul(layerScale2);
-  }
-  x = xOrig2.add(ffnOut);
+    // FFN block with pre-norm
+    const xOrig2 = x.ref;
+    x = runLayerNorm(norm2, x);
+    let ffnOut = runLinear(linear1, x);
+    ffnOut = nn.gelu(ffnOut, { approximate: false });
+    ffnOut = runLinear(linear2, ffnOut);
+    if (layerScale2) {
+      ffnOut = ffnOut.mul(layerScale2);
+    }
+    x = xOrig2.add(ffnOut);
 
-  return x;
-}
+    return x;
+  },
+  { staticArgnums: [2, 3, 4] },
+);
 
 export type SEANetResnetBlock = {
   // Alternating [ELU, Conv1d, ELU, Conv1d], with residual at the end
@@ -589,25 +603,28 @@ export type LayerNorm = {
   bias: np.Array;
 };
 
-export function runLayerNorm(
-  { weight, bias }: Partial<LayerNorm> = {},
-  x: np.Array,
-  eps: number = 1e-5,
-) {
-  const dtype = x.dtype;
-  x = x.astype(np.float32); // LayerNorm in high precision to avoid numerics issues.
-  const mean = x.ref.mean(-1, { keepdims: true });
-  const var_ = np.var_(x.ref, -1, {
-    mean: mean.ref,
-    correction: 0,
-    keepdims: true,
-  });
-  x = x.sub(mean).div(np.sqrt(var_.add(eps)));
-  if (weight) {
-    x = x.mul(weight).add(bias!);
-  }
-  return x.astype(dtype);
-}
+export const runLayerNorm = jit(
+  function runLayerNorm(
+    { weight, bias }: Partial<LayerNorm> = {},
+    x: np.Array,
+    eps: number = 1e-5,
+  ) {
+    const dtype = x.dtype;
+    x = x.astype(np.float32); // LayerNorm in high precision to avoid numerics issues.
+    const mean = x.ref.mean(-1, { keepdims: true });
+    const var_ = np.var_(x.ref, -1, {
+      mean: mean.ref,
+      correction: 0,
+      keepdims: true,
+    });
+    x = x.sub(mean).div(np.sqrt(var_.add(eps)));
+    if (weight) {
+      x = x.mul(weight).add(bias!);
+    }
+    return x.astype(dtype);
+  },
+  { staticArgnums: [2] },
+);
 
 export type RMSNorm = {
   alpha: np.Array; // [dim]

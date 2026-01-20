@@ -11,7 +11,7 @@
   import { cachedFetch, opfs, safetensors, tokenizers } from "@jax-js/loaders";
 
   import DownloadManager from "$lib/common/DownloadManager.svelte";
-  import { playPcm } from "./audio";
+  import { createStreamingPlayer } from "./audio";
   import {
     fromSafetensors,
     type PocketTTS,
@@ -23,6 +23,7 @@
   const latentDim = 32;
   const flowDim = 512;
   const modelDim = 1024;
+  const framesAfterEos = 5;
 
   // Cached large objects to download.
   let _weights: safetensors.File | null = null;
@@ -83,6 +84,8 @@
     return _tokenizer;
   }
 
+  let audioPromise: Promise<void> | null = null;
+
   async function run() {
     const devices = await init();
     if (devices.includes("webgpu")) {
@@ -96,12 +99,12 @@
     const tokenizer = await getTokenizer();
     console.log("Model:", model);
 
-    const prompt = "This is TTS generated from jax-js!";
+    const prompt = "The sun is shining, and the birds are singing.";
     const tokens = tokenizer.encode(prompt);
     console.log("Tokenizer:", tokens);
 
     const audioPrompt = safetensors.parse(
-      await cachedFetch(predefinedVoices["azelma"]),
+      await cachedFetch(predefinedVoices["fantine"]),
     ).tensors.audio_prompt;
     const voiceEmbed = np
       .array(audioPrompt.data as Float32Array<ArrayBuffer>, {
@@ -115,27 +118,65 @@
     let embeds = model.flowLM.conditionerEmbed.ref.slice(tokensAr); // [seq_len, 1024]
     embeds = np.concatenate([voiceEmbed, embeds], 0);
 
-    const sequence = np.full([1, latentDim], np.nan, { dtype: np.float16 });
-    const { latent, isEos } = runFlowLMStep(
-      tree.ref(model.flowLM),
-      sequence,
-      embeds,
-    );
-    console.log("isEos?", isEos.js());
-    console.log("Generated latent:", latent.ref.js());
+    let sequence = np.full([1, latentDim], np.nan, { dtype: np.float16 });
+    audioPromise = new Promise((resolve) => setTimeout(resolve, 2_000));
+    const player = createStreamingPlayer();
 
-    let mimiInput = latent
-      .mul(model.flowLM.embStd.ref)
-      .add(model.flowLM.embMean.ref);
-    const audio = runMimiDecode(tree.ref(model.mimi), mimiInput);
-    console.log(audio.shape);
-    console.log("Generated audio:", audio.ref.js());
+    const jitMimiDecode = jit(runMimiDecode);
+    try {
+      let eosStep: number | null = null;
+      let baseSeqLength = embeds.shape[0] + sequence.shape[0];
+      for (let step = 0; step < 1000; step++) {
+        const { latent, isEos } = runFlowLMStep(
+          tree.ref(model.flowLM),
+          sequence.ref,
+          embeds.ref,
+          baseSeqLength + step,
+        );
 
-    const audioPcm = (await np
-      .clip(audio, -1, 1)
-      .astype(np.float32)
-      .data()) as Float32Array;
-    await playPcm(audioPcm);
+        const isEosData = await isEos.data();
+        if (isEosData[0] && eosStep === null) {
+          console.log(`🛑 EOS at step ${step}!`);
+          eosStep = step;
+        }
+        if (eosStep !== null && step >= eosStep + framesAfterEos) {
+          console.log(
+            `Generation ended at step ${step}, ${framesAfterEos} frames after EOS.`,
+          );
+          latent.dispose();
+          break;
+        }
+
+        sequence = np.concatenate([sequence, latent]);
+        console.log("Sequence shape:", sequence.shape);
+
+        // Hack: for mimi decode, actually pass the last 4 latents since we
+        // don't have stateful convolution yet.
+        let mimiInput = sequence.ref.slice([
+          Math.max(1, sequence.shape[0] - 4),
+        ]);
+
+        mimiInput = mimiInput
+          .mul(model.flowLM.embStd.ref)
+          .add(model.flowLM.embMean.ref);
+        const audio = jitMimiDecode(tree.ref(model.mimi), mimiInput);
+
+        const lastAudioPromise = audioPromise;
+        audioPromise = (async () => {
+          const audioPcm = (await np
+            .clip(audio.slice(0, [-1920]), -1, 1)
+            .astype(np.float32)
+            .data()) as Float32Array;
+          await lastAudioPromise;
+          player.playChunk(audioPcm);
+        })();
+      }
+    } finally {
+      sequence.dispose();
+      embeds.dispose();
+      jitMimiDecode.dispose();
+      await audioPromise;
+    }
   }
 </script>
 
