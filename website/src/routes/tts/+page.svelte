@@ -227,6 +227,11 @@
     >.
   </p>
 
+  <p class="text-sm mt-1 text-yellow-600">
+    Warning: Alpha and very work-in-progress, I'll be making it faster/better in
+    the coming week.
+  </p>
+
   <form
     class="mt-6"
     onsubmit={async (event) => {
