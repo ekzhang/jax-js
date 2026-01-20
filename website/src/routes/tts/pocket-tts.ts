@@ -469,7 +469,7 @@ export function runMimiEncode(
   return x;
 }
 
-export function runMimiDecode(
+export const runMimiDecode = jit(function runMimiDecode(
   {
     encoder,
     encoderTransformer,
@@ -505,7 +505,7 @@ export function runMimiDecode(
   const out = runSEANetDecoder(decoder, emb); // [1, 1920*T]
 
   return out;
-}
+});
 
 export function lsdDecode(
   flowNet: (s: np.Array, t: np.Array, x: np.Array) => np.Array,

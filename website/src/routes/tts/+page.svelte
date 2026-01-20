@@ -149,7 +149,6 @@
     audioPromise = new Promise((resolve) => (startPlaying = resolve));
     const player = createStreamingPlayer();
 
-    const jitMimiDecode = jit(runMimiDecode);
     try {
       let eosStep: number | null = null;
       let baseSeqLength = embeds.shape[0] + sequence.shape[0];
@@ -191,7 +190,7 @@
           .mul(model.flowLM.embStd.ref)
           .add(model.flowLM.embMean.ref);
         offset = offset.add(sequence.shape[0] - 1 - mimiInput.shape[0]);
-        const audio = jitMimiDecode(tree.ref(model.mimi), mimiInput, offset);
+        const audio = runMimiDecode(tree.ref(model.mimi), mimiInput, offset);
 
         const lastAudioPromise = audioPromise;
         audioPromise = (async () => {
@@ -207,7 +206,6 @@
       startPlaying?.(); // If not called yet
       sequence.dispose();
       embeds.dispose();
-      jitMimiDecode.dispose();
       await audioPromise;
       await player.close();
     }
