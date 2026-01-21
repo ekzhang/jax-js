@@ -185,7 +185,7 @@ export const moveaxis = moveaxisTracer as (
  */
 export const pad = core.pad as (
   x: ArrayLike,
-  width: number | Pair | Pair[],
+  width: number | Pair | Pair[] | Record<number, Pair>,
 ) => Array;
 
 /**

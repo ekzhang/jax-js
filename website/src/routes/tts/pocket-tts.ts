@@ -3,6 +3,18 @@ import { safetensors, WeightMapper } from "@jax-js/loaders";
 
 // Kyutai Pocket TTS model weights interfaces and forward pass.
 
+export type KVCache = {
+  key: np.Array; // [T_cache, H, D]
+  value: np.Array; // [T_cache, H, D]
+};
+
+export function emptyKVCache(): KVCache {
+  return {
+    key: np.zeros([0], { dtype: np.float16 }),
+    value: np.zeros([0], { dtype: np.float16 }),
+  };
+}
+
 export type PocketTTS = {
   flowLM: FlowLMModel;
   mimi: MimiModel;
@@ -34,15 +46,16 @@ export function runFlowLMStep(
     speakerProjWeight,
     transformer,
   }: FlowLMModel,
+  kvCaches: KVCache[],
   sequence: np.Array, // [S, ldim] - latent sequence, NaN for BOS
-  embeds: np.Array, // [T, dim] - conditioning, text and voice
-  offset: np.Array, // scalar, position offset
-  seqLength: number = 0,
+  embeds: np.Array | null, // [T, dim] - conditioning, text and voice
+  offset: number, // position offset
+  kvCacheLen: number,
   lsdDecodeSteps: number = 1,
   temp: number = 0.7,
   noiseClamp: number | null = null,
   eosThreshold: number = -4.0,
-): { latent: np.Array; isEos: np.Array } {
+): { latent: np.Array; isEos: np.Array; kvCaches: KVCache[] } {
   // unused fields
   conditionerEmbed.dispose();
   embMean.dispose();
@@ -59,25 +72,34 @@ export function runFlowLMStep(
   let input = runLinear(inputLinear, sequence);
 
   // Concatenate text/voice embeddings with input
-  input = np.concatenate([embeds, input], 0);
-  if (input.shape[0] % 256 !== 0) {
-    // Hack: pad to multiple of length 256
-    const padLength = 256 - (input.shape[0] % 256);
-    input = np.pad(input, [
-      [0, padLength],
-      [0, 0],
-    ]);
-  }
+  if (embeds !== null) input = np.concatenate([embeds, input], 0);
 
-  for (const layer of transformer) {
-    input = runStreamingTransformerLayer(layer, input, offset.ref, 0, 16);
+  for (let i = 0; i < transformer.length; i++) {
+    // If kv cache is not large enough, expand it to next multiple of 64.
+    if (kvCacheLen > 0 && kvCaches[i].key.shape[0] === kvCacheLen) {
+      const newCapacity = Math.ceil((kvCacheLen + 1) / 64) * 64;
+      kvCaches[i].key = np.pad(kvCaches[i].key, {
+        0: [0, newCapacity - kvCacheLen],
+      });
+      kvCaches[i].value = np.pad(kvCaches[i].value, {
+        0: [0, newCapacity - kvCacheLen],
+      });
+    }
+    const layer = transformer[i];
+    [input, kvCaches[i]] = runStreamingTransformerLayer(
+      layer,
+      kvCaches[i],
+      input,
+      offset,
+      kvCacheLen,
+      { numHeads: 16 },
+    );
   }
-  offset.dispose();
 
   let transformerOut = runLayerNorm(outNorm, input);
 
   // Get last position output (for next token prediction)
-  transformerOut = transformerOut.slice([seqLength - 1, seqLength]); // [1, dim]
+  transformerOut = transformerOut.slice([-1]); // [1, dim]
 
   // Check EOS
   const eosLogit = runLinear(outEos, transformerOut.ref);
@@ -99,7 +121,7 @@ export function runFlowLMStep(
     runSimpleMLPAdaLN(flowNet, transformerOut, s, t, x);
   const latent = lsdDecode(conditionedFlow, noise, lsdDecodeSteps);
 
-  return { latent, isEos };
+  return { latent, isEos, kvCaches };
 }
 
 export type SimpleMLPAdaLN = {
@@ -201,27 +223,44 @@ export type MimiStreamingMultiheadAttention = {
 
 export function runMimiStreamingMultiheadAttention(
   { inProj, outProj }: MimiStreamingMultiheadAttention,
+  kvCache: KVCache,
   query: np.Array, // [T, embed_dim]
   offset: np.Array, // scalar, position offset
+  kvCacheLen: np.Array, // scalar, length of kvCache
   context: number,
   numHeads: number,
   maxPeriod: number = 10000,
-): np.Array {
+): [np.Array, KVCache] {
   const [T, embedDim] = query.shape;
   const headDim = embedDim / numHeads;
 
   const projected = runLinear(inProj, query); // [T, 3 * embed_dim]
   const qkv = projected.reshape([T, 3 * numHeads, headDim]);
-  const [q_, k_, v] = np.split(qkv, 3, 1); // each is [T, 1, H, D]
+  const [q_, k_, v] = np.split(qkv, 3, 1); // each is [T, H, D]
   const [q, k] = runRope(q_, k_, offset, maxPeriod);
 
-  let x = nn.dotProductAttention(q, k, v, {
-    isCausal: true,
-    localWindowSize: context ? [context - 1, 0] : undefined,
-  });
+  const isPrefill = kvCache.key.size === 0; // Empty kv cache = prefill
+  let x: np.Array;
+  if (isPrefill) {
+    tree.dispose([kvCache, kvCacheLen]);
+    x = nn.dotProductAttention(q, k.ref, v.ref, {
+      isCausal: true,
+      localWindowSize: context ? [context - 1, 0] : undefined,
+    });
+    kvCache = { key: k, value: v };
+  } else {
+    // Decode step: Only decode of length 1 is currently supported.
+    if (T !== 1) throw new Error("Streaming decode only supports T=1");
+    // Update kvCache with new k,v
+    const capacity = kvCache.key.shape[0];
+    const cacheMask = np.arange(capacity).reshape([-1, 1, 1]).equal(kvCacheLen);
+    kvCache.key = np.where(cacheMask.ref, k, kvCache.key);
+    kvCache.value = np.where(cacheMask, v, kvCache.value);
+    x = nn.dotProductAttention(q, kvCache.key.ref, kvCache.value.ref);
+  }
   x = x.reshape([T, embedDim]);
   x = runLinear(outProj, x);
-  return x;
+  return [x, kvCache];
 }
 
 export type StreamingTransformerLayer = {
@@ -245,19 +284,26 @@ export const runStreamingTransformerLayer = jit(
       layerScale1,
       layerScale2,
     }: StreamingTransformerLayer,
+    kvCache: KVCache,
     x: np.Array, // [T, D]
-    offset: np.Array, // scalar, position offset
-    context: number,
-    numHeads: number,
-    maxPeriod: number = 10000,
-  ): np.Array {
+    offset: np.Array, // scalar, position offset of x
+    kvCacheLen: np.Array, // scalar, length of kvCache
+    {
+      context = 0, // infinite context
+      numHeads,
+      maxPeriod = 10000,
+    }: { context?: number; numHeads: number; maxPeriod?: number },
+  ): [np.Array, KVCache] {
     // Self-attention block with pre-norm
     const xOrig = x.ref;
     x = runLayerNorm(norm1, x);
-    let update = runMimiStreamingMultiheadAttention(
+    let update: np.Array;
+    [update, kvCache] = runMimiStreamingMultiheadAttention(
       selfAttn,
+      kvCache,
       x,
       offset,
+      kvCacheLen,
       context,
       numHeads,
       maxPeriod,
@@ -278,9 +324,9 @@ export const runStreamingTransformerLayer = jit(
     }
     x = xOrig2.add(ffnOut);
 
-    return x;
+    return [x, kvCache];
   },
-  { staticArgnums: [3, 4, 5] },
+  { staticArgnums: [5, 6, 7] },
 );
 
 export type SEANetResnetBlock = {
@@ -459,7 +505,16 @@ export function runMimiEncode(
   x = x.transpose([1, 0]); // [C, T] -> [T, C]
   const offset = np.array(0, { dtype: np.int32, device: x.device });
   for (const layer of encoderTransformer) {
-    x = runStreamingTransformerLayer(layer, x, offset.ref, 250, 8);
+    let kvCache = emptyKVCache();
+    [x, kvCache] = runStreamingTransformerLayer(
+      layer,
+      kvCache,
+      x,
+      offset.ref,
+      0,
+      { context: 250, numHeads: 8 },
+    );
+    tree.dispose(kvCache);
   }
   offset.dispose();
   x = x.transpose([1, 0]); // back to [C, T]
@@ -496,7 +551,16 @@ export const runMimiDecode = jit(function runMimiDecode(
   emb = emb.transpose([1, 0]); // [C, 16*T] -> [16*T, C]
   offset = offset.mul(16);
   for (const layer of decoderTransformer) {
-    emb = runStreamingTransformerLayer(layer, emb, offset.ref, 250, 8);
+    let kvCache = emptyKVCache();
+    [emb, kvCache] = runStreamingTransformerLayer(
+      layer,
+      kvCache,
+      emb,
+      offset.ref,
+      0,
+      { context: 250, numHeads: 8 },
+    );
+    tree.dispose(kvCache);
   }
   offset.dispose();
   emb = emb.transpose([1, 0]); // [C, 16*T]

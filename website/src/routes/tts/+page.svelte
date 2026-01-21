@@ -7,6 +7,7 @@
   import DownloadManager from "$lib/common/DownloadManager.svelte";
   import { createStreamingPlayer } from "./audio";
   import {
+    emptyKVCache,
     fromSafetensors,
     type PocketTTS,
     runFlowLMStep,
@@ -151,18 +152,28 @@
 
     try {
       let eosStep: number | null = null;
-      let baseSeqLength = embeds.shape[0] + sequence.shape[0];
+      let prefillLength = embeds.shape[0] + sequence.shape[0];
+
+      let kvCaches = model.flowLM.transformer.map(() => emptyKVCache());
+      let kvCacheLen = 0; // equals offset
+
       for (let step = 0; step < 1000; step++) {
         if (step >= 16) startPlaying?.();
 
-        let offset = np.array(0, { dtype: np.int32 });
-        const { latent, isEos } = runFlowLMStep(
+        const {
+          latent,
+          isEos,
+          kvCaches: newKVCaches,
+        } = runFlowLMStep(
           tree.ref(model.flowLM),
-          sequence.ref,
-          embeds.ref,
-          offset.ref,
-          baseSeqLength + step,
+          kvCaches,
+          step === 0 ? sequence.ref : sequence.ref.slice([-1]),
+          step === 0 ? embeds.ref : null,
+          kvCacheLen,
+          kvCacheLen,
         );
+        kvCaches = newKVCaches;
+        kvCacheLen += step === 0 ? prefillLength : 1;
 
         const isEosData = await isEos.data();
         if (isEosData[0] && eosStep === null) {
@@ -189,8 +200,12 @@
         mimiInput = mimiInput
           .mul(model.flowLM.embStd.ref)
           .add(model.flowLM.embMean.ref);
-        offset = offset.add(sequence.shape[0] - 1 - mimiInput.shape[0]);
-        const audio = runMimiDecode(tree.ref(model.mimi), mimiInput, offset);
+        let mimiOffset = sequence.shape[0] - 1 - mimiInput.shape[0];
+        const audio = runMimiDecode(
+          tree.ref(model.mimi),
+          mimiInput,
+          mimiOffset,
+        );
 
         const lastAudioPromise = audioPromise;
         audioPromise = (async () => {

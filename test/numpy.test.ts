@@ -1481,6 +1481,13 @@ suite.each(devices)("device:%s", (device) => {
       const b = f(a);
       expect(b.js()).toEqual([0, 3, 4, 5, 0]);
     });
+
+    test("pad with explicit indices", () => {
+      const x = np.zeros([2, 3, 4, 5]);
+      const y = np.pad(x, { 1: [0, 2], [-1]: [3, 0] });
+      expect(y.shape).toEqual([2, 5, 4, 8]);
+      y.dispose();
+    });
   });
 
   suite("jax.numpy.split()", () => {

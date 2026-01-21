@@ -346,34 +346,10 @@
     );
     const dx = Math.round(13.5 - X.ref.mul(xgrid).sum().div(X.ref.sum()).js());
     const dy = Math.round(13.5 - X.ref.mul(ygrid).sum().div(X.ref.sum()).js());
-    if (dx > 0)
-      X = np
-        .pad(X, [
-          [dx, 0],
-          [0, 0],
-        ])
-        .slice([0, 28], []);
-    if (dx < 0)
-      X = np
-        .pad(X, [
-          [0, -dx],
-          [0, 0],
-        ])
-        .slice([-dx], []);
-    if (dy > 0)
-      X = np
-        .pad(X, [
-          [0, 0],
-          [dy, 0],
-        ])
-        .slice([], [0, 28]);
-    if (dy < 0)
-      X = np
-        .pad(X, [
-          [0, 0],
-          [0, -dy],
-        ])
-        .slice([], [-dy]);
+    if (dx > 0) X = np.pad(X, { 0: [dx, 0] }).slice([0, 28], []);
+    if (dx < 0) X = np.pad(X, { 0: [0, -dx] }).slice([-dx], []);
+    if (dy > 0) X = np.pad(X, { 1: [dy, 0] }).slice([], [0, 28]);
+    if (dy < 0) X = np.pad(X, { 1: [0, -dy] }).slice([], [-dy]);
     return X;
   }
 
