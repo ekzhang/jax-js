@@ -258,8 +258,8 @@
     }}
   >
     <textarea
-      class="border-2 rounded p-2 w-full max-w-sm"
-      rows={4}
+      class="border-2 rounded p-2 w-full max-w-md"
+      rows={6}
       placeholder="Enter your prompt here…"
       bind:value={prompt}
     ></textarea>
