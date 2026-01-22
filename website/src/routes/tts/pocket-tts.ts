@@ -125,8 +125,9 @@ export function runFlowLMStep(
 
   // Decode using LSD
   const conditionedFlow = (s: np.Array, t: np.Array, x: np.Array) =>
-    runSimpleMLPAdaLN(flowNet, transformerOut, s, t, x);
+    runSimpleMLPAdaLN(tree.ref(flowNet), transformerOut.ref, s, t, x);
   const latent = lsdDecode(conditionedFlow, noise, lsdDecodeSteps);
+  tree.dispose([flowNet, transformerOut]);
 
   return { latent, isEos, state: { kvCaches, kvCacheLen } };
 }

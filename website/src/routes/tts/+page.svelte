@@ -25,6 +25,11 @@
   let playing = $state(false);
   let audioBlob = $state<Blob | null>(null);
 
+  // Advanced options
+  let seed = $state<number | null>(null);
+  let temperature = $state(0.7);
+  let lsdDecodeSteps = $state(1);
+
   async function downloadClipWeights(): Promise<safetensors.File> {
     if (_weights) return _weights;
     isDownloadingWeights = true;
@@ -137,7 +142,12 @@
 
     const player = createStreamingPlayer();
     try {
-      await playTTS(player, tree.ref(model), embeds, { framesAfterEos });
+      await playTTS(player, tree.ref(model), embeds, {
+        framesAfterEos,
+        seed,
+        temperature,
+        lsdDecodeSteps,
+      });
       audioBlob = player.toWav();
     } finally {
       await player.close();
@@ -208,6 +218,53 @@
         </a>
       {/if}
     </div>
+
+    <details class="mt-8 max-w-md">
+      <summary class="cursor-pointer text-gray-600 hover:text-gray-800"
+        >Advanced options</summary
+      >
+      <div class="mt-3 space-y-4 pl-2">
+        <div>
+          <label class="block text-sm text-gray-700">
+            Seed
+            <input
+              type="number"
+              class="block mt-1 border-2 rounded p-1 w-32"
+              placeholder="(random)"
+              bind:value={seed}
+            />
+          </label>
+        </div>
+
+        <div>
+          <label class="block text-sm text-gray-700">
+            Temperature: {temperature.toFixed(2)}
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              class="mt-1 w-full"
+              bind:value={temperature}
+            />
+          </label>
+        </div>
+
+        <div>
+          <label class="block text-sm text-gray-700">
+            LSD Decode Steps: {lsdDecodeSteps}
+            <input
+              type="range"
+              min="1"
+              max="4"
+              step="1"
+              class="mt-1 w-full"
+              bind:value={lsdDecodeSteps}
+            />
+          </label>
+        </div>
+      </div>
+    </details>
   </form>
 </main>
 
