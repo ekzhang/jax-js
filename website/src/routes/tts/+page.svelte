@@ -1,7 +1,7 @@
 <script lang="ts">
   import { defaultDevice, init, numpy as np, tree } from "@jax-js/jax";
   import { cachedFetch, safetensors, tokenizers } from "@jax-js/loaders";
-  import { AudioLinesIcon, DownloadIcon } from "@lucide/svelte";
+  import { AudioLinesIcon, DownloadIcon, GithubIcon } from "@lucide/svelte";
 
   import DownloadManager from "$lib/common/DownloadManager.svelte";
   import { createStreamingPlayer } from "./audio";
@@ -160,7 +160,15 @@
 <DownloadManager bind:this={downloadManager} />
 
 <main class="mx-4 my-8">
-  <h1 class="text-2xl font-semibold mb-1">Kyutai Pocket TTS</h1>
+  <h1 class="text-2xl font-semibold mb-1">
+    Kyutai Pocket TTS
+    <a
+      target="_blank"
+      href="https://github.com/ekzhang/jax-js/tree/main/website/src/routes/tts"
+    >
+      <GithubIcon class="inline-block ml-2 -mt-1" />
+    </a>
+  </h1>
   <p class="text-lg text-gray-500">
     Text-to-speech AI voice model, running in your browser with <a
       href="/"
