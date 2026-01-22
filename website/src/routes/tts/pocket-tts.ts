@@ -33,6 +33,11 @@ export type FlowLMModel = {
   transformer: StreamingTransformerLayer[];
 };
 
+export type FlowLMState = {
+  kvCaches: KVCache[];
+  kvCacheLen: number; // position offset
+};
+
 export function runFlowLMStep(
   {
     bosEmb,
@@ -46,11 +51,10 @@ export function runFlowLMStep(
     speakerProjWeight,
     transformer,
   }: FlowLMModel,
-  kvCaches: KVCache[],
+  { kvCaches, kvCacheLen }: FlowLMState,
   sequence: np.Array, // [S, ldim] - latent sequence, NaN for BOS
   embeds: np.Array | null, // [T, dim] - conditioning, text and voice
   offset: number, // position offset
-  kvCacheLen: number,
   lsdDecodeSteps: number = 1,
   temp: number = 0.7,
   noiseClamp: number | null = null,
@@ -255,14 +259,25 @@ export function runMimiStreamingMultiheadAttention(
     const cacheMask = np
       .arange(capacity)
       .reshape([-1, 1, 1])
-      .equal(kvCacheLen.ref);
-    kvCache.key = np.where(cacheMask.ref, k, kvCache.key);
-    kvCache.value = np.where(cacheMask, v, kvCache.value);
+      .less(kvCacheLen.ref);
+    kvCache.key = np.where(
+      cacheMask.ref,
+      kvCache.key,
+      np.tile(k, [capacity / T, 1, 1]), // Hack: Assume T divides into kv cache length
+    );
+    kvCache.value = np.where(
+      cacheMask,
+      kvCache.value,
+      np.tile(v, [capacity / T, 1, 1]), // Hack: Assume T divides into kv cache length
+    );
     // Casual attention mask offset by kvCacheLen
-    const mask = np
+    const maskDelta = np
       .arange(capacity)
       .sub(np.arange(T).reshape([T, 1]))
-      .lessEqual(kvCacheLen); // [T, capacity]
+      .sub(kvCacheLen); // [T, capacity]
+    const mask = context
+      ? maskDelta.ref.lessEqual(0).mul(maskDelta.greater(-context))
+      : maskDelta.lessEqual(0);
     x = nn.dotProductAttention(q, kvCache.key.ref, kvCache.value.ref, { mask });
   }
   x = x.reshape([T, embedDim]);
@@ -338,25 +353,28 @@ export const runStreamingTransformerLayer = jit(
 
 export type SEANetResnetBlock = {
   // Alternating [ELU, Conv1d, ELU, Conv1d], with residual at the end
-  block: (StreamingConv1d | undefined)[];
+  block: [undefined, StreamingConv1d, undefined, StreamingConv1d];
 };
 
 export function runSEANetResnetBlock(
   { block }: SEANetResnetBlock,
-  x: np.Array, // [C, T]
-): np.Array {
+  states: (np.Array | null)[],
+  x: np.Array, // [1, C, T]
+): [np.Array, np.Array[]] {
   let v = x.ref;
+  let stateIdx = 0;
   for (const layer of block) {
     if (layer === undefined) {
       // ELU activation
       v = nn.elu(v);
     } else {
       // StreamingConv1d
-      [v] = runConv1d(layer.conv, null, v);
+      [v, states[stateIdx]] = runConv1d(layer.conv, states[stateIdx], v);
+      stateIdx++;
     }
   }
   // Residual connection
-  return x.add(v);
+  return [x.add(v), states as np.Array[]];
 }
 
 export type SEANetEncoder = {
@@ -400,7 +418,13 @@ export function runSEANetEncoder(
   let idx = 1;
   for (let i = 0; i < 3; i++) {
     // ResBlock
-    x = runSEANetResnetBlock(model[idx] as SEANetResnetBlock, x);
+    let states: any = [null, null];
+    [x, states] = runSEANetResnetBlock(
+      model[idx] as SEANetResnetBlock,
+      states,
+      x,
+    );
+    tree.dispose(states);
     idx++;
     // ELU
     x = nn.elu(x);
@@ -449,45 +473,18 @@ export type SEANetDecoderState = {
   convState2: np.Array;
 };
 
-export function createSEANetDecoderState(
-  decoder: SEANetDecoder, // ref
-): SEANetDecoderState {
-  // Pad to the left with shape kernelShape - stride for conv1d.
-  const convState1 = np.zeros([decoder.model[0].conv.weight.shape[2] - 1], {
-    dtype: np.float16,
-  });
-  const resBlockStates: np.Array[] = [
-    np.zeros([decoder.model[2].convtr.weight.shape[2] - 1], {
-      dtype: np.float16,
-    }),
-    np.zeros([decoder.model[5].convtr.weight.shape[2] - 1], {
-      dtype: np.float16,
-    }),
-    np.zeros([decoder.model[8].convtr.weight.shape[2] - 1], {
-      dtype: np.float16,
-    }),
-  ];
-  const convState2 = np.zeros([decoder.model[11].conv.weight.shape[2] - 1], {
-    dtype: np.float16,
-  });
-  return {
-    convState1,
-    resBlockStates,
-    convState2,
-  };
-}
-
 export function runSEANetDecoder(
   { model }: SEANetDecoder,
+  seanetStates: np.Array[],
   x: np.Array, // [C, T] - encoded representation
-): np.Array {
+): [np.Array, np.Array[]] {
   // Process through model layers with appropriate strides
   // model structure: [Conv1d, (ELU, ConvTr, ResBlock) * 3, ELU, Conv1d]
   const ratios = [6, 5, 4]; // upsampling ratios
 
   // Initial conv (index 0)
   x = np.expandDims(x, 0); // [1, C, T]
-  [x] = runConv1d(model[0].conv, null, x);
+  [x, seanetStates[0]] = runConv1d(model[0].conv, seanetStates[0], x);
 
   // Decoder blocks
   let idx = 1;
@@ -497,23 +494,28 @@ export function runSEANetDecoder(
     idx++;
     // Transposed Conv (upsampling)
     const stride = ratios[i];
-    [x] = runConvTranspose1d(
+    [x, seanetStates[3 * i + 1]] = runConvTranspose1d(
       (model[idx] as StreamingConvTranspose1d).convtr,
-      null,
+      seanetStates[3 * i + 1],
       x,
       stride,
     );
     idx++;
     // ResBlock
-    x = runSEANetResnetBlock(model[idx] as SEANetResnetBlock, x);
+    [x, [seanetStates[3 * i + 2], seanetStates[3 * i + 3]]] =
+      runSEANetResnetBlock(
+        model[idx] as SEANetResnetBlock,
+        [seanetStates[3 * i + 2], seanetStates[3 * i + 3]],
+        x,
+      );
     idx++;
   }
 
   // Final ELU + Conv
   x = nn.elu(x);
-  [x] = runConv1d(model[11].conv, null, x);
+  [x, seanetStates[10]] = runConv1d(model[11].conv, seanetStates[10], x);
 
-  return x.slice(0);
+  return [x.slice(0), seanetStates];
 }
 
 export type MimiModel = {
@@ -566,6 +568,34 @@ export function runMimiEncode(
   return x;
 }
 
+export type MimiDecodeState = {
+  kvCaches: KVCache[];
+  kvCacheLen: np.Array; // Scalar
+  initialConvState: np.Array;
+  seanetStates: np.Array[];
+};
+
+export function createMimiDecodeState(mimi: MimiModel): MimiDecodeState {
+  return {
+    kvCaches: mimi.decoderTransformer.map(() => emptyKVCache()),
+    kvCacheLen: np.array(0, { dtype: np.int32 }),
+    initialConvState: createConvTranspose1dState(mimi.upsample.convtr, 16, 512),
+    seanetStates: [
+      createConv1dState(mimi.decoder.model[0].conv),
+      createConvTranspose1dState(mimi.decoder.model[2].convtr, 6),
+      createConv1dState(mimi.decoder.model[3].block[1].conv),
+      createConv1dState(mimi.decoder.model[3].block[3].conv),
+      createConvTranspose1dState(mimi.decoder.model[5].convtr, 5),
+      createConv1dState(mimi.decoder.model[6].block[1].conv),
+      createConv1dState(mimi.decoder.model[6].block[3].conv),
+      createConvTranspose1dState(mimi.decoder.model[8].convtr, 4),
+      createConv1dState(mimi.decoder.model[9].block[1].conv),
+      createConv1dState(mimi.decoder.model[9].block[3].conv),
+      createConv1dState(mimi.decoder.model[11].conv),
+    ],
+  };
+}
+
 export const runMimiDecode = jit(function runMimiDecode(
   {
     encoder,
@@ -576,9 +606,10 @@ export const runMimiDecode = jit(function runMimiDecode(
     downsample,
     upsample,
   }: MimiModel,
+  { kvCaches, kvCacheLen, initialConvState, seanetStates }: MimiDecodeState,
   latent: np.Array, // [T, 32] - bottleneck representation
   offset: np.Array, // scalar, position offset
-): np.Array {
+): [np.Array, MimiDecodeState] {
   tree.dispose([encoder, encoderTransformer, downsample]);
 
   // Run through "dummy quantizer"
@@ -586,37 +617,45 @@ export const runMimiDecode = jit(function runMimiDecode(
   latent = lax.conv(latent, quantizer.outputProj.weight, [1], "VALID"); // [1, 512, T]
 
   // Upsample (stride 16), depthwise
-  let [emb] = runConvTranspose1d(
+  let x: np.Array;
+  [x, initialConvState] = runConvTranspose1d(
     upsample.convtr,
-    null,
+    initialConvState,
     latent,
     16,
     latent.shape[1],
   ); // [1, 512, 16*T]
-  emb = emb.slice(0);
+  x = x.slice(0);
 
   // Decoder transformer
-  emb = emb.transpose([1, 0]); // [C, 16*T] -> [16*T, C]
-  offset = np.array(offset).mul(16);
-  for (const layer of decoderTransformer) {
-    let kvCache = emptyKVCache();
-    [emb, kvCache] = runStreamingTransformerLayer(
+  x = x.transpose([1, 0]); // [C, 16*T] -> [16*T, C]
+  offset = offset.mul(16);
+  for (let i = 0; i < decoderTransformer.length; i++) {
+    const layer = decoderTransformer[i];
+    [x, kvCaches[i]] = runStreamingTransformerLayer(
       layer,
-      kvCache,
-      emb,
+      kvCaches[i],
+      x,
       offset.ref,
-      0,
+      kvCacheLen.ref,
       { context: 250, numHeads: 8 },
     );
-    tree.dispose(kvCache);
   }
   offset.dispose();
-  emb = emb.transpose([1, 0]); // [C, 16*T]
+  x = x.transpose([1, 0]); // [C, 16*T]
 
   // Decode through SEANet decoder
-  const out = runSEANetDecoder(decoder, emb); // [1, 1920*T]
+  [x, seanetStates] = runSEANetDecoder(decoder, seanetStates, x); // [1, 1920*T]
 
-  return out;
+  return [
+    x,
+    {
+      kvCaches,
+      kvCacheLen: kvCacheLen.add(16),
+      initialConvState,
+      seanetStates,
+    },
+  ];
 });
 
 export function lsdDecode(
@@ -781,6 +820,7 @@ export function runConv1d(
   // x: [1, C_in, T_in]
   state ??= createConv1dState({ weight }, stride);
   x = np.concatenate([state, x], 2); // pad with state
+  state = x.ref.slice([], [], [x.shape[2] - state.shape[2]]);
   let y = lax.conv(x, weight, [stride], "VALID");
   if (bias) y = y.add(np.expandDims(bias, -1));
   return [y, state];
@@ -794,11 +834,12 @@ export type ConvTranspose1d = {
 export function createConvTranspose1dState(
   { weight }: ConvTranspose1d,
   stride: number = 1,
+  groups: number = 1,
 ): np.Array {
   return np.zeros(
     [
       1, // batch size
-      weight.shape[1], // out channels
+      weight.shape[1] * groups, // out channels
       weight.shape[2] - stride, // kernel size - stride
     ],
     { dtype: np.float16 },
@@ -838,7 +879,7 @@ export function runConvTranspose1d(
     },
   );
   y = y.add(np.pad(state, { 2: [0, y.shape[2] - state.shape[2]] }));
-  [y, state] = np.split(y, [-state.shape[2]], 2);
+  [y, state] = np.split(y, [y.shape[2] - state.shape[2]], 2);
   if (bias) y = y.add(np.expandDims(bias, -1));
   return [y, state];
 }

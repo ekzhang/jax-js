@@ -7,6 +7,7 @@
   import DownloadManager from "$lib/common/DownloadManager.svelte";
   import { createStreamingPlayer } from "./audio";
   import {
+    createMimiDecodeState,
     emptyKVCache,
     fromSafetensors,
     type PocketTTS,
@@ -154,11 +155,15 @@
       let eosStep: number | null = null;
       let prefillLength = embeds.shape[0] + sequence.shape[0];
 
-      let kvCaches = model.flowLM.transformer.map(() => emptyKVCache());
-      let kvCacheLen = 0; // equals offset
+      let kvCachesFlowLM = model.flowLM.transformer.map(() => emptyKVCache());
+      let kvCacheLenFlowLM = 0; // equals offset
+
+      let mimiState = createMimiDecodeState(model.mimi);
+      mimiState.kvCacheLen.dispose();
+      let mimiKVCacheLen = 0; // tracked separately to avoid syncpoint (refactor this)
 
       for (let step = 0; step < 1000; step++) {
-        if (step >= 16) startPlaying?.();
+        if (step >= 3) startPlaying?.();
 
         const {
           latent,
@@ -166,14 +171,13 @@
           kvCaches: newKVCaches,
         } = runFlowLMStep(
           tree.ref(model.flowLM),
-          kvCaches,
+          { kvCaches: kvCachesFlowLM, kvCacheLen: kvCacheLenFlowLM },
           step === 0 ? sequence.ref : sequence.ref.slice([-1]),
           step === 0 ? embeds.ref : null,
-          kvCacheLen,
-          kvCacheLen,
+          kvCacheLenFlowLM,
         );
-        kvCaches = newKVCaches;
-        kvCacheLen += step === 0 ? prefillLength : 1;
+        kvCachesFlowLM = newKVCaches;
+        kvCacheLenFlowLM += step === 0 ? prefillLength : 1;
 
         const isEosData = await isEos.data();
         if (isEosData[0] && eosStep === null) {
@@ -191,28 +195,48 @@
         sequence = np.concatenate([sequence, latent]);
         console.log("Sequence shape:", sequence.shape);
 
-        // Hack: for mimi decode, actually pass the last 250/16=16 latents since
-        // we don't have stateful convolution yet.
-        let mimiInput = sequence.ref.slice([
-          Math.max(1, sequence.shape[0] - 16),
-        ]);
-
+        let mimiInput = sequence.ref.slice([-1]);
         mimiInput = mimiInput
           .mul(model.flowLM.embStd.ref)
           .add(model.flowLM.embMean.ref);
-        let mimiOffset = sequence.shape[0] - 1 - mimiInput.shape[0];
-        const audio = runMimiDecode(
+
+        const [audio, newMimiState] = runMimiDecode(
           tree.ref(model.mimi),
+          { ...mimiState, kvCacheLen: mimiKVCacheLen },
           mimiInput,
-          mimiOffset,
+          step,
         );
+        mimiState = newMimiState;
+        mimiState.kvCacheLen.dispose(); // Unused, tracked in `mimiKVCacheLen` instead.
+        mimiKVCacheLen += 16; // +16 new tokens in audio codec
+        if (mimiState.kvCaches[0].key.shape[0] !== 272) {
+          // Pad it to a constant [272] in length, more than 250 context + 16 for next pass.
+          const padAmount = 272 - mimiState.kvCaches[0].key.shape[0];
+          for (const c of mimiState.kvCaches) {
+            c.key = np.pad(c.key, { 0: [0, padAmount] });
+            c.value = np.pad(c.value, { 0: [0, padAmount] });
+          }
+        }
+        if (mimiKVCacheLen === 272) {
+          // Cycle room for one more kv cache entry.
+          mimiKVCacheLen -= 16;
+          for (const c of mimiState.kvCaches) {
+            c.key = np.pad(c.key.slice([16]), { 0: [0, 16] });
+            c.value = np.pad(c.value.slice([16]), { 0: [0, 16] });
+          }
+        }
 
         const lastAudioPromise = audioPromise;
         audioPromise = (async () => {
           const audioPcm = (await np
-            .clip(audio.slice(0, [-1920]), -1, 1)
+            .clip(audio.slice(0), -1, 1)
             .astype(np.float32)
             .data()) as Float32Array;
+          if (audioPcm.length !== 1920) {
+            throw new Error(
+              `expected 1920 audio samples, got ${audioPcm.length}`,
+            );
+          }
           await lastAudioPromise;
           player.playChunk(audioPcm);
         })();
