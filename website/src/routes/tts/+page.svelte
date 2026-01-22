@@ -159,8 +159,6 @@
       let kvCacheLenFlowLM = 0; // equals offset
 
       let mimiState = createMimiDecodeState(model.mimi);
-      mimiState.kvCacheLen.dispose();
-      let mimiKVCacheLen = 0; // tracked separately to avoid syncpoint (refactor this)
 
       for (let step = 0; step < 1000; step++) {
         if (step >= 3) startPlaying?.();
@@ -202,29 +200,11 @@
 
         const [audio, newMimiState] = runMimiDecode(
           tree.ref(model.mimi),
-          { ...mimiState, kvCacheLen: mimiKVCacheLen },
+          mimiState,
           mimiInput,
           step,
         );
         mimiState = newMimiState;
-        mimiState.kvCacheLen.dispose(); // Unused, tracked in `mimiKVCacheLen` instead.
-        mimiKVCacheLen += 16; // +16 new tokens in audio codec
-        if (mimiState.kvCaches[0].key.shape[0] !== 272) {
-          // Pad it to a constant [272] in length, more than 250 context + 16 for next pass.
-          const padAmount = 272 - mimiState.kvCaches[0].key.shape[0];
-          for (const c of mimiState.kvCaches) {
-            c.key = np.pad(c.key, { 0: [0, padAmount] });
-            c.value = np.pad(c.value, { 0: [0, padAmount] });
-          }
-        }
-        if (mimiKVCacheLen === 272) {
-          // Cycle room for one more kv cache entry.
-          mimiKVCacheLen -= 16;
-          for (const c of mimiState.kvCaches) {
-            c.key = np.pad(c.key.slice([16]), { 0: [0, 16] });
-            c.value = np.pad(c.value.slice([16]), { 0: [0, 16] });
-          }
-        }
 
         const lastAudioPromise = audioPromise;
         audioPromise = (async () => {
@@ -262,11 +242,6 @@
       href="/"
       class="text-primary hover:underline">jax-js</a
     >.
-  </p>
-
-  <p class="text-sm mt-1 text-yellow-600">
-    Warning: Alpha and very work-in-progress, I'll be making it faster/better in
-    the coming week.
   </p>
 
   <form

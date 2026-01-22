@@ -467,56 +467,82 @@ export type SEANetDecoder = {
   ];
 };
 
-export type SEANetDecoderState = {
-  convState1: np.Array;
-  resBlockStates: np.Array[];
-  convState2: np.Array;
-};
+export function createSEANetDecoderState({
+  model,
+}: SEANetDecoder): SEANetDecoderState {
+  return {
+    conv1: createConv1dState(model[0].conv),
+    blocks: [
+      {
+        convtr: createConvTranspose1dState(model[2].convtr, 6),
+        res: [
+          createConv1dState(model[3].block[1].conv),
+          createConv1dState(model[3].block[3].conv),
+        ],
+      },
+      {
+        convtr: createConvTranspose1dState(model[5].convtr, 5),
+        res: [
+          createConv1dState(model[6].block[1].conv),
+          createConv1dState(model[6].block[3].conv),
+        ],
+      },
+      {
+        convtr: createConvTranspose1dState(model[8].convtr, 4),
+        res: [
+          createConv1dState(model[9].block[1].conv),
+          createConv1dState(model[9].block[3].conv),
+        ],
+      },
+    ],
+    conv2: createConv1dState(model[11].conv),
+  };
+}
 
-export function runSEANetDecoder(
+export const runSEANetDecoder = jit(function runSEANetDecoder(
   { model }: SEANetDecoder,
-  seanetStates: np.Array[],
+  state: SEANetDecoderState,
   x: np.Array, // [C, T] - encoded representation
-): [np.Array, np.Array[]] {
+): [np.Array, SEANetDecoderState] {
   // Process through model layers with appropriate strides
   // model structure: [Conv1d, (ELU, ConvTr, ResBlock) * 3, ELU, Conv1d]
   const ratios = [6, 5, 4]; // upsampling ratios
 
   // Initial conv (index 0)
   x = np.expandDims(x, 0); // [1, C, T]
-  [x, seanetStates[0]] = runConv1d(model[0].conv, seanetStates[0], x);
+  [x, state.conv1] = runConv1d(model[0].conv, state.conv1, x);
 
   // Decoder blocks
   let idx = 1;
   for (let i = 0; i < 3; i++) {
+    const blockState = state.blocks[i];
     // ELU
     x = nn.elu(x);
     idx++;
     // Transposed Conv (upsampling)
     const stride = ratios[i];
-    [x, seanetStates[3 * i + 1]] = runConvTranspose1d(
+    [x, blockState.convtr] = runConvTranspose1d(
       (model[idx] as StreamingConvTranspose1d).convtr,
-      seanetStates[3 * i + 1],
+      blockState.convtr,
       x,
       stride,
     );
     idx++;
     // ResBlock
-    [x, [seanetStates[3 * i + 2], seanetStates[3 * i + 3]]] =
-      runSEANetResnetBlock(
-        model[idx] as SEANetResnetBlock,
-        [seanetStates[3 * i + 2], seanetStates[3 * i + 3]],
-        x,
-      );
+    [x, blockState.res] = runSEANetResnetBlock(
+      model[idx] as SEANetResnetBlock,
+      blockState.res,
+      x,
+    );
     idx++;
   }
 
   // Final ELU + Conv
   x = nn.elu(x);
-  [x, seanetStates[10]] = runConv1d(model[11].conv, seanetStates[10], x);
+  [x, state.conv2] = runConv1d(model[11].conv, state.conv2, x);
 
-  return [x.slice(0), seanetStates];
-}
+  return [x.slice(0), state];
+});
 
 export type MimiModel = {
   encoder: SEANetEncoder;
@@ -570,33 +596,30 @@ export function runMimiEncode(
 
 export type MimiDecodeState = {
   kvCaches: KVCache[];
-  kvCacheLen: np.Array; // Scalar
+  kvCacheLen: number;
   initialConvState: np.Array;
-  seanetStates: np.Array[];
+  seanetStates: SEANetDecoderState;
+};
+
+export type SEANetDecoderState = {
+  conv1: np.Array;
+  blocks: {
+    convtr: np.Array;
+    res: np.Array[];
+  }[];
+  conv2: np.Array;
 };
 
 export function createMimiDecodeState(mimi: MimiModel): MimiDecodeState {
   return {
     kvCaches: mimi.decoderTransformer.map(() => emptyKVCache()),
-    kvCacheLen: np.array(0, { dtype: np.int32 }),
+    kvCacheLen: 0,
     initialConvState: createConvTranspose1dState(mimi.upsample.convtr, 16, 512),
-    seanetStates: [
-      createConv1dState(mimi.decoder.model[0].conv),
-      createConvTranspose1dState(mimi.decoder.model[2].convtr, 6),
-      createConv1dState(mimi.decoder.model[3].block[1].conv),
-      createConv1dState(mimi.decoder.model[3].block[3].conv),
-      createConvTranspose1dState(mimi.decoder.model[5].convtr, 5),
-      createConv1dState(mimi.decoder.model[6].block[1].conv),
-      createConv1dState(mimi.decoder.model[6].block[3].conv),
-      createConvTranspose1dState(mimi.decoder.model[8].convtr, 4),
-      createConv1dState(mimi.decoder.model[9].block[1].conv),
-      createConv1dState(mimi.decoder.model[9].block[3].conv),
-      createConv1dState(mimi.decoder.model[11].conv),
-    ],
+    seanetStates: createSEANetDecoderState(mimi.decoder),
   };
 }
 
-export const runMimiDecode = jit(function runMimiDecode(
+export function runMimiDecode(
   {
     encoder,
     encoderTransformer,
@@ -608,7 +631,7 @@ export const runMimiDecode = jit(function runMimiDecode(
   }: MimiModel,
   { kvCaches, kvCacheLen, initialConvState, seanetStates }: MimiDecodeState,
   latent: np.Array, // [T, 32] - bottleneck representation
-  offset: np.Array, // scalar, position offset
+  offset: number, // scalar, position offset
 ): [np.Array, MimiDecodeState] {
   tree.dispose([encoder, encoderTransformer, downsample]);
 
@@ -629,34 +652,51 @@ export const runMimiDecode = jit(function runMimiDecode(
 
   // Decoder transformer
   x = x.transpose([1, 0]); // [C, 16*T] -> [16*T, C]
-  offset = offset.mul(16);
   for (let i = 0; i < decoderTransformer.length; i++) {
     const layer = decoderTransformer[i];
     [x, kvCaches[i]] = runStreamingTransformerLayer(
       layer,
       kvCaches[i],
       x,
-      offset.ref,
-      kvCacheLen.ref,
+      offset * 16,
+      kvCacheLen,
       { context: 250, numHeads: 8 },
     );
   }
-  offset.dispose();
   x = x.transpose([1, 0]); // [C, 16*T]
 
   // Decode through SEANet decoder
   [x, seanetStates] = runSEANetDecoder(decoder, seanetStates, x); // [1, 1920*T]
 
+  // Maintain and update KV caches as needed.
+  kvCacheLen += 16;
+  if (kvCaches[0].key.shape[0] !== 272) {
+    // Pad it to a constant [272] in length, more than 250 context + 16 for next pass.
+    const padAmount = 272 - kvCaches[0].key.shape[0];
+    for (const c of kvCaches) {
+      c.key = np.pad(c.key, { 0: [0, padAmount] });
+      c.value = np.pad(c.value, { 0: [0, padAmount] });
+    }
+  }
+  if (kvCacheLen === 272) {
+    // Cycle room for one more kv cache entry.
+    kvCacheLen -= 16;
+    for (const c of kvCaches) {
+      c.key = np.pad(c.key.slice([16]), { 0: [0, 16] });
+      c.value = np.pad(c.value.slice([16]), { 0: [0, 16] });
+    }
+  }
+
   return [
     x,
     {
       kvCaches,
-      kvCacheLen: kvCacheLen.add(16),
+      kvCacheLen: kvCacheLen,
       initialConvState,
       seanetStates,
     },
   ];
-});
+}
 
 export function lsdDecode(
   flowNet: (s: np.Array, t: np.Array, x: np.Array) => np.Array,
