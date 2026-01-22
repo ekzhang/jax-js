@@ -276,22 +276,6 @@ export function max(
 }
 
 /**
- * Test whether all array elements along a given axis evaluate to True.
- *
- * Returns a boolean array with the same shape as `a` with the specified axis
- * removed. If axis is None, returns a scalar.
- */
-export function all(
-  a: ArrayLike,
-  axis: core.Axis = null,
-  opts?: core.ReduceOpts,
-): Array {
-  // Convert to boolean and use min reduction (all true = min is 1)
-  a = fudgeArray(a).astype(DType.Bool);
-  return min(a, axis, opts);
-}
-
-/**
  * Test whether any array element along a given axis evaluates to True.
  *
  * Returns a boolean array with the same shape as `a` with the specified axis
@@ -302,9 +286,21 @@ export function any(
   axis: core.Axis = null,
   opts?: core.ReduceOpts,
 ): Array {
-  // Convert to boolean and use max reduction (any true = max is 1)
-  a = fudgeArray(a).astype(DType.Bool);
-  return max(a, axis, opts);
+  return fudgeArray(a).any(axis, opts);
+}
+
+/**
+ * Test whether all array elements along a given axis evaluate to True.
+ *
+ * Returns a boolean array with the same shape as `a` with the specified axis
+ * removed. If axis is None, returns a scalar.
+ */
+export function all(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: core.ReduceOpts,
+): Array {
+  return fudgeArray(a).all(axis, opts);
 }
 
 /** Return the peak-to-peak range along a given axis (`max - min`). */
@@ -444,7 +440,7 @@ export function split(
     const partSize = size / indicesOrSections;
     sizes = rep(indicesOrSections, partSize);
   } else {
-    const indices = indicesOrSections;
+    const indices = indicesOrSections.map((i) => (i < 0 ? i + size : i));
     sizes = [indices[0]];
     for (let i = 1; i < indices.length; i++)
       sizes.push(indices[i] - indices[i - 1]);

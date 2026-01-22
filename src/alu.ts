@@ -901,7 +901,7 @@ export class AluExp implements FpHashable {
       }
 
       // simplify_remainder: https://github.com/tinygrad/tinygrad/blob/d1224a7/tinygrad/uop/symbolic.py#L208
-      if (y.arg > 0) {
+      if (y.arg > 0 && x.min >= 0) {
         let [xNoConst, constVal] = [x, 0];
         if (x.op === AluOp.Add && x.src[1].op === AluOp.Const) {
           [xNoConst, constVal] = [x.src[0], x.src[1].arg];
@@ -912,8 +912,8 @@ export class AluExp implements FpHashable {
         for (const u of xNoConst.splitOp(AluOp.Add)) {
           const f = u.constFactor();
           const divided = u.divides(f);
-          terms.push(divided ?? u);
-          factors.push(divided ? f : 1);
+          terms.push(divided ?? u); // positive or negative
+          factors.push(divided ? f : 1); // positive
         }
 
         const quotients = factors.map((f) => Math.floor(f / y.arg));
@@ -957,9 +957,10 @@ export class AluExp implements FpHashable {
             }
           }
 
-          if (
-            !((x.min < 0 || rem.min < 0) && remainders.some((r) => r !== 0))
-          ) {
+          // TODO: This is a pretty sad optimization barrier for padded
+          // operations and convolutions, as a result of the behavior of Mod
+          // handling negative numbers strangely. We should try to fix.
+          if (rem.min >= 0) {
             if (op === AluOp.Mod) {
               return AluExp.add(
                 AluExp.mul(

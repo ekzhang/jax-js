@@ -308,7 +308,7 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
 
   emit(headerWgsl);
 
-  // Global functions at the start of the shader..
+  // Global functions at the start of the shader.
   const distinctOps = mapSetUnion(
     tune.exp.distinctOps(),
     tune.epilogue?.distinctOps(),

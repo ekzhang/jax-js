@@ -807,6 +807,26 @@ export abstract class Tracer {
     return result.mul(1 / n).astype(originalDtype) as this;
   }
 
+  /** Minimum of the elements of the array along a given axis. */
+  min(axis: Axis = null, opts?: ReduceOpts) {
+    return reduce(this, AluOp.Min, axis, opts) as this;
+  }
+
+  /** Maximum of the elements of the array along a given axis. */
+  max(axis: Axis = null, opts?: ReduceOpts) {
+    return reduce(this, AluOp.Max, axis, opts) as this;
+  }
+
+  /** Test whether all array elements along a given axis evaluate to true. */
+  all(axis: Axis = null, opts?: ReduceOpts) {
+    return this.astype(DType.Bool).min(axis, opts);
+  }
+
+  /** Test whether any array element along a given axis evaluates to true. */
+  any(axis: Axis = null, opts?: ReduceOpts) {
+    return this.astype(DType.Bool).max(axis, opts);
+  }
+
   /** Permute the dimensions of an array. Defaults to reversing the axis order. */
   transpose(perm?: number[]): this {
     return transpose(this, perm) as this;

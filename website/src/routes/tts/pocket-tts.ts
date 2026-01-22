@@ -249,14 +249,21 @@ export function runMimiStreamingMultiheadAttention(
     });
     kvCache = { key: k, value: v };
   } else {
-    // Decode step: Only decode of length 1 is currently supported.
-    if (T !== 1) throw new Error("Streaming decode only supports T=1");
+    // Decode step
     // Update kvCache with new k,v
     const capacity = kvCache.key.shape[0];
-    const cacheMask = np.arange(capacity).reshape([-1, 1, 1]).equal(kvCacheLen);
+    const cacheMask = np
+      .arange(capacity)
+      .reshape([-1, 1, 1])
+      .equal(kvCacheLen.ref);
     kvCache.key = np.where(cacheMask.ref, k, kvCache.key);
     kvCache.value = np.where(cacheMask, v, kvCache.value);
-    x = nn.dotProductAttention(q, kvCache.key.ref, kvCache.value.ref);
+    // Casual attention mask offset by kvCacheLen
+    const mask = np
+      .arange(capacity)
+      .sub(np.arange(T).reshape([T, 1]))
+      .lessEqual(kvCacheLen); // [T, capacity]
+    x = nn.dotProductAttention(q, kvCache.key.ref, kvCache.value.ref, { mask });
   }
   x = x.reshape([T, embedDim]);
   x = runLinear(outProj, x);
@@ -345,7 +352,7 @@ export function runSEANetResnetBlock(
       v = nn.elu(v);
     } else {
       // StreamingConv1d
-      v = runConv1d(layer.conv, v);
+      [v] = runConv1d(layer.conv, null, v);
     }
   }
   // Residual connection
@@ -387,26 +394,26 @@ export function runSEANetEncoder(
 
   // Initial conv (index 0)
   x = np.expandDims(x, 0); // [1, C, T]
-  x = runConv1d(model[0].conv, x);
+  [x] = runConv1d(model[0].conv, null, x);
 
   // Encoder blocks (ratio=4, ratio=5, ratio=6)
-  let modelIdx = 1;
+  let idx = 1;
   for (let i = 0; i < 3; i++) {
     // ResBlock
-    x = runSEANetResnetBlock(model[modelIdx] as SEANetResnetBlock, x);
-    modelIdx++;
+    x = runSEANetResnetBlock(model[idx] as SEANetResnetBlock, x);
+    idx++;
     // ELU
     x = nn.elu(x);
-    modelIdx++;
+    idx++;
     // Strided Conv (downsampling)
     const stride = ratios[i];
-    x = runConv1d((model[modelIdx] as StreamingConv1d).conv, x, stride);
-    modelIdx++;
+    [x] = runConv1d((model[idx] as StreamingConv1d).conv, null, x, stride);
+    idx++;
   }
 
   // Final ELU + Conv
   x = nn.elu(x);
-  x = runConv1d((model[11] as StreamingConv1d).conv, x);
+  [x] = runConv1d((model[11] as StreamingConv1d).conv, null, x);
 
   return x.slice(0);
 }
@@ -436,6 +443,40 @@ export type SEANetDecoder = {
   ];
 };
 
+export type SEANetDecoderState = {
+  convState1: np.Array;
+  resBlockStates: np.Array[];
+  convState2: np.Array;
+};
+
+export function createSEANetDecoderState(
+  decoder: SEANetDecoder, // ref
+): SEANetDecoderState {
+  // Pad to the left with shape kernelShape - stride for conv1d.
+  const convState1 = np.zeros([decoder.model[0].conv.weight.shape[2] - 1], {
+    dtype: np.float16,
+  });
+  const resBlockStates: np.Array[] = [
+    np.zeros([decoder.model[2].convtr.weight.shape[2] - 1], {
+      dtype: np.float16,
+    }),
+    np.zeros([decoder.model[5].convtr.weight.shape[2] - 1], {
+      dtype: np.float16,
+    }),
+    np.zeros([decoder.model[8].convtr.weight.shape[2] - 1], {
+      dtype: np.float16,
+    }),
+  ];
+  const convState2 = np.zeros([decoder.model[11].conv.weight.shape[2] - 1], {
+    dtype: np.float16,
+  });
+  return {
+    convState1,
+    resBlockStates,
+    convState2,
+  };
+}
+
 export function runSEANetDecoder(
   { model }: SEANetDecoder,
   x: np.Array, // [C, T] - encoded representation
@@ -446,7 +487,7 @@ export function runSEANetDecoder(
 
   // Initial conv (index 0)
   x = np.expandDims(x, 0); // [1, C, T]
-  x = runConv1d(model[0].conv, x);
+  [x] = runConv1d(model[0].conv, null, x);
 
   // Decoder blocks
   let idx = 1;
@@ -456,8 +497,9 @@ export function runSEANetDecoder(
     idx++;
     // Transposed Conv (upsampling)
     const stride = ratios[i];
-    x = runConvTranspose1d(
+    [x] = runConvTranspose1d(
       (model[idx] as StreamingConvTranspose1d).convtr,
+      null,
       x,
       stride,
     );
@@ -469,7 +511,7 @@ export function runSEANetDecoder(
 
   // Final ELU + Conv
   x = nn.elu(x);
-  x = runConv1d((model[11] as StreamingConv1d).conv, x);
+  [x] = runConv1d(model[11].conv, null, x);
 
   return x.slice(0);
 }
@@ -520,7 +562,7 @@ export function runMimiEncode(
   x = x.transpose([1, 0]); // back to [C, T]
 
   // Downsample (stride 16)
-  x = runConv1d(downsample.conv, x, 16);
+  [x] = runConv1d(downsample.conv, null, x, 16);
   return x;
 }
 
@@ -544,12 +586,18 @@ export const runMimiDecode = jit(function runMimiDecode(
   latent = lax.conv(latent, quantizer.outputProj.weight, [1], "VALID"); // [1, 512, T]
 
   // Upsample (stride 16), depthwise
-  let emb = runConvTranspose1d(upsample.convtr, latent, 16, latent.shape[1]); // [1, 512, 16*T]
+  let [emb] = runConvTranspose1d(
+    upsample.convtr,
+    null,
+    latent,
+    16,
+    latent.shape[1],
+  ); // [1, 512, 16*T]
   emb = emb.slice(0);
 
   // Decoder transformer
   emb = emb.transpose([1, 0]); // [C, 16*T] -> [16*T, C]
-  offset = offset.mul(16);
+  offset = np.array(offset).mul(16);
   for (const layer of decoderTransformer) {
     let kvCache = emptyKVCache();
     [emb, kvCache] = runStreamingTransformerLayer(
@@ -710,21 +758,32 @@ export type Conv1d = {
   bias?: np.Array; // [C_out]
 };
 
-export function runConv1d(
-  { weight, bias }: Conv1d,
-  x: np.Array,
+export function createConv1dState(
+  { weight }: Conv1d,
   stride: number = 1,
 ): np.Array {
-  // x: [C_in, T_in]
-  const y = lax.conv(
-    x,
-    weight,
-    [stride],
-    // All the padding is at the front. We have streaming convolution later.
-    [[weight.shape[2] - stride, 0]],
+  return np.zeros(
+    [
+      1, // batch size
+      weight.shape[1], // in channels
+      weight.shape[2] - stride, // kernel size - stride
+    ],
+    { dtype: np.float16 },
   );
-  if (bias) return y.add(np.expandDims(bias, -1));
-  return y;
+}
+
+export function runConv1d(
+  { weight, bias }: Conv1d,
+  state: np.Array | null,
+  x: np.Array,
+  stride: number = 1,
+): [np.Array, np.Array] {
+  // x: [1, C_in, T_in]
+  state ??= createConv1dState({ weight }, stride);
+  x = np.concatenate([state, x], 2); // pad with state
+  let y = lax.conv(x, weight, [stride], "VALID");
+  if (bias) y = y.add(np.expandDims(bias, -1));
+  return [y, state];
 }
 
 export type ConvTranspose1d = {
@@ -732,12 +791,28 @@ export type ConvTranspose1d = {
   bias?: np.Array; // [C_out]
 };
 
+export function createConvTranspose1dState(
+  { weight }: ConvTranspose1d,
+  stride: number = 1,
+): np.Array {
+  return np.zeros(
+    [
+      1, // batch size
+      weight.shape[1], // out channels
+      weight.shape[2] - stride, // kernel size - stride
+    ],
+    { dtype: np.float16 },
+  );
+}
+
 export function runConvTranspose1d(
   { weight, bias }: ConvTranspose1d,
+  state: np.Array | null,
   x: np.Array,
   stride: number = 1,
   groups: number = 1,
-): np.Array {
+): [np.Array, np.Array] {
+  state ??= createConvTranspose1dState({ weight }, stride);
   // Depthwise needs to flip spatial dims and flip C_in,C_out -> C_out,C_in.
   const [cIn, cOut, kernelSize] = weight.shape;
   weight = np.flip(weight, -1);
@@ -750,20 +825,22 @@ export function runConvTranspose1d(
     weight = weight.transpose([1, 0, 2]);
   }
 
-  const y = lax.convGeneralDilated(
-    x, // x: [C_in, T_in]
+  let y = lax.convGeneralDilated(
+    x, // x: [1, C_in, T_in]
     weight,
     [1],
-    // To match padding, we need to pad left with (kernel_size-1) and pad right
-    // with (stride-1). This is different from JAX's `lax.convTranspose()`!
-    [[kernelSize - 1, stride - 1]],
+    // To match padding, we need to pad left and right with (kernel_size-1).
+    // This is different from JAX's `lax.convTranspose()`!
+    [[kernelSize - 1, kernelSize - 1]],
     {
       lhsDilation: [stride],
       featureGroupCount: groups,
     },
   );
-  if (bias) return y.add(np.expandDims(bias, -1));
-  return y;
+  y = y.add(np.pad(state, { 2: [0, y.shape[2] - state.shape[2]] }));
+  [y, state] = np.split(y, [-state.shape[2]], 2);
+  if (bias) y = y.add(np.expandDims(bias, -1));
+  return [y, state];
 }
 
 export type StreamingConv1d = {
