@@ -38,6 +38,13 @@ export type FlowLMState = {
   kvCacheLen: number; // position offset
 };
 
+export function createFlowLMState(model: FlowLMModel): FlowLMState {
+  return {
+    kvCaches: model.transformer.map(() => emptyKVCache()),
+    kvCacheLen: 0,
+  };
+}
+
 export function runFlowLMStep(
   {
     bosEmb,
@@ -59,18 +66,15 @@ export function runFlowLMStep(
   temp: number = 0.7,
   noiseClamp: number | null = null,
   eosThreshold: number = -4.0,
-): { latent: np.Array; isEos: np.Array; kvCaches: KVCache[] } {
+): { latent: np.Array; isEos: np.Array; state: FlowLMState } {
   // unused fields
+  bosEmb.dispose();
   conditionerEmbed.dispose();
   embMean.dispose();
   embStd.dispose();
   speakerProjWeight.dispose();
 
   const ldim = bosEmb.shape[0];
-
-  // Replace NaN values with BOS embedding
-  const isNan = np.isnan(sequence.ref);
-  sequence = np.where(isNan, bosEmb, sequence);
 
   // Project input from 32 -> 1024
   let input = runLinear(inputLinear, sequence);
@@ -99,6 +103,7 @@ export function runFlowLMStep(
       { numHeads: 16 },
     );
   }
+  kvCacheLen += input.shape[0];
 
   let transformerOut = runLayerNorm(outNorm, input);
 
@@ -125,7 +130,7 @@ export function runFlowLMStep(
     runSimpleMLPAdaLN(flowNet, transformerOut, s, t, x);
   const latent = lsdDecode(conditionedFlow, noise, lsdDecodeSteps);
 
-  return { latent, isEos, kvCaches };
+  return { latent, isEos, state: { kvCaches, kvCacheLen } };
 }
 
 export type SimpleMLPAdaLN = {

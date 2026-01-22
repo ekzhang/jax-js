@@ -1,24 +1,12 @@
 <script lang="ts">
-  /* eslint-disable @typescript-eslint/no-unused-vars */
-  import { defaultDevice, init, jit, numpy as np, tree } from "@jax-js/jax";
+  import { defaultDevice, init, numpy as np, tree } from "@jax-js/jax";
   import { cachedFetch, safetensors, tokenizers } from "@jax-js/loaders";
-  import { AudioLinesIcon } from "@lucide/svelte";
+  import { AudioLinesIcon, DownloadIcon } from "@lucide/svelte";
 
   import DownloadManager from "$lib/common/DownloadManager.svelte";
   import { createStreamingPlayer } from "./audio";
-  import {
-    createMimiDecodeState,
-    emptyKVCache,
-    fromSafetensors,
-    type PocketTTS,
-    runFlowLMStep,
-    runMimiDecode,
-  } from "./pocket-tts";
-
-  // Model configuration
-  const latentDim = 32;
-  const flowDim = 512;
-  const modelDim = 1024;
+  import { playTTS } from "./inference";
+  import { fromSafetensors, type PocketTTS } from "./pocket-tts";
 
   // Cached large objects to download.
   let _weights: safetensors.File | null = null;
@@ -27,12 +15,15 @@
 
   let downloadManager: DownloadManager;
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   let isDownloadingWeights = $state(false);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   let hasModel = $state(false);
 
   let prompt = $state("The sun is shining, and the birds are singing.");
   let selectedVoice = $state("azelma");
   let playing = $state(false);
+  let audioBlob = $state<Blob | null>(null);
 
   async function downloadClipWeights(): Promise<safetensors.File> {
     if (_weights) return _weights;
@@ -112,8 +103,6 @@
     return [text, framesAfterEosGuess];
   }
 
-  let audioPromise: Promise<void> | null = null;
-
   async function run() {
     const devices = await init();
     if (devices.includes("webgpu")) {
@@ -129,7 +118,7 @@
 
     const [text, framesAfterEos] = prepareTextPrompt(prompt);
     const tokens = tokenizer.encode(text);
-    console.log("Tokenizer:", tokens);
+    console.log("Tokens:", tokens);
 
     const audioPrompt = safetensors.parse(
       await cachedFetch(predefinedVoices[selectedVoice]),
@@ -144,88 +133,13 @@
 
     const tokensAr = np.array(tokens, { dtype: np.uint32 });
     let embeds = model.flowLM.conditionerEmbed.ref.slice(tokensAr); // [seq_len, 1024]
-    embeds = np.concatenate([voiceEmbed, embeds], 0);
+    embeds = np.concatenate([voiceEmbed, embeds]);
 
-    let sequence = np.full([1, latentDim], np.nan, { dtype: np.float16 });
-    let startPlaying: any;
-    audioPromise = new Promise((resolve) => (startPlaying = resolve));
     const player = createStreamingPlayer();
-
     try {
-      let eosStep: number | null = null;
-      let prefillLength = embeds.shape[0] + sequence.shape[0];
-
-      let kvCachesFlowLM = model.flowLM.transformer.map(() => emptyKVCache());
-      let kvCacheLenFlowLM = 0; // equals offset
-
-      let mimiState = createMimiDecodeState(model.mimi);
-
-      for (let step = 0; step < 1000; step++) {
-        if (step >= 3) startPlaying?.();
-
-        const {
-          latent,
-          isEos,
-          kvCaches: newKVCaches,
-        } = runFlowLMStep(
-          tree.ref(model.flowLM),
-          { kvCaches: kvCachesFlowLM, kvCacheLen: kvCacheLenFlowLM },
-          step === 0 ? sequence.ref : sequence.ref.slice([-1]),
-          step === 0 ? embeds.ref : null,
-          kvCacheLenFlowLM,
-        );
-        kvCachesFlowLM = newKVCaches;
-        kvCacheLenFlowLM += step === 0 ? prefillLength : 1;
-
-        const isEosData = await isEos.data();
-        if (isEosData[0] && eosStep === null) {
-          console.log(`🛑 EOS at step ${step}!`);
-          eosStep = step;
-        }
-        if (eosStep !== null && step >= eosStep + framesAfterEos) {
-          console.log(
-            `Generation ended at step ${step}, ${framesAfterEos} frames after EOS.`,
-          );
-          latent.dispose();
-          break;
-        }
-
-        sequence = np.concatenate([sequence, latent]);
-        console.log("Sequence shape:", sequence.shape);
-
-        let mimiInput = sequence.ref.slice([-1]);
-        mimiInput = mimiInput
-          .mul(model.flowLM.embStd.ref)
-          .add(model.flowLM.embMean.ref);
-
-        const [audio, newMimiState] = runMimiDecode(
-          tree.ref(model.mimi),
-          mimiState,
-          mimiInput,
-          step,
-        );
-        mimiState = newMimiState;
-
-        const lastAudioPromise = audioPromise;
-        audioPromise = (async () => {
-          const audioPcm = (await np
-            .clip(audio.slice(0), -1, 1)
-            .astype(np.float32)
-            .data()) as Float32Array;
-          if (audioPcm.length !== 1920) {
-            throw new Error(
-              `expected 1920 audio samples, got ${audioPcm.length}`,
-            );
-          }
-          await lastAudioPromise;
-          player.playChunk(audioPcm);
-        })();
-      }
+      await playTTS(player, tree.ref(model), embeds, framesAfterEos);
+      audioBlob = player.toWav();
     } finally {
-      startPlaying?.(); // If not called yet
-      sequence.dispose();
-      embeds.dispose();
-      await audioPromise;
       await player.close();
     }
   }
@@ -248,6 +162,7 @@
     class="mt-6"
     onsubmit={async (event) => {
       event.preventDefault();
+      audioBlob = null;
       playing = true;
       try {
         await run();
@@ -282,6 +197,16 @@
           Play
         {/if}
       </button>
+
+      {#if audioBlob}
+        <a
+          class="btn"
+          href={URL.createObjectURL(audioBlob)}
+          download="tts_output.wav"
+        >
+          <DownloadIcon size={20} />
+        </a>
+      {/if}
     </div>
   </form>
 </main>
@@ -291,6 +216,7 @@
 
   .btn {
     @apply flex items-center justify-center gap-2 px-3 rounded py-1 border-2 border-black;
-    @apply enabled:hover:bg-black enabled:hover:text-white disabled:opacity-50 disabled:cursor-wait transition-colors;
+    @apply disabled:opacity-50 disabled:cursor-wait transition-colors;
+    @apply not-disabled:hover:bg-black not-disabled:hover:text-white;
   }
 </style>
