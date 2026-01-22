@@ -59,11 +59,12 @@ export function runFlowLMStep(
     transformer,
   }: FlowLMModel,
   { kvCaches, kvCacheLen }: FlowLMState,
+  key: np.Array, // random key
   sequence: np.Array, // [S, ldim] - latent sequence, NaN for BOS
   embeds: np.Array | null, // [T, dim] - conditioning, text and voice
   offset: number, // position offset
   lsdDecodeSteps: number = 1,
-  temp: number = 0.7,
+  temperature: number = 0.7,
   noiseClamp: number | null = null,
   eosThreshold: number = -4.0,
 ): { latent: np.Array; isEos: np.Array; state: FlowLMState } {
@@ -115,11 +116,8 @@ export function runFlowLMStep(
   const isEos = np.greater(eosLogit, eosThreshold); // [1, 1]
 
   const noiseShape = [1, ldim]; // [T, ldim] with T=1
-  const std = Math.sqrt(temp);
-  let noise = random
-    .normal(random.key(Math.floor(Math.random() * 2 ** 32)), noiseShape)
-    .mul(std); // TODO: Less janky random key
-  // let noise = np.zeros(noiseShape, { dtype: transformerOut.dtype });
+  const std = Math.sqrt(temperature);
+  let noise = random.normal(key, noiseShape).mul(std);
   if (noiseClamp !== null) {
     // Truncated normal - clamp to [-noiseClamp, noiseClamp]
     noise = np.clip(noise, -noiseClamp, noiseClamp);

@@ -1,4 +1,4 @@
-import { numpy as np, tree } from "@jax-js/jax";
+import { numpy as np, random, tree } from "@jax-js/jax";
 
 import type { AudioPlayer } from "./audio";
 import {
@@ -9,14 +9,31 @@ import {
   runMimiDecode,
 } from "./pocket-tts";
 
+export interface PlayTTSOptions {
+  framesAfterEos: number;
+  seed: number | null;
+  lsdDecodeSteps: number;
+  temperature: number;
+  noiseClamp: number | null;
+}
+
 export async function playTTS(
   player: AudioPlayer,
   model: PocketTTS,
   embeds: np.Array,
-  framesAfterEos: number,
+  {
+    framesAfterEos = 0,
+    seed = null,
+    lsdDecodeSteps = 1,
+    temperature = 0.7,
+    noiseClamp = null,
+  }: Partial<PlayTTSOptions> = {},
 ): Promise<void> {
   let sequence = model.flowLM.bosEmb.ref.reshape([1, -1]); // [1, 32]
   let audioPromise: Promise<void> = Promise.resolve();
+
+  if (seed === null) seed = Math.floor(Math.random() * 2 ** 32);
+  let key = random.key(seed);
 
   try {
     let flowLMState = createFlowLMState(model.flowLM);
@@ -27,6 +44,8 @@ export async function playTTS(
     let lastTimestamp = performance.now();
 
     for (let step = 0; step < 1000; step++) {
+      let stepKey: np.Array;
+      [key, stepKey] = random.split(key);
       const {
         latent,
         isEos,
@@ -34,9 +53,13 @@ export async function playTTS(
       } = runFlowLMStep(
         tree.ref(model.flowLM),
         flowLMState,
+        stepKey,
         step === 0 ? sequence.ref : sequence.ref.slice([-1]),
         step === 0 ? embeds.ref : null,
         flowLMState.kvCacheLen, // same as offset
+        lsdDecodeSteps,
+        temperature,
+        noiseClamp,
       );
       flowLMState = newFlowLMState;
 

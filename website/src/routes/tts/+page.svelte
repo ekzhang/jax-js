@@ -137,7 +137,7 @@
 
     const player = createStreamingPlayer();
     try {
-      await playTTS(player, tree.ref(model), embeds, framesAfterEos);
+      await playTTS(player, tree.ref(model), embeds, { framesAfterEos });
       audioBlob = player.toWav();
     } finally {
       await player.close();
