@@ -332,7 +332,7 @@ Most operations behave the same way as they do in JAX.
 | `modf`                | 🟠      |                                         |
 | `moveaxis`            | 🟢      |                                         |
 | `multiply`            | 🟢      |                                         |
-| `nan_to_num`          | 🟠      |                                         |
+| `nan_to_num`          | 🟢      |                                         |
 | `nanargmax`           | 🟠      |                                         |
 | `nanargmin`           | 🟠      |                                         |
 | `nancumprod`          | 🟠      |                                         |

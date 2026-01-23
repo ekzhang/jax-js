@@ -36,6 +36,8 @@ import {
   rep,
 } from "../utils";
 import * as lax from "./lax";
+import { iinfo } from "./numpy";
+import { finfo } from "./numpy";
 import {
   computeEinsumPath,
   EinsumInput,
@@ -1799,6 +1801,33 @@ export function isneginf(x: ArrayLike): Array {
 export function isposinf(x: ArrayLike): Array {
   x = fudgeArray(x);
   return isFloatDtype(x.dtype) ? x.equal(Infinity) : fullLike(x, false);
+}
+
+/**
+ * Replace NaN and infinite entries in an array.
+ *
+ * By default, NaNs are replaced with `0.0`, and infinities are are substituted
+ * with the corresponding maximum or minimum finite values.
+ */
+export function nanToNum(
+  x: ArrayLike,
+  {
+    nan = 0.0,
+    posinf = null,
+    neginf = null,
+  }: {
+    nan?: ArrayLike;
+    posinf?: ArrayLike | null;
+    neginf?: ArrayLike | null;
+  } = {},
+): Array {
+  x = fudgeArray(x);
+  x = where(isnan(x.ref), nan, x);
+  posinf ??= isFloatDtype(x.dtype) ? finfo(x.dtype).max : iinfo(x.dtype).max;
+  neginf ??= isFloatDtype(x.dtype) ? finfo(x.dtype).min : iinfo(x.dtype).min;
+  x = where(isposinf(x.ref), posinf, x);
+  x = where(isneginf(x.ref), neginf, x);
+  return x;
 }
 
 /**

@@ -1912,6 +1912,44 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.nanToNum()", () => {
+    test("replaces NaN with 0 by default", () => {
+      const x = np.array([1, NaN, 3]);
+      const y = np.nanToNum(x);
+      expect(y.js()).toEqual([1, 0, 3]);
+    });
+
+    test("replaces NaN with custom value", () => {
+      const x = np.array([NaN, 2, NaN]);
+      const y = np.nanToNum(x, { nan: 99 });
+      expect(y.js()).toEqual([99, 2, 99]);
+    });
+
+    test("replaces positive infinity when specified", () => {
+      const x = np.array([1, Infinity, 3]);
+      const y = np.nanToNum(x, { posinf: 999 });
+      expect(y.js()).toEqual([1, 999, 3]);
+    });
+
+    test("replaces negative infinity when specified", () => {
+      const x = np.array([1, -Infinity, 3]);
+      const y = np.nanToNum(x, { neginf: -999 });
+      expect(y.js()).toEqual([1, -999, 3]);
+    });
+
+    test("sets infinity to limit values when not specified", () => {
+      const x = np.array([Infinity, -Infinity]);
+      const y = np.nanToNum(x);
+      expect(y).toBeAllclose([3.40282347e38, -3.40282347e38]);
+    });
+
+    test("handles all special values together", () => {
+      const x = np.array([NaN, Infinity, -Infinity, 42]);
+      const y = np.nanToNum(x, { nan: 0, posinf: 100, neginf: -100 });
+      expect(y.js()).toEqual([0, 100, -100, 42]);
+    });
+  });
+
   suite("jax.numpy.convolve()", () => {
     test("computes 1D convolution", () => {
       const x = np.array([1, 2, 3, 2, 1]);
