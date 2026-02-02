@@ -6,6 +6,7 @@ import {
   init,
   jit,
   jvp,
+  lax,
   nn,
   numpy as np,
 } from "@jax-js/jax";
@@ -73,5 +74,70 @@ suite.each(devices)("device:%s", (device) => {
     await a.blockUntilReady();
     const b: number = await a.ref.slice(1).sub(a.slice(0)).jsAsync();
     expect(b).toBeCloseTo(1e-15, 15);
+  });
+
+  test("cholesky works for f64", () => {
+    // Positive definite matrix
+    const A = np.array(
+      [
+        [4, 2],
+        [2, 5],
+      ],
+      { dtype: np.float64 },
+    );
+    const L = lax.linalg.cholesky(A.ref);
+    expect(L.dtype).toBe(np.float64);
+
+    // Verify L @ L.T ≈ A
+    const reconstructed = np.matmul(L.ref, np.transpose(L));
+    expect(reconstructed).toBeAllclose(A, { rtol: 1e-10, atol: 1e-12 });
+  });
+
+  test("lu works for f64", () => {
+    const A = np.array(
+      [
+        [4, 3],
+        [6, 3],
+      ],
+      { dtype: np.float64 },
+    );
+
+    const [lu, pivots, permutation] = lax.linalg.lu(A);
+    expect(lu.dtype).toBe(np.float64);
+    expect(pivots.dtype).toBe(np.int32);
+    expect(permutation.dtype).toBe(np.int32);
+
+    // Basic validation: output shapes are correct
+    expect(lu.shape).toEqual([2, 2]);
+    expect(pivots.shape).toEqual([2]);
+    expect(permutation.shape).toEqual([2]);
+
+    // LU values should be finite numbers
+    const luData = lu.dataSync();
+    expect(luData.every((v) => isFinite(v))).toBe(true);
+
+    pivots.dispose();
+    permutation.dispose();
+  });
+
+  test("triangular_solve works for f64", () => {
+    const L = np.array(
+      [
+        [2, 0],
+        [1, 3],
+      ],
+      { dtype: np.float64 },
+    );
+    const b = np.array([[4], [7]], { dtype: np.float64 });
+
+    const x = lax.linalg.triangularSolve(L.ref, b.ref, {
+      leftSide: true,
+      lower: true,
+    });
+    expect(x.dtype).toBe(np.float64);
+
+    // Verify L @ x ≈ b
+    const reconstructed = np.matmul(L, x);
+    expect(reconstructed).toBeAllclose(b, { rtol: 1e-10, atol: 1e-12 });
   });
 });

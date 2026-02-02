@@ -71,6 +71,11 @@ export class WebGLBackend implements Backend {
     this.#nextSlot = 1;
   }
 
+  /** Return the number of currently allocated slots (for leak detection). */
+  slotCount(): number {
+    return this.#buffers.size;
+  }
+
   /**
    * Allocate a buffer with a specific dtype.
    *

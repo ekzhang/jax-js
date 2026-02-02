@@ -9,9 +9,10 @@ import {
   Kernel,
   Reduction,
 } from "../alu";
-import { Backend, Slot } from "../backend";
+import { Backend, Executable, Slot } from "../backend";
+import type { NativeScanGeneralParams } from "../backend/wasm";
 import { PPrint } from "../pprint";
-import { Routine } from "../routine";
+import { Routine, Routines } from "../routine";
 import { Pair, ShapeTracker, unravelAlu } from "../shape";
 import {
   DEBUG,
@@ -21,6 +22,8 @@ import {
   prod,
   range,
   rep,
+  reportScanPath,
+  type ScanPath,
 } from "../utils";
 import { aluCompare, PendingExecute } from "./array";
 import { pool, poolTranspose, prepareConv } from "./convolution";
@@ -54,7 +57,92 @@ export type JitStep =
   | {
       type: "free";
       input: JitId;
+    }
+  | {
+      type: "scan";
+      bodyProgram: JitProgram;
+      bodyJaxpr: Jaxpr;
+      length: number;
+      numCarry: number;
+      numConsts: number;
+      numX: number;
+      numY: number;
+      reverse: boolean;
+      consts: JitId[];
+      initCarry: JitId[];
+      xs: JitId[];
+      xsAvals: ShapedArray[]; // xs avals from the scan's input (for shape tracking)
+      outputs: JitId[]; // [carry_out..., stacked_ys...]
+    }
+  | {
+      type: "native-scan";
+      executable: Executable;
+      length: number;
+      numCarry: number;
+      numConsts: number;
+      numY: number;
+      reverse: boolean;
+      consts: JitId[];
+      initCarry: JitId[];
+      xs: JitId[];
+      outputs: JitId[]; // [carry_out..., stacked_ys...]
+      /** For general native scan: parameters including internal sizes, aux buffer, etc. */
+      generalParams?: NativeScanGeneralParams;
+    }
+  | {
+      type: "batched-scan";
+      /** Batched scan params (stored for dispatch). */
+      batchedParams: any; // BatchedScanParams from webgpu.ts
+      length: number;
+      numCarry: number;
+      numConsts: number;
+      numX: number;
+      numY: number;
+      reverse: boolean;
+      consts: JitId[];
+      initCarry: JitId[];
+      xs: JitId[];
+      outputs: JitId[]; // [carry_out..., stacked_ys...]
     };
+
+/** Callback type for running scan steps during JitProgram execution. */
+export type ScanRunner = (
+  bodyProgram: JitProgram,
+  backend: Backend,
+  jaxpr: Jaxpr,
+  length: number,
+  numCarry: number,
+  numConsts: number,
+  numX: number,
+  numY: number,
+  reverse: boolean,
+  constSlots: Slot[],
+  initCarrySlots: Slot[],
+  xsSlots: Slot[],
+  xsAvals: ShapedArray[],
+  outputSlots: Slot[],
+) => { outputs: Slot[]; pending: PendingExecute[] };
+
+/**
+ * Check if a chosen scan path satisfies the requirePath constraint.
+ * Returns an error message if the path is not allowed, or null if OK.
+ */
+function checkRequiredPath(
+  chosenPath: ScanPath,
+  requirePath: string | string[] | undefined,
+): string | null {
+  if (!requirePath) return null;
+
+  const allowedPaths = Array.isArray(requirePath) ? requirePath : [requirePath];
+
+  if (!allowedPaths.includes(chosenPath)) {
+    return (
+      `Scan requirePath constraint not satisfied: ` +
+      `got "${chosenPath}" but required one of [${allowedPaths.map((p) => `"${p}"`).join(", ")}]`
+    );
+  }
+  return null;
+}
 
 /** Result of compiling a Jaxpr. Can be evaluated on a series of inputs. */
 export class JitProgram {
@@ -91,6 +179,41 @@ export class JitProgram {
           return PPrint.pp(`incref ${step.input}`);
         case "free":
           return PPrint.pp(`free ${step.input}`);
+        case "scan":
+          return PPrint.pp(
+            `scan length=${step.length} numCarry=${step.numCarry} numConsts=${step.numConsts}`,
+          )
+            .concat(
+              PPrint.pp(
+                `  consts=[${step.consts.join(", ")}] initCarry=[${step.initCarry.join(", ")}] xs=[${step.xs.join(", ")}]`,
+              ),
+            )
+            .concat(PPrint.pp(`  outputs=[${step.outputs.join(", ")}]`))
+            .concat(
+              PPrint.pp("  body=").concat(
+                PPrint.pp(step.bodyJaxpr.toString()).indent(4),
+              ),
+            );
+        case "native-scan":
+          return PPrint.pp(
+            `native-scan length=${step.length} numCarry=${step.numCarry}`,
+          )
+            .concat(
+              PPrint.pp(
+                `  initCarry=[${step.initCarry.join(", ")}] xs=[${step.xs.join(", ")}]`,
+              ),
+            )
+            .concat(PPrint.pp(`  outputs=[${step.outputs.join(", ")}]`));
+        case "batched-scan":
+          return PPrint.pp(
+            `batched-scan length=${step.length} numCarry=${step.numCarry} numConsts=${step.numConsts}`,
+          )
+            .concat(
+              PPrint.pp(
+                `  initCarry=[${step.initCarry.join(", ")}] xs=[${step.xs.join(", ")}]`,
+              ),
+            )
+            .concat(PPrint.pp(`  outputs=[${step.outputs.join(", ")}]`));
       }
     });
     const display = PPrint.prototype.concat(
@@ -107,8 +230,13 @@ export class JitProgram {
     return this.pprint().toString();
   }
 
-  /** Execute the JitProgram with the given inputs. */
-  execute(inputs: Slot[]): { outputs: Slot[]; pending: PendingExecute[] } {
+  /** Execute the JitProgram with the given inputs.
+   * @param scanRunner - Optional callback to run scan steps. Required if program contains scan steps.
+   */
+  execute(
+    inputs: Slot[],
+    scanRunner?: ScanRunner,
+  ): { outputs: Slot[]; pending: PendingExecute[] } {
     const scope = new Map<JitId, Slot>();
     if (inputs.length !== this.inputs.length) {
       throw new TypeError(
@@ -149,6 +277,175 @@ export class JitProgram {
           const slot = scope.get(step.input)!;
           this.backend.decRef(slot);
           scope.delete(step.input);
+          break;
+        }
+        case "scan": {
+          if (!scanRunner) {
+            throw new Error("internal: scan step requires scanRunner callback");
+          }
+
+          // IMPORTANT: Submit all pending operations first so input data is computed!
+          // This ensures that any preceding kernels (like Transpose) have written
+          // their output before the scan tries to read from those buffers.
+          for (const p of pending) {
+            p.prepareSync();
+            p.submit();
+          }
+          pending.length = 0; // Clear the pending array
+
+          // Get outer scope slots
+          const constSlots = step.consts.map((id) => scope.get(id)!);
+          const initCarrySlots = step.initCarry.map((id) => scope.get(id)!);
+          const xsSlots = step.xs.map((id) => scope.get(id)!);
+          const outputSlots = step.outputs.map((id) => scope.get(id)!);
+
+          if (DEBUG >= 2) {
+            console.log(`[jit.scan] step.xs=${step.xs}, xsSlots=${xsSlots}`);
+            console.log(
+              `[jit.scan] step.xsAvals=${JSON.stringify(step.xsAvals?.map((a) => ({ shape: a.shape, dtype: a.dtype })))}`,
+            );
+            // Read xs data
+            for (let i = 0; i < xsSlots.length; i++) {
+              const data = this.backend.readSync(xsSlots[i]);
+              console.log(
+                `[jit.scan] xs[${i}] data:`,
+                new Float32Array(data.buffer),
+              );
+            }
+          }
+
+          if (DEBUG >= 2) {
+            console.log(
+              `[jit.scan] Before scanRunner: outputSlots=${outputSlots}, step.outputs=${step.outputs}`,
+            );
+          }
+
+          // Delegate to scanRunner callback - it returns the output slots
+          const result = scanRunner(
+            step.bodyProgram,
+            this.backend,
+            step.bodyJaxpr,
+            step.length,
+            step.numCarry,
+            step.numConsts,
+            step.numX,
+            step.numY,
+            step.reverse,
+            constSlots,
+            initCarrySlots,
+            xsSlots,
+            step.xsAvals,
+            outputSlots,
+          );
+
+          if (DEBUG >= 2) {
+            console.log(
+              `[jit.scan] After scanRunner: result.outputs=${result.outputs}`,
+            );
+          }
+
+          // Put returned outputs into scope
+          for (let i = 0; i < step.outputs.length; i++) {
+            scope.set(step.outputs[i], result.outputs[i]);
+          }
+
+          if (DEBUG >= 2) {
+            console.log(
+              `[jit.scan] After scope.set: scope.get(${step.outputs[0]})=${scope.get(step.outputs[0])}`,
+            );
+          }
+
+          pending.push(...result.pending);
+          break;
+        }
+        case "native-scan": {
+          // Native scan - dispatch directly to backend
+          // IMPORTANT: Submit all pending operations first so input data is computed!
+          for (const p of pending) {
+            p.prepareSync();
+            p.submit();
+          }
+          pending.length = 0; // Clear the pending array
+
+          const constSlots = step.consts.map((id) => scope.get(id)!);
+          const initCarrySlots = step.initCarry.map((id) => scope.get(id)!);
+          const xsSlots = step.xs.map((id) => scope.get(id)!);
+          const outputSlots = step.outputs.map((id) => scope.get(id)!);
+
+          // Split outputs into carryOut and ysStacked
+          const carryOutSlots = outputSlots.slice(0, step.numCarry);
+          const ysStackedSlots = outputSlots.slice(step.numCarry);
+
+          // Check if backend supports native scan dispatch
+          const backend = this.backend as any;
+
+          // Use general dispatch if generalParams is provided (handles both kernels and routines)
+          if (step.generalParams) {
+            if (typeof backend.dispatchNativeScanGeneral === "function") {
+              backend.dispatchNativeScanGeneral(
+                step.executable,
+                step.generalParams,
+                constSlots,
+                initCarrySlots,
+                xsSlots,
+                carryOutSlots,
+                ysStackedSlots,
+              );
+            } else {
+              throw new Error(
+                "internal: general native-scan requires backend.dispatchNativeScanGeneral",
+              );
+            }
+          } else if (typeof backend.dispatchNativeScan === "function") {
+            backend.dispatchNativeScan(
+              step.executable,
+              constSlots,
+              initCarrySlots,
+              xsSlots,
+              carryOutSlots,
+              ysStackedSlots,
+            );
+          } else {
+            throw new Error(
+              "internal: native-scan requires backend.dispatchNativeScan",
+            );
+          }
+          break;
+        }
+        case "batched-scan": {
+          // Batched scan for routine bodies (matmul, conv, etc.)
+          // IMPORTANT: Submit all pending operations first so input data is computed!
+          for (const p of pending) {
+            p.prepareSync();
+            p.submit();
+          }
+          pending.length = 0; // Clear the pending array
+
+          const constSlots = step.consts.map((id) => scope.get(id)!);
+          const initCarrySlots = step.initCarry.map((id) => scope.get(id)!);
+          const xsSlots = step.xs.map((id) => scope.get(id)!);
+          const outputSlots = step.outputs.map((id) => scope.get(id)!);
+
+          // Split outputs into carryOut and ysStacked
+          const carryOutSlots = outputSlots.slice(0, step.numCarry);
+          const ysStackedSlots = outputSlots.slice(step.numCarry);
+
+          // Check if backend supports batched scan dispatch
+          const backend = this.backend as any;
+          if (typeof backend.dispatchBatchedScan === "function") {
+            backend.dispatchBatchedScan(
+              step.batchedParams, // PreparedBatchedScan
+              constSlots,
+              initCarrySlots,
+              xsSlots,
+              carryOutSlots,
+              ysStackedSlots,
+            );
+          } else {
+            throw new Error(
+              "internal: batched-scan requires backend.dispatchBatchedScan",
+            );
+          }
           break;
         }
         default:
@@ -235,7 +532,22 @@ class JitProgramBuilder {
         (s) =>
           (s.type === "execute" &&
             (s.outputs.includes(id) || s.inputs.includes(id))) ||
-          (s.type === "malloc" && s.output === id),
+          (s.type === "malloc" && s.output === id) ||
+          (s.type === "scan" &&
+            (s.consts.includes(id) ||
+              s.initCarry.includes(id) ||
+              s.xs.includes(id) ||
+              s.outputs.includes(id))) ||
+          (s.type === "native-scan" &&
+            (s.consts.includes(id) ||
+              s.initCarry.includes(id) ||
+              s.xs.includes(id) ||
+              s.outputs.includes(id))) ||
+          (s.type === "batched-scan" &&
+            (s.consts.includes(id) ||
+              s.initCarry.includes(id) ||
+              s.xs.includes(id) ||
+              s.outputs.includes(id))),
       )!;
       this.steps.splice(lastUsage + 1, 0, {
         type: "free",
@@ -265,10 +577,6 @@ export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
 
   const cached = jitCompileCache.get(cacheKey);
   if (cached) return cached;
-
-  if (DEBUG >= 1) {
-    console.info("=========== JIT Compile ===========\n" + jaxpr.toString());
-  }
 
   jaxpr = jaxpr.flatten().simplify();
   const nargs = jaxpr.inBinders.length;
@@ -324,6 +632,216 @@ export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
         ctx.set(outVar, { type: "imm", arg: outId });
       }
       builder.pushRoutine(routine, inputs, outputs);
+      continue;
+    }
+
+    // Handle Scan primitive specially - store jaxpr and run interpreter at execute time
+    if (eqn.primitive === Primitive.Scan) {
+      const params = eqn.params as PrimitiveParams<typeof Primitive.Scan>;
+      const {
+        jaxpr: bodyJaxpr,
+        numCarry,
+        numConsts,
+        length,
+        reverse,
+        requirePath,
+      } = params;
+      const numX = bodyJaxpr.inBinders.length - numConsts - numCarry;
+      const numY = bodyJaxpr.outs.length - numCarry;
+
+      // Get input JitIds from context (layout: [consts..., carry..., xs...])
+      const inputs: JitId[] = [];
+      for (const input of eqn.inputs) {
+        if (input instanceof Var) {
+          const jv = ctx.get(input)!;
+          if (jv.type !== "imm") {
+            throw new Error(`jit: scan primitive input is not imm`);
+          }
+          inputs.push(jv.arg);
+        } else if (input instanceof Lit) {
+          inputs.push(builder.pushLit(input));
+        }
+      }
+
+      // Split inputs by role
+      const constsIds = inputs.slice(0, numConsts);
+      const initCarryIds = inputs.slice(numConsts, numConsts + numCarry);
+      const xsIds = inputs.slice(numConsts + numCarry);
+
+      // Get xs avals from input vars (these are the actual shapes after any transforms like vmap)
+      const xsAvals: ShapedArray[] = [];
+      const xsInputs = eqn.inputs.slice(numConsts + numCarry);
+      for (const input of xsInputs) {
+        if (input instanceof Var) {
+          xsAvals.push(input.aval);
+        } else if (input instanceof Lit) {
+          xsAvals.push(input.aval);
+        }
+      }
+
+      // Create output buffers (layout: [carry_out..., stacked_ys...])
+      const outputs: JitId[] = [];
+      for (const outVar of eqn.outBinders) {
+        const outId = builder.pushBuffer(
+          outVar.aval.size * byteWidth(outVar.aval.dtype),
+        );
+        outputs.push(outId);
+        ctx.set(outVar, { type: "imm", arg: outId });
+      }
+
+      // Compile the body jaxpr to a JitProgram for efficient per-iteration execution
+      const bodyProgram = jitCompile(backend, bodyJaxpr);
+
+      // Try to use native scan if possible (WASM/WebGPU, single kernel body)
+      let nativeScanExe = tryPrepareNativeScan(
+        backend,
+        bodyProgram,
+        bodyJaxpr,
+        length,
+        numCarry,
+        numConsts,
+        numX,
+        numY,
+        eqn,
+        reverse,
+      );
+
+      // If single-kernel native scan failed, try multi-kernel native scan
+      if (!nativeScanExe) {
+        if (DEBUG >= 2) {
+          console.log(
+            `[scan] Single-kernel native scan failed, trying multi-kernel...`,
+          );
+        }
+        nativeScanExe = tryPrepareNativeScanMulti(
+          backend,
+          bodyProgram,
+          bodyJaxpr,
+          length,
+          numCarry,
+          numConsts,
+          numX,
+          numY,
+          reverse,
+        );
+      }
+
+      // If multi-kernel native scan also failed, try general native scan (handles numCarry !== numY)
+      let generalScanResult: {
+        executable: Executable;
+        internalSizes: number[];
+        params: NativeScanGeneralParams;
+      } | null = null;
+      if (!nativeScanExe) {
+        if (DEBUG >= 2) {
+          console.log(
+            `[scan] Multi-kernel native scan failed, trying general native scan...`,
+          );
+        }
+        generalScanResult = tryPrepareNativeScanGeneral(
+          backend,
+          bodyProgram,
+          bodyJaxpr,
+          length,
+          numCarry,
+          numConsts,
+          numX,
+          numY,
+          reverse,
+        );
+        if (generalScanResult) {
+          nativeScanExe = generalScanResult.executable;
+        }
+      }
+
+      if (nativeScanExe) {
+        // Report fused path (loop runs in native code)
+        const pathError = checkRequiredPath("fused", requirePath);
+        if (pathError) throw new Error(pathError);
+        reportScanPath("fused", backend.type, { numConsts, numCarry, length });
+
+        // Use native scan
+        builder.steps.push({
+          type: "native-scan",
+          executable: nativeScanExe,
+          length,
+          numCarry,
+          numConsts,
+          numY,
+          reverse,
+          consts: constsIds,
+          initCarry: initCarryIds,
+          xs: xsIds,
+          outputs,
+          generalParams: generalScanResult?.params,
+        });
+        continue;
+      }
+
+      // Try to use batched scan for routine bodies (WebGPU only, matmul/conv/etc.)
+      const batchedParams = tryPrepareBatchedScan(
+        backend,
+        bodyProgram,
+        bodyJaxpr,
+        length,
+        numCarry,
+        numConsts,
+        numX,
+        numY,
+        eqn,
+        reverse,
+      );
+
+      if (batchedParams) {
+        // Use batched scan (pre-encoded dispatches, still fused)
+        const pathError = checkRequiredPath("fused", requirePath);
+        if (pathError) throw new Error(pathError);
+        reportScanPath("fused", backend.type, {
+          numConsts,
+          numCarry,
+          length,
+        });
+        builder.steps.push({
+          type: "batched-scan",
+          batchedParams,
+          length,
+          numCarry,
+          numConsts,
+          numX,
+          numY,
+          reverse,
+          consts: constsIds,
+          initCarry: initCarryIds,
+          xs: xsIds,
+          outputs,
+        });
+        continue;
+      }
+
+      // Fall back to JS loop scan
+      const pathError = checkRequiredPath("fallback", requirePath);
+      if (pathError) throw new Error(pathError);
+      reportScanPath("fallback", backend.type, {
+        numConsts,
+        numCarry,
+        length,
+      });
+      builder.steps.push({
+        type: "scan",
+        bodyProgram,
+        bodyJaxpr,
+        length,
+        numCarry,
+        numConsts,
+        numX,
+        numY,
+        reverse,
+        consts: constsIds,
+        initCarry: initCarryIds,
+        xs: xsIds,
+        xsAvals,
+        outputs,
+      });
       continue;
     }
 
@@ -463,7 +981,6 @@ export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
   builder.insertFreeSteps(outputIds);
 
   const jp = new JitProgram(backend, builder.steps, range(0, nargs), outputIds);
-  if (DEBUG >= 4) console.info(jp.toString());
   jitCompileCache.set(cacheKey, jp);
   return jp;
 }
@@ -777,6 +1294,11 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
       "internal: Jit should have been flattened before JIT compilation",
     );
   },
+  [Primitive.Scan]() {
+    throw new Error(
+      "internal: Scan is handled specially in jitCompile, not via jitRules",
+    );
+  },
 };
 
 /** Determines how to split the Jaxpr into kernels via dataflow analysis. */
@@ -1018,4 +1540,754 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
   }
 
   return blackNodes;
+}
+
+/**
+ * Try to prepare a native scan executable.
+ * Returns the executable if native scan is possible, null otherwise.
+ *
+ * Native scan is only supported when:
+ * 1. Backend is WASM or WebGPU
+ * 2. Body program contains exactly one execute step with a Kernel (no routines)
+ * 3. No constants (for MVP simplicity)
+ * 4. No reduction in the body kernel
+ */
+/**
+ * Try to prepare a batched scan for routine bodies (matmul, conv, etc.).
+ * Returns the PreparedBatchedScan params if possible, null otherwise.
+ *
+ * Batched scan is only supported when:
+ * 1. Backend is WebGPU
+ * 2. Body program contains exactly one execute step with a Routine (not Kernel)
+ * 3. MVP: No constants support
+ * 4. MVP: numCarry === numY (carry and output are the same)
+ */
+function tryPrepareBatchedScan(
+  backend: Backend,
+  bodyProgram: JitProgram,
+  bodyJaxpr: Jaxpr,
+  length: number,
+  numCarry: number,
+  numConsts: number,
+  numX: number,
+  numY: number,
+  eqn: { inputs: (Var | Lit)[]; outBinders: Var[] },
+  reverse: boolean,
+): any | null {
+  // Returns PreparedBatchedScan or null
+  // Only WebGPU backend supports batched scan
+  if (backend.type !== "webgpu") {
+    if (DEBUG >= 2) console.log("Batched scan: skipped, unsupported backend");
+    return null;
+  }
+
+  // Constants are supported - they're bound with no offset (same each iteration)
+
+  // Find the single execute step with a Routine
+  const executeSteps = bodyProgram.steps.filter((s) => s.type === "execute");
+  if (executeSteps.length !== 1) {
+    if (DEBUG >= 2)
+      console.log(
+        `Batched scan: skipped, ${executeSteps.length} execute steps (need exactly 1)`,
+      );
+    return null;
+  }
+
+  const execStep = executeSteps[0] as Extract<JitStep, { type: "execute" }>;
+  if (!(execStep.source instanceof Routine)) {
+    if (DEBUG >= 2) console.log("Batched scan: skipped, not a Routine");
+    return null;
+  }
+
+  const bodyRoutine = execStep.source;
+
+  // MVP: Only support case where carry and y are the same (like cumulative matmul)
+  // This means numCarry === numY and the outputs reference the same variables
+  if (numCarry !== numY) {
+    if (DEBUG >= 2)
+      console.log(
+        `Batched scan: skipped, numCarry=${numCarry} !== numY=${numY}`,
+      );
+    return null;
+  }
+
+  // Get avals for computing sizes and strides
+  const carryAvals = bodyJaxpr.inBinders
+    .slice(numConsts, numConsts + numCarry)
+    .map((v) => v.aval);
+  const xAvals = bodyJaxpr.inBinders
+    .slice(numConsts + numCarry)
+    .map((v) => v.aval);
+
+  // Compute carry sizes in bytes
+  const carrySizes = carryAvals.map((a) => a.size * byteWidth(a.dtype));
+
+  // Compute xs strides (ELEMENTS per iteration along axis 0)
+  // xs has leading dimension = length, so stride = size_without_leading_dim
+  const xsElemStrides = xAvals.map((a) => a.size); // elements per slice
+
+  // Compute ys strides (same as carry for MVP)
+  const ysElemStrides = carryAvals.map((a) => a.size); // elements per slice
+
+  // Try to prepare the routine executable
+  const webgpuBackend = backend as any;
+  if (typeof webgpuBackend.prepareRoutineSync !== "function") {
+    if (DEBUG >= 2)
+      console.log("Batched scan: skipped, backend has no prepareRoutineSync");
+    return null;
+  }
+
+  let bodyRoutineExe;
+  try {
+    bodyRoutineExe = webgpuBackend.prepareRoutineSync(bodyRoutine);
+  } catch (e) {
+    if (DEBUG >= 2) console.warn("Batched scan: prepareRoutineSync failed:", e);
+    return null;
+  }
+
+  // Try to prepare batched scan
+  if (typeof webgpuBackend.prepareBatchedScan !== "function") {
+    if (DEBUG >= 2)
+      console.log("Batched scan: skipped, backend has no prepareBatchedScan");
+    return null;
+  }
+
+  const batchedScanParams = {
+    length,
+    carrySizes,
+    xsElemStrides,
+    ysElemStrides,
+    bodyRoutine: bodyRoutineExe,
+    numCarry,
+    numX,
+    numY,
+    numConsts,
+    reverse,
+  };
+
+  try {
+    const prepared = webgpuBackend.prepareBatchedScan(batchedScanParams);
+    if (prepared) {
+      if (DEBUG >= 1)
+        console.log(
+          `Batched scan: SUCCESS! Using WebGPU batched scan for ${bodyRoutine.name}`,
+        );
+    }
+    return prepared;
+  } catch (e) {
+    if (DEBUG >= 2) {
+      console.warn("Batched scan preparation failed:", e);
+    }
+    return null;
+  }
+}
+
+function tryPrepareNativeScan(
+  backend: Backend,
+  bodyProgram: JitProgram,
+  bodyJaxpr: Jaxpr,
+  length: number,
+  numCarry: number,
+  numConsts: number,
+  numX: number,
+  numY: number,
+  eqn: { inputs: (Var | Lit)[]; outBinders: Var[] },
+  reverse: boolean,
+): Executable | null {
+  // Find the single execute step with a Kernel
+  const executeSteps = bodyProgram.steps.filter((s) => s.type === "execute");
+  if (executeSteps.length !== 1) {
+    if (DEBUG >= 2) {
+      console.log(`Native scan: skipped, ${executeSteps.length} execute steps`);
+    }
+    return null;
+  }
+
+  const execStep = executeSteps[0] as Extract<JitStep, { type: "execute" }>;
+  if (!(execStep.source instanceof Kernel)) {
+    if (DEBUG >= 2) console.log("Native scan: skipped, not a Kernel");
+    return null;
+  }
+
+  // The kernel's gids correspond to execStep.inputs order, but we need them
+  // to match the jaxpr input order (which is [0, 1, 2, ...]).
+  // Build a reindex mapping: old gid -> new gid (jaxpr input index)
+  // execStep.inputs[oldGid] = JitId, and jaxpr input JitIds are 0..nargs-1
+  // So new gid = execStep.inputs[oldGid] (which IS the jaxpr input index)
+  const reindexMap = execStep.inputs;
+
+  // Reindex the kernel's expression so gids match jaxpr input indices
+  const reindexedExp = execStep.source.exp.reindexGids(reindexMap);
+  const bodyKernel = new Kernel(
+    bodyJaxpr.inBinders.length, // nargs = number of jaxpr inputs
+    execStep.source.size,
+    reindexedExp,
+    execStep.source.reduction,
+  );
+
+  // MVP: Only support case where carry and y are the same (like cumsum)
+  // This means numCarry === numY and the outputs reference the same variables
+  if (numCarry !== numY) {
+    if (DEBUG >= 2)
+      console.log(
+        `Native scan: skipped, numCarry=${numCarry} !== numY=${numY}`,
+      );
+    return null;
+  }
+
+  // Additional check: the carry output and Y output slots must be the same
+  // (i.e., the body produces the same value for carry out and Y out)
+  const carryOutSlots = bodyProgram.outputs.slice(0, numCarry);
+  const yOutSlots = bodyProgram.outputs.slice(numCarry);
+  for (let i = 0; i < numCarry; i++) {
+    if (carryOutSlots[i] !== yOutSlots[i]) {
+      if (DEBUG >= 2) {
+        console.log(
+          `Native scan: skipped, carry[${i}] slot ${carryOutSlots[i]} !== Y[${i}] slot ${yOutSlots[i]}`,
+        );
+      }
+      return null;
+    }
+  }
+
+  // Get avals for computing sizes and strides
+  const constAvals = bodyJaxpr.inBinders.slice(0, numConsts).map((v) => v.aval);
+  const carryAvals = bodyJaxpr.inBinders
+    .slice(numConsts, numConsts + numCarry)
+    .map((v) => v.aval);
+  const xAvals = bodyJaxpr.inBinders
+    .slice(numConsts + numCarry, numConsts + numCarry + numX)
+    .map((v) => v.aval);
+
+  // Compute const sizes in bytes
+  const constSizes = constAvals.map((a) => a.size * byteWidth(a.dtype));
+
+  // Compute carry sizes in bytes
+  const carrySizes = carryAvals.map((a) => a.size * byteWidth(a.dtype));
+
+  // Compute xs strides (bytes per iteration along axis 0)
+  // xs has leading dimension = length, so stride = size_without_leading_dim * bytes
+  // Note: We need to look at the outer xs avals (with leading dim), not the sliced ones
+  const xsStrides = xAvals.map((a) => a.size * byteWidth(a.dtype));
+
+  // Compute ys strides (same as carry sizes for MVP)
+  const ysStrides = carrySizes.slice();
+
+  // Try to prepare native scan
+  const nativeBackend = backend as any;
+  if (typeof nativeBackend.prepareNativeScan !== "function") {
+    if (DEBUG >= 2)
+      console.log("Native scan: skipped, backend has no prepareNativeScan");
+    return null;
+  }
+
+  const nativeScanParams = {
+    length,
+    numConsts,
+    constSizes,
+    carrySizes,
+    xsStrides,
+    ysStrides,
+    bodyKernel,
+    numCarry,
+    reverse,
+  };
+
+  try {
+    const exe = nativeBackend.prepareNativeScan(nativeScanParams);
+    if (exe) {
+      if (DEBUG >= 1)
+        console.log(
+          `Native scan: SUCCESS! Using ${backend.type.toUpperCase()} native scan loop`,
+        );
+    }
+    return exe;
+  } catch (e) {
+    if (DEBUG >= 2) {
+      console.warn("Native scan preparation failed:", e);
+    }
+    return null;
+  }
+}
+
+/**
+ * Try to prepare a multi-kernel native scan for WASM.
+ * This handles scan bodies with multiple independent kernels (e.g., 2 matmuls).
+ */
+function tryPrepareNativeScanMulti(
+  backend: Backend,
+  bodyProgram: JitProgram,
+  bodyJaxpr: Jaxpr,
+  length: number,
+  numCarry: number,
+  numConsts: number,
+  numX: number,
+  numY: number,
+  reverse: boolean,
+): Executable | null {
+  // Only WASM and WebGPU backends support multi-kernel scan
+  if (backend.type !== "wasm" && backend.type !== "webgpu") {
+    if (DEBUG >= 1)
+      console.log(
+        `[multi-scan] skipped, backend=${backend.type} (need wasm or webgpu)`,
+      );
+    return null;
+  }
+
+  // Get all execute steps
+  const executeSteps = bodyProgram.steps.filter(
+    (s) => s.type === "execute",
+  ) as Extract<JitStep, { type: "execute" }>[];
+  if (DEBUG >= 1)
+    console.log(
+      `[multi-scan] executeSteps.length=${executeSteps.length}, numCarry=${numCarry}`,
+    );
+
+  // All execute steps must be Kernels (no Routines)
+  if (!executeSteps.every((s) => s.source instanceof Kernel)) {
+    if (DEBUG >= 1)
+      console.log("[multi-scan] skipped, has non-Kernel execute steps");
+    return null;
+  }
+
+  // MVP: Only support case where numCarry === numY
+  if (numCarry !== numY) {
+    if (DEBUG >= 1)
+      console.log(
+        `[multi-scan] skipped, numCarry=${numCarry} !== numY=${numY}`,
+      );
+    return null;
+  }
+
+  // Additional check: the carry output and Y output slots must be the same
+  const carryOutSlotsPre = bodyProgram.outputs.slice(0, numCarry);
+  const yOutSlots = bodyProgram.outputs.slice(numCarry);
+  for (let i = 0; i < numCarry; i++) {
+    if (carryOutSlotsPre[i] !== yOutSlots[i]) {
+      if (DEBUG >= 1) {
+        console.log(
+          `[multi-scan] skipped, carry[${i}] slot ${carryOutSlotsPre[i]} !== Y[${i}] slot ${yOutSlots[i]}`,
+        );
+      }
+      return null;
+    }
+  }
+
+  // MVP: Execute steps should equal numCarry (one kernel per carry output)
+  if (executeSteps.length !== numCarry) {
+    if (DEBUG >= 2)
+      console.log(
+        `Multi-kernel native scan: skipped, ${executeSteps.length} kernels != ${numCarry} carries`,
+      );
+    return null;
+  }
+
+  // Build output mapping: which output slot corresponds to which carry index
+  // bodyProgram.outputs = [...carryOuts, ...ys] where carryOuts and ys may reference same slots
+  const carryOutSlots = bodyProgram.outputs.slice(0, numCarry);
+
+  // Get avals for computing sizes and strides
+  const constAvals = bodyJaxpr.inBinders.slice(0, numConsts).map((v) => v.aval);
+  const carryAvals = bodyJaxpr.inBinders
+    .slice(numConsts, numConsts + numCarry)
+    .map((v) => v.aval);
+  const xAvals = bodyJaxpr.inBinders
+    .slice(numConsts + numCarry, numConsts + numCarry + numX)
+    .map((v) => v.aval);
+
+  const constSizes = constAvals.map((a) => a.size * byteWidth(a.dtype));
+  const carrySizes = carryAvals.map((a) => a.size * byteWidth(a.dtype));
+  const xsStrides = xAvals.map((a) => a.size * byteWidth(a.dtype));
+  const ysStrides = carrySizes.slice(); // Same as carry sizes for MVP
+
+  // Build NativeScanStep for each execute step
+  const steps: {
+    kernel: Kernel;
+    inputs: number[];
+    outputCarryIdx: number;
+    outputSize: number;
+  }[] = [];
+
+  for (const execStep of executeSteps) {
+    const kernel = execStep.source as Kernel;
+
+    // Find which carry output this step writes to
+    const outSlot = execStep.outputs[0]; // Assuming single output per kernel
+    const carryIdx = carryOutSlots.indexOf(outSlot);
+    if (carryIdx === -1) {
+      if (DEBUG >= 2)
+        console.log(
+          "Multi-kernel native scan: output slot not in carry outputs",
+        );
+      return null;
+    }
+
+    // Reindex kernel gids to match jaxpr input order
+    const reindexMap = execStep.inputs;
+    const reindexedExp = kernel.exp.reindexGids(reindexMap);
+    const reindexedKernel = new Kernel(
+      bodyJaxpr.inBinders.length,
+      kernel.size,
+      reindexedExp,
+      kernel.reduction,
+    );
+
+    steps.push({
+      kernel: reindexedKernel,
+      inputs: execStep.inputs,
+      outputCarryIdx: carryIdx,
+      outputSize: carrySizes[carryIdx],
+    });
+  }
+
+  // Try to prepare native scan with multiple kernels
+  const nativeBackend = backend as any;
+  if (typeof nativeBackend.prepareNativeScanMulti !== "function") {
+    if (DEBUG >= 2)
+      console.log(
+        "Multi-kernel native scan: backend has no prepareNativeScanMulti",
+      );
+    return null;
+  }
+
+  const params = {
+    length,
+    numConsts,
+    constSizes,
+    numCarry,
+    carrySizes,
+    numX,
+    xsStrides,
+    numY,
+    ysStrides,
+    steps,
+    reverse,
+  };
+
+  try {
+    const exe = nativeBackend.prepareNativeScanMulti(params);
+    if (exe) {
+      if (DEBUG >= 1)
+        console.log(
+          `Multi-kernel native scan: SUCCESS! Using ${backend.type.toUpperCase()} native scan with ${steps.length} kernels`,
+        );
+    }
+    return exe;
+  } catch (e) {
+    if (DEBUG >= 2) {
+      console.warn("Multi-kernel native scan preparation failed:", e);
+    }
+    return null;
+  }
+}
+
+/**
+ * Try to prepare a general native scan for bodies with data dependencies and numCarry !== numY.
+ * This handles complex scan bodies like the Kalman filter where there are multiple interdependent
+ * kernel steps and the number of carry values differs from the number of Y outputs.
+ * Also handles Routine steps (Cholesky, Sort) embedded in the scan loop.
+ */
+function tryPrepareNativeScanGeneral(
+  backend: Backend,
+  bodyProgram: JitProgram,
+  bodyJaxpr: Jaxpr,
+  length: number,
+  numCarry: number,
+  numConsts: number,
+  numX: number,
+  numY: number,
+  reverse: boolean,
+): {
+  executable: Executable;
+  internalSizes: number[];
+  params: NativeScanGeneralParams;
+} | null {
+  // Only WASM backend for now
+  if (backend.type !== "wasm") {
+    if (DEBUG >= 1)
+      console.log(
+        `[general-scan] skipped, backend=${backend.type} (need wasm)`,
+      );
+    return null;
+  }
+
+  if (DEBUG >= 2)
+    console.log(
+      `[general-scan] trying with backend=${backend.type}, numCarry=${numCarry}, numY=${numY}`,
+    );
+
+  // Get all execute steps
+  const executeSteps = bodyProgram.steps.filter(
+    (s) => s.type === "execute",
+  ) as Extract<JitStep, { type: "execute" }>[];
+  if (executeSteps.length === 0) {
+    if (DEBUG >= 1) console.log("[general-scan] skipped, no execute steps");
+    return null;
+  }
+
+  // Check which routines are used and if they're supported
+  const usedRoutines = new Set<Routines>();
+  for (const step of executeSteps) {
+    if (step.source instanceof Routine) {
+      const routineName = step.source.name as Routines;
+      // Only Cholesky and Sort are supported in native scan
+      if (routineName !== Routines.Cholesky && routineName !== Routines.Sort) {
+        if (DEBUG >= 1)
+          console.log(
+            `[general-scan] skipped, unsupported routine: ${step.source.name}`,
+          );
+        return null;
+      }
+      usedRoutines.add(routineName);
+    }
+  }
+
+  if (DEBUG >= 1) {
+    const routineNames = [...usedRoutines].map((r) => Routines[r]);
+    console.log(
+      `[general-scan] Analyzing body: ${executeSteps.length} execute steps, numCarry=${numCarry}, numY=${numY}` +
+        (routineNames.length > 0
+          ? `, routines: ${routineNames.join(", ")}`
+          : ""),
+    );
+  }
+
+  // Number of jaxpr inputs
+  const numInputs = numConsts + numCarry + numX;
+
+  // Build internal buffer mapping: each execute step writes to an internal buffer
+  // The internal buffer index = step index
+  const numInternal = executeSteps.length;
+
+  // Get avals for sizes and strides
+  const constAvals = bodyJaxpr.inBinders.slice(0, numConsts).map((v) => v.aval);
+  const carryAvals = bodyJaxpr.inBinders
+    .slice(numConsts, numConsts + numCarry)
+    .map((v) => v.aval);
+  const xAvals = bodyJaxpr.inBinders
+    .slice(numConsts + numCarry, numConsts + numCarry + numX)
+    .map((v) => v.aval);
+  const yAvals = bodyJaxpr.outs.slice(numCarry).map((v) => v.aval);
+
+  const constSizes = constAvals.map((a) => a.size * byteWidth(a.dtype));
+  const carrySizes = carryAvals.map((a) => a.size * byteWidth(a.dtype));
+  const xsStrides = xAvals.map((a) => a.size * byteWidth(a.dtype));
+  const ysStrides = yAvals.map((a) => a.size * byteWidth(a.dtype));
+
+  // Build a mapping from JitId (output slot) to internal buffer index
+  const slotToInternal = new Map<JitId, number>();
+  for (let i = 0; i < executeSteps.length; i++) {
+    const step = executeSteps[i];
+    for (const outSlot of step.outputs) {
+      slotToInternal.set(outSlot, i);
+    }
+  }
+
+  // Build internal sizes from each step's output
+  const internalSizes: number[] = [];
+  for (let i = 0; i < executeSteps.length; i++) {
+    const source = executeSteps[i].source;
+    if (source instanceof Kernel) {
+      internalSizes.push(source.size * byteWidth(source.dtype));
+    } else {
+      // Routine: use first output shape
+      const routine = source as Routine;
+      const outShape = routine.type.outputShapes[0];
+      const outDtype = routine.type.outputDtypes[0];
+      internalSizes.push(prod(outShape) * byteWidth(outDtype));
+    }
+  }
+
+  // Calculate aux buffer size for routines that need it
+  let auxBufferSize = 0;
+  let elementSize: 4 | 8 = 4;
+  for (const step of executeSteps) {
+    if (step.source instanceof Routine) {
+      const routine = step.source;
+      const dtype = routine.type.inputDtypes[0];
+      elementSize = byteWidth(dtype) as 4 | 8;
+      if (routine.name === Routines.Sort) {
+        // Sort needs aux buffer of size sortDim * elementSize
+        const inputShape = routine.type.inputShapes[0];
+        const sortDim = inputShape[inputShape.length - 1];
+        auxBufferSize = Math.max(auxBufferSize, sortDim * elementSize);
+      }
+    }
+  }
+
+  // Build input slot mapping for each step
+  // Each step's source has inputs that reference jaxpr inputs or internal buffers
+  // - [0, numConsts): constant
+  // - [numConsts, numConsts+numCarry): carry
+  // - [numConsts+numCarry, numInputs): xs
+  // - [numInputs, ...): internal buffer from previous step
+  type LocalGeneralScanStep = {
+    source: Kernel | Routine;
+    inputSlots: number[];
+    outputInternalIdx: number;
+    outputInternalIndices?: number[];
+  };
+
+  const steps: LocalGeneralScanStep[] = [];
+  for (let i = 0; i < executeSteps.length; i++) {
+    const step = executeSteps[i];
+    const source = step.source;
+
+    // step.inputs are JitIds that the source reads from
+    // We need to classify each: is it a jaxpr input or an internal buffer?
+    const inputSlots: number[] = [];
+    for (const inputId of step.inputs) {
+      if (inputId < numInputs) {
+        // It's a jaxpr input (const, carry, or xs)
+        inputSlots.push(inputId);
+      } else {
+        // It's an internal buffer - find which step produced it
+        const internalIdx = slotToInternal.get(inputId);
+        if (internalIdx === undefined) {
+          if (DEBUG >= 1)
+            console.log(
+              `[general-scan] skipped, input ${inputId} not found in slot mapping`,
+            );
+          return null;
+        }
+        // Internal buffers are indexed after jaxpr inputs
+        inputSlots.push(numInputs + internalIdx);
+      }
+    }
+
+    if (source instanceof Kernel) {
+      // Reindex kernel gids to use our inputSlots mapping
+      const reindexMap = inputSlots;
+      const reindexedExp = source.exp.reindexGids(reindexMap);
+      // Also reindex the reduction's epilogue if present
+      const reindexedReduction = source.reduction?.reindexGids(reindexMap);
+      const reindexedKernel = new Kernel(
+        numInputs + numInternal, // nargs: can read from jaxpr inputs + all internals
+        source.size,
+        reindexedExp,
+        reindexedReduction,
+      );
+
+      steps.push({
+        source: reindexedKernel,
+        inputSlots,
+        outputInternalIdx: i,
+      });
+    } else {
+      // Routine: no reindexing needed, just pass through
+      steps.push({
+        source,
+        inputSlots,
+        outputInternalIdx: i,
+      });
+    }
+  }
+
+  // Find carry output sources: which internal buffer provides each carry output
+  // Also handle passthrough (carry input returned as carry output unchanged)
+  const carryOutSlots = bodyProgram.outputs.slice(0, numCarry);
+  const carryInputSlots = bodyProgram.inputs.slice(
+    numConsts,
+    numConsts + numCarry,
+  );
+
+  type CarryOutputSource = {
+    type: "passthrough" | "internal";
+    carryIdx?: number;
+    internalIdx?: number;
+  };
+  const carryOutSources: CarryOutputSource[] = [];
+  for (const slot of carryOutSlots) {
+    // Check if it's a passthrough from carry input
+    const carryIdx = carryInputSlots.indexOf(slot);
+    if (carryIdx !== -1) {
+      carryOutSources.push({ type: "passthrough", carryIdx });
+      continue;
+    }
+    // Otherwise it should be from an internal buffer
+    const internalIdx = slotToInternal.get(slot);
+    if (internalIdx === undefined) {
+      if (DEBUG >= 1)
+        console.log(
+          `[general-scan] skipped, carry output slot ${slot} not produced by any execute step`,
+        );
+      return null;
+    }
+    carryOutSources.push({ type: "internal", internalIdx });
+  }
+
+  // Find Y output sources: either passthrough from carry input or from internal buffer
+  type YOutputSource = {
+    type: "passthrough" | "internal";
+    carryIdx?: number;
+    internalIdx?: number;
+  };
+
+  const yOutputSlots = bodyProgram.outputs.slice(numCarry);
+  const yOutputSources: YOutputSource[] = [];
+
+  for (const slot of yOutputSlots) {
+    // Check if it's a passthrough from carry input
+    const carryIdx = carryInputSlots.indexOf(slot);
+    if (carryIdx !== -1) {
+      yOutputSources.push({ type: "passthrough", carryIdx });
+      continue;
+    }
+
+    // Otherwise it should be from an internal buffer
+    const internalIdx = slotToInternal.get(slot);
+    if (internalIdx === undefined) {
+      if (DEBUG >= 1)
+        console.log(`[general-scan] skipped, Y output slot ${slot} not found`);
+      return null;
+    }
+    yOutputSources.push({ type: "internal", internalIdx });
+  }
+
+  // Try to prepare general native scan
+  const nativeBackend = backend as any;
+  if (typeof nativeBackend.prepareNativeScanGeneral !== "function") {
+    if (DEBUG >= 2)
+      console.log("[general-scan] backend has no prepareNativeScanGeneral");
+    return null;
+  }
+
+  const params = {
+    length,
+    numConsts,
+    constSizes,
+    numCarry,
+    carrySizes,
+    numX,
+    xsStrides,
+    numY,
+    ysStrides,
+    internalSizes,
+    steps,
+    carryOutSources,
+    yOutputSources,
+    reverse,
+    auxBufferSize,
+    elementSize,
+  };
+
+  try {
+    const exe = nativeBackend.prepareNativeScanGeneral(params);
+    if (exe) {
+      if (DEBUG >= 1) {
+        const hasRoutines = steps.some((s) => s.source instanceof Routine);
+        console.log(
+          `[general-scan] SUCCESS! Using ${backend.type.toUpperCase()} general native scan with ${steps.length} steps` +
+            (hasRoutines ? " (includes routines)" : ""),
+        );
+      }
+      return { executable: exe, internalSizes, params };
+    }
+    return null;
+  } catch (e) {
+    if (DEBUG >= 2) {
+      console.warn("[general-scan] preparation failed:", e);
+    }
+    return null;
+  }
 }

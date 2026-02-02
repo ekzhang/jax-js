@@ -1576,6 +1576,16 @@ export class Reduction implements FpHashable {
     }
     throw new TypeError(`Unsupported reduction: ${this.op} ${this.dtype}`);
   }
+
+  /** Reindex gid values in this reduction's epilogue expression. */
+  reindexGids(newGids: number[]): Reduction {
+    const reindexedEpilogue = this.epilogue.reindexGids(newGids);
+    // Only create a new Reduction if the epilogue actually changed
+    if (reindexedEpilogue === this.epilogue) {
+      return this;
+    }
+    return new Reduction(this.dtype, this.op, this.size, reindexedEpilogue);
+  }
 }
 
 /** Expression for accessing `indices` in input array with the given shape. */

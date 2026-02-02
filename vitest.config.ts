@@ -8,6 +8,7 @@ export default defineConfig({
     },
   },
   test: {
+    watch: false, // Run once and exit, don't wait for 'q'
     browser: {
       enabled: true,
       headless: true,
@@ -21,6 +22,7 @@ export default defineConfig({
       enabled: false,
       provider: "v8",
     },
+    exclude: ["**/node_modules/**", "**/dist/**", "test/deno/**", "tmp/**"],
     setupFiles: ["test/setup.ts"],
   },
 });

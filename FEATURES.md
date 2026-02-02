@@ -546,6 +546,19 @@ Only a few functions in `jax.lax` have been implemented, notably `conv_general_d
 convolutions and `dot()` for general tensor contractions. Also, `linalg.triangular_solve()` is
 available.
 
+| API                       | Support | Notes                             |
+| ------------------------- | ------- | --------------------------------- |
+| `conv_general_dilated`    | 🟢      | full convolution support          |
+| `dot`                     | 🟢      | general tensor contractions       |
+| `scan`                    | 🟢      | JVP, VJP, JIT, vmap all supported |
+| `while_loop`              | 🔴      | core engine feature               |
+| `cond`                    | 🔴      | core engine feature               |
+| `switch`                  | 🔴      | core engine feature               |
+| `fori_loop`               | 🔴      | can use `scan` instead            |
+| `linalg.triangular_solve` | 🟢      |                                   |
+| `linalg.cholesky`         | 🟢      |                                   |
+| `linalg.lu`               | 🟢      |                                   |
+
 In the future, the library may need a rework to add support for `lax` operations, which are
 lower-level (semantics-wise, they don't do automatic type promotion). The reason why jax-js did not
 start from `lax` is because JAX is built on XLA as foundations and started with `lax` wrappers, but

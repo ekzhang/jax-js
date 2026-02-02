@@ -13,7 +13,7 @@ import * as random from "./library/random";
 import * as scipySpecial from "./library/scipy-special";
 import * as tree from "./tree";
 import type { JsTree, JsTreeDef, MapJsTree } from "./tree";
-import { setDebug } from "./utils";
+import { type ScanPath, setDebug, setScanPathCallback } from "./utils";
 
 import "./polyfills";
 
@@ -25,6 +25,7 @@ export {
   type Device,
   devices,
   DType,
+  getBackend,
   Jaxpr,
   type JsTree,
   type JsTreeDef,
@@ -33,7 +34,9 @@ export {
   numpy,
   type OwnedFunction,
   random,
+  type ScanPath,
   setDebug,
+  setScanPathCallback,
   scipySpecial,
   tree,
 };

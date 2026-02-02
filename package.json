@@ -44,6 +44,8 @@
     "format:check": "prettier --check .",
     "lint": "eslint",
     "test": "vitest",
+    "test:all": "scripts/test-all.sh",
+    "test:deno": "DENO_JOBS=1 $HOME/.deno/bin/deno test --no-check --unstable-webgpu --allow-read --allow-env test/deno/",
     "test:coverage": "vitest run --coverage && open coverage/index.html",
     "prepublishOnly": "pnpm build",
     "postpublish": "git tag jax/v$npm_package_version && git push --tags"

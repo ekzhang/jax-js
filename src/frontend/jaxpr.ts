@@ -1007,6 +1007,33 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     }
     return outTypes;
   },
+  [Primitive.Scan](args, { jaxpr, numCarry, numConsts, length, reverse: _ }) {
+    // Args: [...consts, ...initCarry, ...xs]
+    // jaxpr inputs: [...consts, ...carry, ...x_slice]
+    // jaxpr outputs: [...newCarry, ...y_slice]
+    // Note: reverse doesn't affect output shapes
+    const numX = args.length - numConsts - numCarry;
+    const { outTypes } = typecheckJaxpr(jaxpr);
+
+    // Validate input types match jaxpr expectations
+    if (jaxpr.inBinders.length !== numConsts + numCarry + numX) {
+      throw new TypeError(
+        `Scan jaxpr expects ${jaxpr.inBinders.length} inputs, got ${numConsts + numCarry + numX}`,
+      );
+    }
+
+    // Return types: [...carryOut, ...ys]
+    // carryOut shapes match initCarry shapes
+    // ys shapes are [length, ...y_slice_shape]
+    const carryOutTypes = outTypes.slice(0, numCarry);
+    const ySliceTypes = outTypes.slice(numCarry);
+
+    const yTypes = ySliceTypes.map((t) => {
+      return new ShapedArray([length, ...t.shape], t.dtype, t.weakType);
+    });
+
+    return [...carryOutTypes, ...yTypes];
+  },
 };
 
 function splitIdx(values: any[], argnums: Set<number>): [any[], any[]] {

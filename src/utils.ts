@@ -18,6 +18,53 @@ export function setDebug(level: number) {
   DEBUG = level;
 }
 
+/**
+ * Scan path types for diagnostic tracking.
+ * - "fused": Loop fused into native code (WASM module or WebGPU shader)
+ * - "fallback": JS loop fallback (body executed per iteration)
+ */
+export type ScanPath = "fused" | "fallback";
+
+/** Callback for tracking which scan implementation paths are taken. */
+export type ScanPathCallback = (
+  path: ScanPath,
+  backend: string,
+  details?: { numConsts?: number; numCarry?: number; length?: number },
+) => void;
+
+let scanPathCallback: ScanPathCallback | null = null;
+
+/**
+ * Set a callback to be notified when scan implementations are chosen.
+ * Useful for testing to verify the expected code path is taken.
+ *
+ * @param callback - Function called with (path, backend, details) when scan path is chosen.
+ *                   Pass null to disable tracking.
+ *
+ * @example
+ * ```ts
+ * let usedPath: ScanPath | null = null;
+ * setScanPathCallback((path, backend) => { usedPath = path; });
+ * await jitScan(init, xs);
+ * expect(usedPath).toBe("fused");
+ * setScanPathCallback(null); // cleanup
+ * ```
+ */
+export function setScanPathCallback(callback: ScanPathCallback | null): void {
+  scanPathCallback = callback;
+}
+
+/** Internal: report scan path choice to registered callback. */
+export function reportScanPath(
+  path: ScanPath,
+  backend: string,
+  details?: { numConsts?: number; numCarry?: number; length?: number },
+): void {
+  if (scanPathCallback) {
+    scanPathCallback(path, backend, details);
+  }
+}
+
 export function assertNonNull<T>(value: T): asserts value is NonNullable<T> {}
 
 export function unzip2<T, U>(pairs: Iterable<[T, U]>): [T[], U[]] {

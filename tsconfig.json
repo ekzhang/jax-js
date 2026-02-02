@@ -12,5 +12,12 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "exclude": ["**/node_modules", "**/*.config.js", "**/dist", "website"]
+  "exclude": [
+    "**/node_modules",
+    "**/*.config.js",
+    "**/dist",
+    "website",
+    "test/deno",
+    "tmp"
+  ]
 }

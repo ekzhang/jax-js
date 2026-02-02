@@ -13,6 +13,7 @@ import { Pair } from "../shape";
 import { checkAxis, deepEqual, prod, range, rep, zipn } from "../utils";
 
 export * as linalg from "./lax-linalg";
+export { scan, stackPyTree } from "./lax-scan";
 
 /**
  * Dimension numbers for general `dot()` primitive.

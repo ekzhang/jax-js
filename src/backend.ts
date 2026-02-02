@@ -173,6 +173,9 @@ export interface Backend {
    */
   decRef(slot: Slot): void;
 
+  /** Get the number of currently allocated slots (for leak detection). */
+  slotCount(): number;
+
   /** Read a range of bytes from a buffer. */
   read(
     slot: Slot,

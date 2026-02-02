@@ -45,6 +45,10 @@ export class CpuBackend implements Backend {
     }
   }
 
+  slotCount(): number {
+    return this.#buffers.size;
+  }
+
   async read(
     slot: Slot,
     start?: number,
@@ -94,11 +98,18 @@ export class CpuBackend implements Backend {
     const inputBuffers = inputs.map((slot) => this.#getBuffer(slot));
     const outputBuffers = outputs.map((slot) => this.#getBuffer(slot));
 
+    // Collect both GlobalIndex and GlobalView nodes to determine which input buffers are used.
+    // GlobalView is used for lazy reshape/transpose operations within JIT.
     const usedArgs = new Map(
       [
-        ...exp.collect((exp) => exp.op === AluOp.GlobalIndex),
+        ...exp.collect(
+          (exp) => exp.op === AluOp.GlobalIndex || exp.op === AluOp.GlobalView,
+        ),
         ...(epilogue
-          ? epilogue.collect((exp) => exp.op === AluOp.GlobalIndex)
+          ? epilogue.collect(
+              (exp) =>
+                exp.op === AluOp.GlobalIndex || exp.op === AluOp.GlobalView,
+            )
           : []),
       ].map((exp) => [exp.arg[0] as number, exp.dtype]),
     );

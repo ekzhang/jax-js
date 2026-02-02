@@ -94,6 +94,9 @@ export enum Primitive {
 
   // JIT compilation
   Jit = "jit",
+
+  // Control flow
+  Scan = "scan",
 }
 
 interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
@@ -120,6 +123,15 @@ interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
   [Primitive.Pad]: { width: Pair[] };
   [Primitive.TriangularSolve]: { unitDiagonal: boolean };
   [Primitive.Jit]: { name: string; jaxpr: Jaxpr; numConsts: number };
+  [Primitive.Scan]: {
+    jaxpr: Jaxpr;
+    numCarry: number;
+    numConsts: number;
+    length: number;
+    reverse: boolean;
+    /** Required scan path(s). Throws if fallback would be used. */
+    requirePath?: string | string[];
+  };
 }
 
 /** Type of parameters taken by each primitive. */

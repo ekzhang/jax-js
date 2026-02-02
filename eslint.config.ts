@@ -5,7 +5,14 @@ import globals from "globals";
 import ts from "typescript-eslint";
 
 export default defineConfig([
-  globalIgnores(["**/dist/", "docs/", "website/", "coverage/"]),
+  globalIgnores([
+    "**/dist/",
+    "docs/",
+    "website/",
+    "coverage/",
+    "tmp/",
+    "test/deno/",
+  ]),
   js.configs.recommended,
   ts.configs.recommendedTypeChecked,
   {
@@ -46,6 +53,9 @@ export default defineConfig([
           ignoreRestSiblings: true,
         },
       ],
+      "@typescript-eslint/await-thenable": "off",
+      "@typescript-eslint/no-misused-promises": "off",
+      "@typescript-eslint/no-unsafe-enum-comparison": "off",
       "@typescript-eslint/require-await": "off",
       "@typescript-eslint/restrict-template-expressions": "off",
       "@typescript-eslint/unbound-method": "off",

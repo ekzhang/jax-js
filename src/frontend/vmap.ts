@@ -413,6 +413,117 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
     );
     return [outs, rep(outs.length, 0)];
   },
+  [Primitive.Scan](
+    axisSize,
+    args,
+    dims,
+    { jaxpr, numCarry, numConsts, length, reverse },
+  ) {
+    // vmap of scan: batch over independent scans
+    //
+    // Scan args layout: [...consts, ...initCarry, ...xs]
+    // Body takes: [...consts, ...carry, ...x_slice] -> [...new_carry, ...y]
+    //
+    // For vmap, we run independent scans for each batch element.
+    // Move all batch dimensions to position 0, then create a vmapped body.
+    //
+    // Key insight: the scan iterates over axis 0 of xs, but after vmap
+    // the batch is also at axis 0. So we need to swap: batch becomes axis 1
+    // for xs (after the scan length axis), or we move batch to axis 0 and
+    // let xs have shape [batch, length, ...].
+    //
+    // Actually, the cleanest approach: move batch to axis 0 for carry/consts,
+    // and axis 1 for xs (since axis 0 is the scan length). Then the body
+    // needs to be vmapped to handle batch at axis 0 for carry/consts and
+    // axis 0 for x_slice (since we slice off the length dimension).
+
+    const numX = args.length - numConsts - numCarry;
+    const numY = jaxpr.outs.length - numCarry;
+
+    // Split args
+    const consts = args.slice(0, numConsts);
+    const initCarry = args.slice(numConsts, numConsts + numCarry);
+    const xs = args.slice(numConsts + numCarry);
+
+    const constDims = dims.slice(0, numConsts);
+    const carryDims = dims.slice(numConsts, numConsts + numCarry);
+    const xsDims = dims.slice(numConsts + numCarry);
+
+    // Move batch dims to consistent positions:
+    // - consts: batch at axis 0
+    // - carry: batch at axis 0
+    // - xs: batch at axis 1 (axis 0 is scan length)
+    const movedConsts = consts.map((c, i) =>
+      moveBatchAxis(axisSize, constDims[i], 0, c),
+    );
+    const movedCarry = initCarry.map((c, i) =>
+      moveBatchAxis(axisSize, carryDims[i], 0, c),
+    );
+    // For xs, we need to move batch to axis 1 (after the length axis)
+    // But first, if xsDims[i] is 0 (at length position), we need to handle carefully
+    const movedXs = xs.map((x, i) => {
+      if (xsDims[i] === null) {
+        // Not mapped - broadcast batch dim at axis 1
+        const newShape = [x.shape[0], axisSize, ...x.shape.slice(1)];
+        return broadcast(x, newShape, [1]);
+      } else if (xsDims[i] === 0) {
+        // Batch at axis 0, but we need it at axis 1 (after length)
+        // xs originally has shape [batch, length, ...], need [length, batch, ...]
+        return moveaxis(x, 0, 1);
+      } else {
+        // Batch at some other axis - move to axis 1
+        return moveBatchAxis(axisSize, xsDims[i], 1, x);
+      }
+    });
+
+    // The body jaxpr takes: [consts, carry, x_slice]
+    // After vmap, all these will have batch at axis 0:
+    // - consts: [batch, ...const_shape]
+    // - carry: [batch, ...carry_shape]
+    // - x_slice: [batch, ...x_shape] (we sliced off the length dim from xs)
+    //
+    // Create the body dims for vmapJaxpr
+    const bodyDims: (number | null)[] = [
+      ...rep(numConsts, 0), // consts have batch at axis 0
+      ...rep(numCarry, 0), // carry has batch at axis 0
+      ...rep(numX, 0), // x_slice has batch at axis 0 (from xs axis 1)
+    ];
+
+    // Create vmapped body jaxpr
+    const vmappedBody = vmapJaxpr(jaxpr, axisSize, bodyDims);
+
+    // Build scan args with moved arrays
+    const scanArgs = [
+      ...vmappedBody.consts.map((c) => c.ref),
+      ...movedConsts,
+      ...movedCarry,
+      ...movedXs,
+    ];
+
+    // Run the scan
+    const results = bind(Primitive.Scan, scanArgs, {
+      jaxpr: vmappedBody.jaxpr,
+      numCarry,
+      numConsts: vmappedBody.consts.length,
+      length,
+      reverse,
+    });
+
+    // The vmapped body outputs have batch at axis 0
+    // Results layout: [carry_out..., ys...]
+    // carry_out has shape [batch, ...carry_shape]
+    // ys has shape [length, batch, ...y_shape]
+    //
+    // We want to return batch at axis 0, so:
+    // - carry: already at axis 0
+    // - ys: need to move batch from axis 1 to axis 0
+    const carryOut = results.slice(0, numCarry);
+    const ysOut = results.slice(numCarry);
+
+    const movedYs = ysOut.map((y) => moveaxis(y, 1, 0));
+
+    return [[...carryOut, ...movedYs], rep(numCarry + numY, 0)];
+  },
 };
 
 const vmapJaxprCache = new Map<Jaxpr, Map<string, ClosedJaxpr>>();

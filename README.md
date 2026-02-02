@@ -60,6 +60,7 @@ Here's a quick, high-level comparison with other popular web ML runtimes:
 | `jvp()` forward differentiation | ✅         | ❌              | ❌                 |
 | `jit()` kernel fusion           | ✅         | ❌              | ❌                 |
 | `vmap()` auto-vectorization     | ✅         | ❌              | ❌                 |
+| `lax.scan()` functional loops   | ✅         | ❌              | ❌                 |
 | Graph capture                   | ✅         | ❌              | ✅                 |
 | **Backends & Data**             |            |                 |                    |
 | WebGPU backend                  | ✅         | 🟡 Preview      | ✅                 |
