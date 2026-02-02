@@ -1,7 +1,14 @@
 // Port of the `jax.random` module.
 
+import { fudgeArray } from "../frontend/array";
+import * as core from "../frontend/core";
+import { bitcast, randomBits } from "../frontend/core";
+import { jit } from "../frontend/jaxpr";
+import { range } from "../utils";
 import {
   absolute,
+  argmax,
+  argsort,
   array,
   Array,
   ArrayLike,
@@ -9,19 +16,18 @@ import {
   cos,
   DType,
   einsum,
+  expandDims,
   log,
   log1p,
+  moveaxis,
   negative,
   sign,
   sqrt,
+  squeeze,
   stack,
-  tan,
+  tan
 } from "./numpy";
 import { cholesky } from "./numpy-linalg";
-import { fudgeArray } from "../frontend/array";
-import * as core from "../frontend/core";
-import { bitcast, randomBits } from "../frontend/core";
-import { jit } from "../frontend/jaxpr";
 
 function validateKeyShape(key: Array, scalar = false): number[] {
   if (key.ndim === 0) {
@@ -136,6 +142,103 @@ export function bernoulli(
   p = fudgeArray(p);
   return uniform(key, shape).less(p);
 }
+
+/**
+ * @function
+ * Sample random values from categorical distributions.
+ *
+ * Uses the Gumbel max trick for sampling with replacement, or the Gumbel top-k
+ * trick for sampling without replacement.
+ *
+ * Note: Sampling without replacement currently uses argsort and slices the last
+ * k elements. This should be replaced with a more efficient topK implementation.
+ *
+ * - `key` - PRNG key
+ * - `logits` - Unnormalized log probabilities of the categorical distribution(s).
+ *   `softmax(logits, axis)` gives the corresponding probabilities.
+ * - `axis` - Axis along which logits belong to the same categorical distribution.
+ * - `shape` - Result batch shape. Must be broadcast-compatible with
+ *   `logits.shape` with `axis` removed. Default is `logits.shape` with `axis` removed.
+ * - `replace` - If true (default), sample with replacement. If false, sample
+ *   without replacement (each category can only be selected once per batch).
+ * @returns A random array with int dtype and shape given by `shape` if provided,
+ *   otherwise `logits.shape` with `axis` removed.
+ */
+export const categorical = jit(
+  function categorical(
+    key: Array,
+    logits: ArrayLike,
+    axis: number = -1,
+    shape?: number[],
+    replace: boolean = true,
+  ): Array {
+    logits = fudgeArray(logits);
+
+    // Normalize axis to positive
+    const normalizedAxis = axis < 0 ? axis + logits.ndim : axis;
+    const numCategories = logits.shape[normalizedAxis];
+
+    // Compute batch shape (logits shape with axis removed)
+    const batchShape = [
+      ...logits.shape.slice(0, normalizedAxis),
+      ...logits.shape.slice(normalizedAxis + 1),
+    ];
+
+    // Default shape is batch shape
+    if (shape === undefined) {
+      shape = batchShape;
+    }
+
+    // Shape prefix: extra leading dimensions beyond batch shape
+    const shapePrefix = shape.slice(0, shape.length - batchShape.length);
+
+    if (replace) {
+      // Gumbel max trick: generate independent noise for each sample
+      const logitsShapeForGumbel = [...shape.slice(shape.length - batchShape.length)];
+      logitsShapeForGumbel.splice(normalizedAxis, 0, numCategories);
+
+      const gumbelShape = [...shapePrefix, ...logitsShapeForGumbel];
+      const noise = gumbel(key, gumbelShape);
+
+      // Expand logits to match shape prefix (add leading singleton dims)
+      const numPrefixDims = shapePrefix.length;
+      const prefixAxes = range(numPrefixDims);
+      const expandedLogits = numPrefixDims > 0 ? expandDims(logits, prefixAxes) : logits;
+      const adjustedAxis = normalizedAxis + numPrefixDims;
+
+      return argmax(noise.add(expandedLogits), adjustedAxis);
+    } else {
+      // Gumbel top-k trick: add noise once, use topK to get k samples
+      const k = shapePrefix.reduce((a, b) => a * b, 1);
+      if (k > numCategories) {
+        throw new Error(
+          `Number of samples without replacement (${k}) cannot exceed ` +
+            `number of categories (${numCategories}).`,
+        );
+      }
+
+      // Add gumbel noise to logits
+      const noisyLogits = gumbel(key, logits.shape).add(logits);
+
+      // Move category axis to last position for topK
+      const movedLogits = moveaxis(noisyLogits, normalizedAxis, -1);
+
+      // Get the k largest indices
+      const sliceArgs = [...range(movedLogits.ndim - 1).map((): [] => []), [-k] as [number]];
+      const topKIndices = argsort(movedLogits, -1).slice(...sliceArgs);
+
+      // Reshape to desired output shape
+      if (k === 1) {
+        return squeeze(topKIndices, -1);
+      } else {
+        // Transpose so k dimension comes first, then batch dims
+        const transposed = moveaxis(topKIndices, -1, 0);
+        return transposed.reshape(shape);
+      }
+    }
+  },
+  { staticArgnums: [2, 3, 4] },
+);
 
 /**
  * @function

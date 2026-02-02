@@ -577,7 +577,7 @@ modeling their transcendental CDFs (e.g., normal via Box-Muller).
 | `beta`                 | 🟠      |       |
 | `binomial`             | 🟠      |       |
 | `bits`                 | 🟢      |       |
-| `categorical`          | 🟠      |       |
+| `categorical`          | 🟢      |       |
 | `cauchy`               | 🟢      |       |
 | `chisquare`            | 🟠      |       |
 | `choice`               | 🟠      |       |

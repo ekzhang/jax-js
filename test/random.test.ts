@@ -130,6 +130,94 @@ suite.each(devices)("device:%s", (device) => {
       expect(trues[1] / count).toBeCloseTo(0.8, 1);
     });
 
+    suite("categorical distribution", () => {
+      test("samples match expected probabilities", () => {
+        const key = random.key(555);
+        const count = 10000;
+        const probs = [0.1, 0.2, 0.3, 0.4];
+        const logits = np.log(np.array(probs));
+        const samples: number[] = random.categorical(key, logits, -1, [count]).js();
+
+        // Count occurrences of each category
+        const counts = samples.reduce(
+          (acc, s) => (acc[s]++, acc),
+          probs.map(() => 0),
+        );
+
+        // Check empirical frequencies match expected probabilities
+        probs.forEach((p, i) => {
+          expect(counts[i] / count).toBeCloseTo(p, 1);
+        });
+      });
+
+      test("default shape returns scalar", () => {
+        const key = random.key(444);
+        const logits = np.array([1.0, 2.0, 3.0]);
+        const sample = random.categorical(key, logits);
+
+        // Default shape should be scalar (logits shape with axis removed)
+        expect(sample.shape).toEqual([]);
+        expect(sample.dtype).toEqual(np.int32);
+        const value: number = sample.js();
+        expect(value).toBeGreaterThanOrEqual(0);
+        expect(value).toBeLessThan(3);
+      });
+
+      test("batched logits", () => {
+        const key = random.key(333);
+        // 2 batches of 3 categories each
+        const logits = np.array([
+          [10.0, 0.0, 0.0], // strongly prefer category 0
+          [0.0, 0.0, 10.0], // strongly prefer category 2
+        ]);
+        const count = 100;
+        const samples = random.categorical(key, logits, -1, [count, 2]);
+
+        expect(samples.shape).toEqual([count, 2]);
+
+        // With such strong logits, samples should be deterministic
+        const js: number[][] = samples.js();
+        for (let i = 0; i < count; i++) {
+          expect(js[i][0]).toEqual(0); // First batch should always pick category 0
+          expect(js[i][1]).toEqual(2); // Second batch should always pick category 2
+        }
+      });
+
+      // Argsort not supported on webgl
+      if (device !== "webgl") {
+        test("without replacement returns unique samples", () => {
+          const key = random.key(222);
+          // 5 categories
+          const logits = np.array([1.0, 2.0, 3.0, 4.0, 5.0]);
+
+          // Sample 3 without replacement
+          const samples = random.categorical(key, logits, -1, [3], false);
+          expect(samples.shape).toEqual([3]);
+
+          // All samples should be unique (no replacement)
+          const js: number[] = samples.js();
+          const unique = new Set(js);
+          expect(unique.size).toEqual(3);
+
+          // All should be valid category indices
+          for (const s of js) {
+            expect(s).toBeGreaterThanOrEqual(0);
+            expect(s).toBeLessThan(5);
+          }
+        });
+
+        test("without replacement throws if k > num_categories", () => {
+          const key = random.key(111);
+          const logits = np.array([1.0, 2.0, 3.0]); // 3 categories
+
+          // Trying to sample 5 without replacement should fail
+          expect(() => {
+            random.categorical(key, logits, -1, [5], false);
+          }).toThrow(/cannot exceed/);
+        });
+      }
+    });
+
     test("cauchy distribution", () => {
       const key = random.key(999);
       const count = 20000;
