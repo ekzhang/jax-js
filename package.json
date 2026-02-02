@@ -43,6 +43,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint",
+    "prepare": "husky",
     "test": "vitest",
     "test:coverage": "vitest run --coverage && open coverage/index.html",
     "prepublishOnly": "pnpm build",
@@ -57,6 +58,8 @@
     "eslint": "^9.31.0",
     "eslint-plugin-import": "^2.32.0",
     "globals": "^16.0.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
     "playwright": "~1.52.0",
     "prettier": "^3.6.2",
     "prettier-plugin-svelte": "^3.4.0",
@@ -92,5 +95,14 @@
       }
     ],
     "proseWrap": "always"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml,css,svelte,html}": [
+      "prettier --write"
+    ]
   }
 }

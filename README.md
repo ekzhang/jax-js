@@ -363,6 +363,19 @@ pnpm install
 pnpm run build:watch
 ```
 
+The `pnpm install` command automatically sets up Git hooks via
+[Husky](https://typicode.github.io/husky/). Pre-commit hooks will run ESLint and Prettier on staged
+files to ensure code quality.
+
+You can also run linting and formatting manually:
+
+```bash
+pnpm lint          # Run ESLint
+pnpm format        # Format all files with Prettier
+pnpm format:check  # Check formatting without writing
+pnpm check         # Run TypeScript type checking
+```
+
 Then you can run tests in a headless browser using [Vitest](https://vitest.dev/).
 
 ```bash
