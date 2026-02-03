@@ -692,8 +692,8 @@ export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
       // Compile the body jaxpr to a JitProgram for efficient per-iteration execution
       const bodyProgram = jitCompile(backend, bodyJaxpr);
 
-      // Try to use native scan (WASM/WebGPU, handles all kernel/routine bodies)
-      const generalScanResult = tryPrepareNativeScanGeneral(
+      // Try to use native scan (routes to WebGPU or WASM implementation)
+      const nativeScanResult = tryPrepareNativeScan(
         backend,
         bodyProgram,
         bodyJaxpr,
@@ -704,7 +704,7 @@ export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
         numY,
         reverse,
       );
-      const nativeScanExe = generalScanResult?.executable ?? null;
+      const nativeScanExe = nativeScanResult?.executable ?? null;
 
       if (nativeScanExe) {
         // Report fused path (loop runs in native code)
@@ -725,7 +725,7 @@ export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
           initCarry: initCarryIds,
           xs: xsIds,
           outputs,
-          generalParams: generalScanResult?.params,
+          generalParams: nativeScanResult?.params,
         });
         continue;
       }
@@ -1494,16 +1494,37 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
   return blackNodes;
 }
 
+// ============================================================================
+// Native Scan Helpers
+// ============================================================================
+
 /**
- * Try to prepare a native scan executable.
- * Returns the executable if native scan is possible, null otherwise.
- *
- * Native scan is only supported when:
- * 1. Backend is WASM or WebGPU
- * 2. Body program contains exactly one execute step with a Kernel (no routines)
- * 3. No constants (for MVP simplicity)
- * 4. No reduction in the body kernel
+ * Extract buffer sizes and strides from body jaxpr for native scan codegen.
+ * Shared by WebGPU and WASM native scan implementations.
  */
+function getScanBufferSizes(
+  bodyJaxpr: Jaxpr,
+  numConsts: number,
+  numCarry: number,
+  numX: number,
+) {
+  const constAvals = bodyJaxpr.inBinders.slice(0, numConsts).map((v) => v.aval);
+  const carryAvals = bodyJaxpr.inBinders
+    .slice(numConsts, numConsts + numCarry)
+    .map((v) => v.aval);
+  const xAvals = bodyJaxpr.inBinders
+    .slice(numConsts + numCarry, numConsts + numCarry + numX)
+    .map((v) => v.aval);
+  const yAvals = bodyJaxpr.outs.slice(numCarry).map((v) => v.aval);
+
+  return {
+    constSizes: constAvals.map((a) => a.size * byteWidth(a.dtype)),
+    carrySizes: carryAvals.map((a) => a.size * byteWidth(a.dtype)),
+    xsStrides: xAvals.map((a) => a.size * byteWidth(a.dtype)),
+    ysStrides: yAvals.map((a) => a.size * byteWidth(a.dtype)),
+  };
+}
+
 /**
  * Try to prepare a batched scan for routine bodies (matmul, conv, etc.).
  * Returns the PreparedBatchedScan params if possible, null otherwise.
@@ -1658,20 +1679,13 @@ function tryPrepareWebGPUNativeScan(
       `[webgpu-scan] trying with numCarry=${numCarry}, numY=${numY}, steps=${executeSteps.length}`,
     );
 
-  // Get avals for sizes and strides
-  const constAvals = bodyJaxpr.inBinders.slice(0, numConsts).map((v) => v.aval);
-  const carryAvals = bodyJaxpr.inBinders
-    .slice(numConsts, numConsts + numCarry)
-    .map((v) => v.aval);
-  const xAvals = bodyJaxpr.inBinders
-    .slice(numConsts + numCarry, numConsts + numCarry + numX)
-    .map((v) => v.aval);
-  const yAvals = bodyJaxpr.outs.slice(numCarry).map((v) => v.aval);
-
-  const constSizes = constAvals.map((a) => a.size * byteWidth(a.dtype));
-  const carrySizes = carryAvals.map((a) => a.size * byteWidth(a.dtype));
-  const xsStrides = xAvals.map((a) => a.size * byteWidth(a.dtype));
-  const ysStrides = yAvals.map((a) => a.size * byteWidth(a.dtype));
+  // Get buffer sizes using shared helper
+  const { constSizes, carrySizes, xsStrides, ysStrides } = getScanBufferSizes(
+    bodyJaxpr,
+    numConsts,
+    numCarry,
+    numX,
+  );
 
   // Number of jaxpr inputs for reindexing
   const numInputs = numConsts + numCarry + numX;
@@ -1846,15 +1860,12 @@ function tryPrepareWebGPUNativeScan(
 }
 
 /**
- * Try to prepare a native scan for WASM/WebGPU backends.
- * This is the unified implementation that handles all scan body types:
- * - Single kernel bodies (like cumsum)
- * - Multiple independent kernels (like Kalman filter with 2 matmuls)
- * - Bodies with data dependencies between steps
- * - Bodies where numCarry !== numY
- * - Routine steps (Cholesky, Sort) embedded in the scan loop
+ * Try to prepare a native scan executable.
+ * Routes to backend-specific implementations:
+ * - WebGPU kernel-only → tryPrepareWebGPUNativeScan
+ * - WASM (kernels + routines) → tryPrepareWasmNativeScan
  */
-function tryPrepareNativeScanGeneral(
+function tryPrepareNativeScan(
   backend: Backend,
   bodyProgram: JitProgram,
   bodyJaxpr: Jaxpr,
@@ -1874,15 +1885,14 @@ function tryPrepareNativeScanGeneral(
     (s) => s.type === "execute",
   ) as Extract<JitStep, { type: "execute" }>[];
   if (executeSteps.length === 0) {
-    if (DEBUG >= 1) console.log("[general-scan] skipped, no execute steps");
+    if (DEBUG >= 1) console.log("[native-scan] skipped, no execute steps");
     return null;
   }
 
   // Check if all steps are Kernels (no Routines)
   const allKernels = executeSteps.every((s) => s.source instanceof Kernel);
 
-  // ========== WebGPU kernel-only path ==========
-  // For WebGPU with kernel-only bodies, use the existing native scan infrastructure
+  // WebGPU: kernel-only bodies use native GPU scan
   if (backend.type === "webgpu" && allKernels) {
     return tryPrepareWebGPUNativeScan(
       backend,
@@ -1898,18 +1908,56 @@ function tryPrepareNativeScanGeneral(
     );
   }
 
-  // ========== WASM path (supports kernels + routines) ==========
-  if (backend.type !== "wasm") {
-    if (DEBUG >= 1)
-      console.log(
-        `[general-scan] skipped, backend=${backend.type} (need wasm for routines)`,
-      );
-    return null;
+  // WASM: supports kernels + routines
+  if (backend.type === "wasm") {
+    return tryPrepareWasmNativeScan(
+      backend,
+      bodyProgram,
+      bodyJaxpr,
+      executeSteps,
+      length,
+      numCarry,
+      numConsts,
+      numX,
+      numY,
+      reverse,
+    );
   }
 
+  // Other backends: no native scan support
+  if (DEBUG >= 1)
+    console.log(`[native-scan] skipped, backend=${backend.type} not supported`);
+  return null;
+}
+
+/**
+ * Try to prepare a native scan for WASM backend.
+ * Supports:
+ * - Single kernel bodies (like cumsum)
+ * - Multiple independent kernels (like Kalman filter with 2 matmuls)
+ * - Bodies with data dependencies between steps
+ * - Bodies where numCarry !== numY
+ * - Routine steps (Cholesky, Sort, TriangularSolve, LU, Argsort)
+ */
+function tryPrepareWasmNativeScan(
+  backend: Backend,
+  bodyProgram: JitProgram,
+  bodyJaxpr: Jaxpr,
+  executeSteps: Extract<JitStep, { type: "execute" }>[],
+  length: number,
+  numCarry: number,
+  numConsts: number,
+  numX: number,
+  numY: number,
+  reverse: boolean,
+): {
+  executable: Executable;
+  internalSizes: number[];
+  params?: NativeScanGeneralParams;
+} | null {
   if (DEBUG >= 2)
     console.log(
-      `[general-scan] trying with backend=${backend.type}, numCarry=${numCarry}, numY=${numY}`,
+      `[wasm-scan] trying with numCarry=${numCarry}, numY=${numY}, steps=${executeSteps.length}`,
     );
 
   // Check which routines are used and build routine info for WASM imports
@@ -1929,7 +1977,7 @@ function tryPrepareNativeScanGeneral(
         // Unsupported routine - fall back to JS loop
         if (DEBUG >= 1)
           console.log(
-            `[general-scan] skipped, unsupported routine in scan body: ${Routines[routineName]}`,
+            `[wasm-scan] skipped, unsupported routine in scan body: ${Routines[routineName]}`,
           );
         return null;
       }
@@ -1940,7 +1988,7 @@ function tryPrepareNativeScanGeneral(
   if (DEBUG >= 1) {
     const routineNames = [...usedRoutines].map((r) => Routines[r]);
     console.log(
-      `[general-scan] Analyzing body: ${executeSteps.length} execute steps, numCarry=${numCarry}, numY=${numY}` +
+      `[wasm-scan] Analyzing body: ${executeSteps.length} execute steps, numCarry=${numCarry}, numY=${numY}` +
         (routineNames.length > 0
           ? `, routines: ${routineNames.join(", ")}`
           : ""),
@@ -1950,20 +1998,13 @@ function tryPrepareNativeScanGeneral(
   // Number of jaxpr inputs
   const numInputs = numConsts + numCarry + numX;
 
-  // Get avals for sizes and strides
-  const constAvals = bodyJaxpr.inBinders.slice(0, numConsts).map((v) => v.aval);
-  const carryAvals = bodyJaxpr.inBinders
-    .slice(numConsts, numConsts + numCarry)
-    .map((v) => v.aval);
-  const xAvals = bodyJaxpr.inBinders
-    .slice(numConsts + numCarry, numConsts + numCarry + numX)
-    .map((v) => v.aval);
-  const yAvals = bodyJaxpr.outs.slice(numCarry).map((v) => v.aval);
-
-  const constSizes = constAvals.map((a) => a.size * byteWidth(a.dtype));
-  const carrySizes = carryAvals.map((a) => a.size * byteWidth(a.dtype));
-  const xsStrides = xAvals.map((a) => a.size * byteWidth(a.dtype));
-  const ysStrides = yAvals.map((a) => a.size * byteWidth(a.dtype));
+  // Get buffer sizes using shared helper
+  const { constSizes, carrySizes, xsStrides, ysStrides } = getScanBufferSizes(
+    bodyJaxpr,
+    numConsts,
+    numCarry,
+    numX,
+  );
 
   // Build a mapping from JitId (output slot) to internal buffer index
   // Multi-output routines need multiple internal buffers
@@ -2108,7 +2149,7 @@ function tryPrepareNativeScanGeneral(
         if (internalIdx === undefined) {
           if (DEBUG >= 1)
             console.log(
-              `[general-scan] skipped, input ${inputId} not found in slot mapping`,
+              `[wasm-scan] skipped, input ${inputId} not found in slot mapping`,
             );
           return null;
         }
@@ -2224,7 +2265,7 @@ function tryPrepareNativeScanGeneral(
     if (internalIdx === undefined) {
       if (DEBUG >= 1)
         console.log(
-          `[general-scan] skipped, carry output slot ${slot} not produced by any execute step`,
+          `[wasm-scan] skipped, carry output slot ${slot} not produced by any execute step`,
         );
       return null;
     }
@@ -2267,7 +2308,7 @@ function tryPrepareNativeScanGeneral(
     const internalIdx = slotToInternal.get(slot);
     if (internalIdx === undefined) {
       if (DEBUG >= 1)
-        console.log(`[general-scan] skipped, Y output slot ${slot} not found`);
+        console.log(`[wasm-scan] skipped, Y output slot ${slot} not found`);
       return null;
     }
     yOutputSources.push({ type: "internal", internalIdx });
@@ -2276,7 +2317,7 @@ function tryPrepareNativeScanGeneral(
   // Try to prepare general native scan
   if (!backend.prepareNativeScanGeneral) {
     if (DEBUG >= 2)
-      console.log("[general-scan] backend has no prepareNativeScanGeneral");
+      console.log("[wasm-scan] backend has no prepareNativeScanGeneral");
     return null;
   }
 
@@ -2306,7 +2347,7 @@ function tryPrepareNativeScanGeneral(
       if (DEBUG >= 1) {
         const hasRoutines = steps.some((s) => s.source instanceof Routine);
         console.log(
-          `[general-scan] SUCCESS! Using ${backend.type.toUpperCase()} general native scan with ${steps.length} steps` +
+          `[wasm-scan] SUCCESS! Using WASM native scan with ${steps.length} steps` +
             (hasRoutines ? " (includes routines)" : ""),
         );
       }
@@ -2315,7 +2356,7 @@ function tryPrepareNativeScanGeneral(
     return null;
   } catch (e) {
     if (DEBUG >= 2) {
-      console.warn("[general-scan] preparation failed:", e);
+      console.warn("[wasm-scan] preparation failed:", e);
     }
     return null;
   }
