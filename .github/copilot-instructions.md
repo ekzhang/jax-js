@@ -486,33 +486,32 @@ WebAssembly module, eliminating JS/WASM boundary overhead per iteration. The uni
 scan** path handles both Kernels and Routines in the same scan body, with Cholesky and Sort routines
 embedded directly into the WASM module.
 
-| Feature / Test                                  | Status                           | Notes                           |
-| ----------------------------------------------- | -------------------------------- | ------------------------------- |
-| `scan basic`                                    | [✅ Pass](test/lax-scan.test.ts) |                                 |
-| `scan with pytree carry`                        | [✅ Pass](test/lax-scan.test.ts) |                                 |
-| `reverse scan`                                  | [✅ Pass](test/lax-scan.test.ts) |                                 |
-| `jit + scan`                                    | [✅ Pass](test/lax-scan.test.ts) |                                 |
-| `JVP (forward-mode)`                            | [✅ Pass](test/lax-scan.test.ts) |                                 |
-| `VJP (reverse-mode)`                            | [✅ Pass](test/lax-scan.test.ts) |                                 |
-| `vmap`                                          | [✅ Pass](test/lax-scan.test.ts) |                                 |
-| `vmap` > `jit(vmap(scan))`                      | [✅ Pass](test/lax-scan.test.ts) |                                 |
-| `vmap` > `vmap(jit(scan))`                      | [✅ Pass](test/lax-scan.test.ts) |                                 |
-| `scan over views`                               | [✅ Pass](test/lax-scan.test.ts) | sliced/transposed xs            |
-| `compiled-loop scan`                            | [✅ Pass](test/lax-scan.test.ts) |                                 |
-| `compiled-loop scan` > `with constants`         | [✅ Pass](test/lax-scan.test.ts) |                                 |
-| Compiled-loop `reverse=true`                    | ✅ Pass                          | all variants support reverse    |
-| `compiled-body scan`                            | [✅ Pass](test/lax-scan.test.ts) |                                 |
-| `native routine scan` > `cholesky`              | [✅ Pass](test/lax-scan.test.ts) | via unified general scan path   |
-| `native routine scan` > `cholesky with reverse` | [✅ Pass](test/lax-scan.test.ts) |                                 |
-| `native routine scan` > `sort`                  | [✅ Pass](test/lax-scan.test.ts) | passthrough carry pattern       |
-| `native routine scan` > `mixed kernel+routine`  | [✅ Pass](test/lax-scan.test.ts) | multiply → cholesky in one body |
-| `grad` through `scan` with routines             | [✅ Pass](test/lax-scan.test.ts) | mixed kernel+routine body       |
+| Feature / Test                          | Status                           | Notes                        |
+| --------------------------------------- | -------------------------------- | ---------------------------- |
+| `scan basic`                            | [✅ Pass](test/lax-scan.test.ts) |                              |
+| `scan with pytree carry`                | [✅ Pass](test/lax-scan.test.ts) |                              |
+| `reverse scan`                          | [✅ Pass](test/lax-scan.test.ts) |                              |
+| `jit + scan`                            | [✅ Pass](test/lax-scan.test.ts) |                              |
+| `JVP (forward-mode)`                    | [✅ Pass](test/lax-scan.test.ts) |                              |
+| `VJP (reverse-mode)`                    | [✅ Pass](test/lax-scan.test.ts) |                              |
+| `vmap`                                  | [✅ Pass](test/lax-scan.test.ts) |                              |
+| `vmap` > `jit(vmap(scan))`              | [✅ Pass](test/lax-scan.test.ts) |                              |
+| `vmap` > `vmap(jit(scan))`              | [✅ Pass](test/lax-scan.test.ts) |                              |
+| `scan over views`                       | [✅ Pass](test/lax-scan.test.ts) | sliced/transposed xs         |
+| `compiled-loop scan`                    | [✅ Pass](test/lax-scan.test.ts) |                              |
+| `compiled-loop scan` > `with constants` | [✅ Pass](test/lax-scan.test.ts) |                              |
+| Compiled-loop `reverse=true`            | ✅ Pass                          | all variants support reverse |
+| `compiled-body scan`                    | [✅ Pass](test/lax-scan.test.ts) |                              |
+| `routine in scan body`                  | [✅ Pass](test/lax-scan.test.ts) | uses fallback JS loop        |
+| `grad` through `scan` with routines     | [✅ Pass](test/lax-scan.test.ts) | works via fallback path      |
+
+**Note:** Routines (Cholesky, Sort, etc.) in scan bodies use the fallback JS loop path since they
+are now pre-compiled AssemblyScript modules that cannot be embedded inline in native scan.
 
 **Performance benchmarks:**
 
 - Compiled-body (JS loop, Kalman filter): ~308 iter/sec
 - Compiled-loop (general, Kalman filter): ~1.5M iter/sec
-- Native routine scan (Cholesky, 500 iterations, 4×4): 960× faster than fallback
 
 **Scan vs jit(loop) overhead:**
 
@@ -869,8 +868,11 @@ All WASM scan variants are now handled by a single unified implementation:
 - Multiple independent kernels (like Kalman filter with 2 matmuls)
 - Bodies with data dependencies between steps
 - Bodies where numCarry !== numY (e.g., 2 carry values, 5 outputs)
-- Routine steps (Cholesky, Sort) embedded in the scan loop
 - Passthrough patterns (carry values returned unchanged as Y outputs)
+
+**Note:** Routine steps (Cholesky, Sort, etc.) are NOT supported in native scan. They use
+pre-compiled AssemblyScript WASM modules that cannot be embedded inline. Scans with routine bodies
+fall back to the JS loop.
 
 **Codegen (`codegenNativeScanGeneral`):**
 
@@ -879,9 +881,7 @@ All WASM scan variants are now handled by a single unified implementation:
 3. Copy initCarry to carryOut (working buffer)
 4. Generate outer loop (iter = 0..length):
    - Compute dataIdx (reverse-aware): `dataIdx = reverse ? (length-1-iter) : iter`
-   - For each step (Kernel or Routine):
-     - If Kernel: inner loop evaluating expression, optionally with reduction
-     - If Routine: call embedded routine function (e.g., `wasm_cholesky`)
+   - For each Kernel step: inner loop evaluating expression, optionally with reduction
    - Copy Y outputs from internal buffers or passthrough from carry
    - Copy carry outputs from internal buffers or passthrough
 5. Free internal buffers, return WebAssembly.Module
@@ -890,15 +890,14 @@ All WASM scan variants are now handled by a single unified implementation:
 
 - `NativeScanGeneralParams`: length, carrySizes, xsStrides, internalSizes, steps, carryOutSources,
   yOutputSources
-- `GeneralScanStep`: source (Kernel | Routine), inputSlots, outputInternalIdx
-- `translateExpWithScanContext()`: scan-aware expression codegen
+- `GeneralScanStep`: source (Kernel), inputSlots, outputInternalIdx
+- `translateExpWithGeneralScanContext()`: scan-aware expression codegen
 
 **JIT preparation (`tryPrepareNativeScanGeneral`):**
 
 - Analyzes body program to extract steps, internal buffers, output mappings
 - Handles Kernel steps (elementwise with optional reductions)
-- Handles Routine steps (Cholesky, Sort embedded in WASM module)
-- Returns `null` if unsupported routines are encountered (falls back to JS loop)
+- Returns `null` if any routines are encountered (falls back to JS loop)
 
 ### Reverse Scan Support
 
@@ -1069,33 +1068,19 @@ The wrapper tries to find xs bindings starting at index `numConsts + numCarry` b
 has 1 input at index 0. Fix would require tracking the mapping from body args to routine args
 through the JIT compilation.
 
-### More WASM Routines in Native Scan
+### Native Scan Routine Limitation
 
-The unified general scan path supports Routines with these requirements:
+Routines (Cholesky, Sort, TriangularSolve, LU, Argsort) cannot be embedded in native scan loops
+because they are now pre-compiled AssemblyScript WASM modules loaded via `getRoutineModuleSync()`.
+These modules can't be inlined into the generated scan WASM code.
 
-1. Supported in `tryPrepareNativeScanGeneral` (currently: Cholesky, Sort)
-2. Has AssemblyScript source in `src/routines/` compiled to WASM
-3. Routine dispatch wired into `codegenNativeScanGeneral` step handler
+**Impact:** Scans with routine bodies fall back to the JS loop (`ScanPath: "fallback"`). This is
+slower than native scan but still correct.
 
-**How to add a routine to native scan:**
+**Future options:**
 
-1. Ensure routine has AssemblyScript implementation in `src/routines/`
-2. Add routine name check in `tryPrepareNativeScanGeneral` (jit.ts)
-3. Add case in `codegenNativeScanGeneral` step loop for the routine
-
-**Routine eligibility for native scan:**
-
-| Routine         | Native Scan    | Notes                                          |
-| --------------- | -------------- | ---------------------------------------------- |
-| Cholesky        | ✅ Implemented | Embedded in general scan path                  |
-| Sort            | ✅ Implemented | Embedded with aux buffer support               |
-| Argsort         | ❌ Not yet     | Would need 2 output buffers (values + indices) |
-| TriangularSolve | ❌ Not yet     | Would need 2 inputs (A constant + x variable)  |
-| LU              | ❌ Not yet     | Would need 3 outputs (L, U, pivots)            |
-
-**Key insight:** Routines are **black-box primitives** in Jaxpr. The autodiff rules are defined in
-terms of other primitives (e.g., Cholesky's JVP calls TriangularSolve), so the backend
-implementation is completely decoupled.
+1. Keep routines as standalone modules (current approach, simpler maintenance)
+2. Inline AS source at build time into scan codegen (complex, uncertain benefit)
 
 ### Alternative: Expressing routines with lax.scan
 
