@@ -1014,6 +1014,7 @@ carry.forEach((c) => c.dispose());
 
 | Priority | Feature                                    | Notes                                                   |
 | -------- | ------------------------------------------ | ------------------------------------------------------- |
+| High     | Sqrt(N) checkpointing for grad(scan)       | Reduce memory from O(N) to O(√N) with 2× recompute      |
 | Medium   | Fix WebGPU compiled-body (routine) binding | `wrapRoutineForScan` incorrectly maps routine→scan args |
 
 ### Fix Compiled-Body Binding Detection

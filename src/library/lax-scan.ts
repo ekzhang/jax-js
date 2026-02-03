@@ -14,74 +14,225 @@ import type { JsTree } from "../tree";
 import type { ScanPath } from "../utils";
 
 /**
- * Scan a function over the leading axis of input arrays.
- *
- * This is the JAX-style functional loop that threads a carry through successive
- * applications of `f`, accumulating outputs along the way.
- *
- * ## Reference Counting Contract
- *
- * **Inputs (consumed):**
- * - `init` carry arrays are consumed by scan (refcount -1)
- * - `xs` input arrays are consumed by scan (refcount -1)
- * - Use `.ref` if you need to keep inputs alive after scan
- *
- * **Body function `f(carry, x)`:**
- * - `carry` and `x` are borrowed references — do NOT dispose them
- * - Return NEW arrays for `newCarry` and `y` outputs
- * - If returning the same array in both carry and y (passthrough pattern),
- *   use `.ref` to create a second reference:
- *   ```ts
- *   return [{ sum: newSum.ref }, newSum];  // newSum used twice
- *   ```
- *
- * **Outputs (owned by caller):**
- * - `finalCarry` and `stackedOutputs` are new arrays owned by the caller
- * - Caller is responsible for disposing them when done
- *
- * **jit(scan) behavior:**
- * - Same contract as lax.scan
- * - Outputs can be used normally after jit returns
- * - All intermediate arrays are managed automatically
- *
- * @param f - Step function: (carry, x) => [newCarry, output]
- * @param init - Initial carry value (pytree of arrays) — consumed
- * @param xs - Input sequence (pytree, each leaf scanned over axis 0) — consumed
- * @param length - Optional length override (for when xs is null/empty)
- * @returns [finalCarry, stackedOutputs] - Final carry and outputs stacked along axis 0
- *
- * @example
- * ```ts
- * // Cumulative sum
- * const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
- *   const sum = np.add(carry, x);
- *   return [sum, sum.ref];  // .ref because sum appears in both carry and output
- * };
- * const [final, sums] = await scan(step, np.array([0.0]), np.array([[1], [2], [3], [4], [5]]));
- * // final = [15.0], sums = [[1], [3], [6], [10], [15]]
- *
- * // Cleanup
- * final.dispose();
- * sums.dispose();
- * ```
+ * Options for {@link scan}.
  */
 export interface ScanOptions {
-  /** Number of iterations (inferred from xs if not provided) */
+  /**
+   * Number of iterations. If not provided, inferred from the leading axis of `xs`.
+   * Required when `xs` is empty or null.
+   */
   length?: number;
-  /** Run scan in reverse order (default: false) */
+
+  /**
+   * If `true`, process `xs` in reverse order (from last to first element).
+   * The output `ys` will also be in reverse order.
+   * @default false
+   */
   reverse?: boolean;
+
   /**
    * Require a specific scan implementation path. If the JIT cannot use the
    * required path, it throws an error instead of falling back.
    *
-   * Single path: `requirePath: "native-scan"`
-   * Multiple allowed paths: `requirePath: ["native-scan", "native-scan-multi"]`
+   * This is primarily useful for testing to ensure optimized code paths are used.
    *
-   * This is useful for testing to ensure optimized paths are actually used.
+   * @example
+   * ```ts
+   * // Require the fused (native) scan path
+   * lax.scan(f, init, xs, { requirePath: "fused" });
+   *
+   * // Allow either fused or fallback
+   * lax.scan(f, init, xs, { requirePath: ["fused", "fallback"] });
+   * ```
    */
   requirePath?: ScanPath | ScanPath[];
 }
 
+/**
+ * Scan a function over leading array axes while carrying along state.
+ *
+ * Think of `scan` as a functional `reduce` that also returns all intermediate
+ * results. It iterates over the leading axis of `xs`, threading a "carry" value
+ * through each step and collecting outputs.
+ *
+ * ## Type Signature
+ *
+ * ```ts
+ * scan(f, init, xs) → [finalCarry, ys]
+ *
+ * // Where:
+ * // f: (carry: C, x: X) => [C, Y]  -- step function
+ * // init: C                        -- initial carry
+ * // xs: X[]                        -- input array (leading axis = iterations)
+ * // finalCarry: C                  -- carry after last iteration
+ * // ys: Y[]                        -- stacked outputs from each iteration
+ * ```
+ *
+ * ## Semantics
+ *
+ * The semantics are roughly equivalent to this JavaScript:
+ * ```ts
+ * function scan(f, init, xs) {
+ *   let carry = init;
+ *   const ys = [];
+ *   for (const x of xs) {
+ *     const [newCarry, y] = f(carry, x);
+ *     carry = newCarry;
+ *     ys.push(y);
+ *   }
+ *   return [carry, np.stack(ys)];
+ * }
+ * ```
+ *
+ * Unlike a plain JavaScript loop:
+ * - Both `xs` and `ys` can be arbitrary pytrees (nested objects/arrays)
+ * - The scan is compiled to efficient native code (WASM/WebGPU)
+ * - Supports autodiff: `grad(f)` works through scan
+ * - The carry shape/dtype must be fixed across all iterations
+ *
+ * ## Reference Counting Contract
+ *
+ * **Inputs (consumed):**
+ * - `init` and `xs` are consumed by scan (refcount decremented)
+ * - Use `.ref` if you need to keep inputs alive: `scan(f, init.ref, xs.ref)`
+ *
+ * **Body function:**
+ * - `carry` and `x` are **borrowed** — do NOT dispose them
+ * - Return **new** arrays for `newCarry` and `y`
+ * - For passthrough (same array in both), use `.ref`: `[result.ref, result]`
+ *
+ * **Outputs (caller owns):**
+ * - `finalCarry` and `ys` are owned by caller — dispose when done
+ *
+ * @param f - Step function `(carry, x) => [newCarry, y]` where:
+ *   - `carry` is the current state (same structure as `init`)
+ *   - `x` is a slice of `xs` along axis 0 (shape = `xs.shape.slice(1)`)
+ *   - `newCarry` is the updated state (same structure/shape as `carry`)
+ *   - `y` is the output for this iteration
+ * @param init - Initial carry value. Can be a single array or a pytree of arrays.
+ * @param xs - Input sequence to scan over. The leading axis is the scan dimension.
+ *   Can be a single array or a pytree of arrays (all with same leading axis size).
+ * @param options - Scan options or legacy `length` number
+ * @returns `[finalCarry, ys]` where:
+ *   - `finalCarry` has the same structure as `init`
+ *   - `ys` has the same structure as `y` from `f`, with each leaf having
+ *     an additional leading axis of size `length`
+ *
+ * @example Cumulative sum
+ * ```ts
+ * import { lax, numpy as np } from '@jax-js/jax';
+ *
+ * const step = (carry, x) => {
+ *   const sum = np.add(carry, x);
+ *   return [sum, sum.ref];  // .ref: sum used in both outputs
+ * };
+ *
+ * const init = np.array([0.0]);
+ * const xs = np.array([[1], [2], [3], [4], [5]]);
+ * const [final, sums] = await lax.scan(step, init, xs);
+ *
+ * console.log(await final.data());  // [15]
+ * console.log(await sums.data());   // [[1], [3], [6], [10], [15]]
+ *
+ * final.dispose();
+ * sums.dispose();
+ * ```
+ *
+ * @example Factorial via scan
+ * ```ts
+ * // Compute n! for n = 1..5
+ * const step = (carry, x) => {
+ *   const next = np.multiply(carry, x);
+ *   return [next, next.ref];
+ * };
+ *
+ * const init = np.array([1]);
+ * const xs = np.array([[1], [2], [3], [4], [5]]);
+ * const [final, factorials] = await lax.scan(step, init, xs);
+ * // factorials = [[1], [2], [6], [24], [120]]
+ * ```
+ *
+ * @example Pytree carry (multiple state variables)
+ * ```ts
+ * // Track both sum and count
+ * const step = (carry, x) => {
+ *   const newSum = np.add(carry.sum, x);
+ *   const newCount = np.add(carry.count, np.array([1]));
+ *   return [
+ *     { sum: newSum.ref, count: newCount.ref },
+ *     { sum: newSum, count: newCount }
+ *   ];
+ * };
+ *
+ * const init = { sum: np.array([0]), count: np.array([0]) };
+ * const xs = np.array([[10], [20], [30]]);
+ * const [final, history] = await lax.scan(step, init, xs);
+ * // final.sum = [60], final.count = [3]
+ * ```
+ *
+ * @example Reverse scan
+ * ```ts
+ * // Process sequence from end to beginning
+ * const [final, ys] = await lax.scan(step, init, xs, { reverse: true });
+ * ```
+ *
+ * @example jit(scan) - Compile the entire scan loop
+ * ```ts
+ * import { jit, lax, numpy as np } from '@jax-js/jax';
+ *
+ * // Wrap scan in jit to compile the entire loop into optimized native code.
+ * // This is the most common and efficient pattern for production use.
+ * const step = (carry, x) => {
+ *   const newCarry = np.add(carry, x);
+ *   return [newCarry, newCarry.ref];
+ * };
+ *
+ * const scanFn = jit((init, xs) => lax.scan(step, init, xs));
+ *
+ * const init = np.array([0.0]);
+ * const xs = np.array([[1.0], [2.0], [3.0]]);
+ * const [final, ys] = await scanFn(init, xs);
+ *
+ * console.log(await final.data());  // [6]
+ * scanFn.dispose();  // Free compiled program
+ * ```
+ *
+ * @example scan(jit(body)) - JIT-compile only the step function
+ * ```ts
+ * import { jit, lax, numpy as np } from '@jax-js/jax';
+ *
+ * // JIT-compile just the step function. Each iteration calls compiled code,
+ * // but the loop itself runs in JavaScript. Useful when step is expensive
+ * // but you want to inspect intermediate values or the scan body is dynamic.
+ * const step = jit((carry, x) => {
+ *   const newCarry = np.add(carry, x);
+ *   return [newCarry, newCarry.ref];
+ * });
+ *
+ * const init = np.array([0.0]);
+ * const xs = np.array([[1.0], [2.0], [3.0]]);
+ * const [final, ys] = await lax.scan(step, init, xs);
+ *
+ * console.log(await final.data());  // [6]
+ * step.dispose();  // Free compiled step function
+ * ```
+ *
+ * @example With grad for differentiation
+ * ```ts
+ * import { grad, lax, numpy as np } from '@jax-js/jax';
+ *
+ * const loss = (init, xs) => {
+ *   const [final, ys] = lax.scan(step, init, xs);
+ *   final.dispose();
+ *   return np.sum(ys);
+ * };
+ *
+ * const gradLoss = grad(loss);
+ * const [dInit, dXs] = await gradLoss(init, xs);
+ * ```
+ *
+ * @see {@link https://docs.jax.dev/en/latest/_autosummary/jax.lax.scan.html | JAX lax.scan}
+ */
 export function scan<
   Carry extends JsTree<Array>,
   X extends JsTree<Array>,
@@ -189,7 +340,36 @@ export function scan<
 
 /**
  * Stack a list of pytrees along a new leading axis.
- * Each pytree in the list must have the same structure.
+ *
+ * Each pytree in the list must have the same structure (same keys, same nesting).
+ * The corresponding leaves are stacked using {@link numpy.stack}.
+ *
+ * This is useful for manually accumulating scan-like results when you need
+ * more control than {@link scan} provides.
+ *
+ * @param trees - Array of pytrees to stack. All must have identical structure.
+ * @returns A single pytree with the same structure, where each leaf is the
+ *   stack of corresponding leaves from input trees (new axis at position 0).
+ * @throws If `trees` is empty or pytrees have mismatched structures.
+ *
+ * @example Single arrays
+ * ```ts
+ * const a = np.array([1, 2]);
+ * const b = np.array([3, 4]);
+ * const c = np.array([5, 6]);
+ * const stacked = stackPyTree([a, b, c]);
+ * // stacked.shape = [3, 2], values = [[1,2], [3,4], [5,6]]
+ * ```
+ *
+ * @example Pytrees (objects)
+ * ```ts
+ * const trees = [
+ *   { x: np.array([1]), y: np.array([2]) },
+ *   { x: np.array([3]), y: np.array([4]) },
+ * ];
+ * const stacked = stackPyTree(trees);
+ * // stacked.x.shape = [2, 1], stacked.y.shape = [2, 1]
+ * ```
  */
 export function stackPyTree<T extends JsTree<Array>>(trees: T[]): T {
   if (trees.length === 0) {

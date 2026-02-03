@@ -451,6 +451,106 @@ suite.each(devices)("lax.scan device:%s", (device) => {
       expect(finalData[2]).toBeCloseTo(2.0);
       expect(finalData[3]).toBeCloseTo(2.0);
     });
+
+    test("complex composite body (Kalman-like)", async () => {
+      // Tests multiple matmul + arithmetic ops in a single scan step.
+      // This pattern is common in Kalman filters and state-space models.
+      // Covers: matmul, add, subtract, multiply in one body (many ops per step).
+
+      // Simplified 2D state-space model:
+      // state: [2, 1], cov: [2, 2], obs: [1, 1]
+      // F: state transition [2, 2]
+      // H: observation matrix [1, 2]
+
+      const F = np.array([
+        [1, 0.1],
+        [0, 1],
+      ]); // State transition
+      const H = np.array([[1, 0]]); // Observation (extracts first element)
+      const Q = np.array([
+        [0.01, 0],
+        [0, 0.01],
+      ]); // Process noise
+      const R = np.array([[0.1]]); // Observation noise
+
+      type Carry = { state: np.Array; cov: np.Array };
+      type X = { obs: np.Array };
+      type Y = { pred: np.Array; innovation: np.Array };
+
+      const step = (carry: Carry, x: X): [Carry, Y] => {
+        const { state, cov } = carry;
+        const { obs } = x;
+
+        // Predict step: state_pred = F @ state
+        const statePred = np.matmul(F.ref, state.ref);
+
+        // Predicted covariance: cov_pred = F @ cov @ F.T + Q
+        const FCov = np.matmul(F.ref, cov.ref);
+        const covPred = np.add(np.matmul(FCov, F.ref.transpose()), Q.ref);
+
+        // Innovation: y = obs - H @ state_pred
+        const innovation = np.subtract(
+          obs.ref,
+          np.matmul(H.ref, statePred.ref),
+        );
+
+        // Kalman gain (simplified): K = cov_pred @ H.T @ inv(S)
+        // For simplicity, we use a scalar approximation: K = cov_pred @ H.T * scale
+        const covH = np.matmul(covPred.ref, H.ref.transpose());
+        const scale = np.array([[0.5]]); // Simplified gain scale
+        const K = np.multiply(covH, scale);
+
+        // Update: state_new = state_pred + K @ innovation
+        const stateNew = np.add(
+          statePred.ref,
+          np.matmul(K.ref, innovation.ref),
+        );
+
+        // Covariance update (simplified): cov_new = cov_pred * 0.9
+        const covNew = np.multiply(covPred.ref, np.array([[0.9]]));
+
+        return [
+          { state: stateNew, cov: covNew },
+          { pred: statePred, innovation },
+        ];
+      };
+
+      // Initial state and covariance
+      const initState = np.array([[0], [0]]);
+      const initCov = np.array([
+        [1, 0],
+        [0, 1],
+      ]);
+
+      // Observations: 5 time steps
+      const observations = np.array([[[1]], [[2]], [[2.5]], [[3]], [[3.5]]]);
+
+      const [finalCarry, outputs] = await lax.scan(
+        step,
+        { state: initState, cov: initCov },
+        { obs: observations },
+      );
+
+      // Verify outputs have correct shapes
+      expect(finalCarry.state.shape).toEqual([2, 1]);
+      expect(finalCarry.cov.shape).toEqual([2, 2]);
+      expect(outputs.pred.shape).toEqual([5, 2, 1]);
+      expect(outputs.innovation.shape).toEqual([5, 1, 1]);
+
+      // Check that state has been updated (not all zeros)
+      const finalStateData = await finalCarry.state.ref.data();
+      expect(Math.abs(finalStateData[0])).toBeGreaterThan(0.1);
+
+      // Cleanup
+      F.dispose();
+      H.dispose();
+      Q.dispose();
+      R.dispose();
+      finalCarry.state.dispose();
+      finalCarry.cov.dispose();
+      outputs.pred.dispose();
+      outputs.innovation.dispose();
+    });
   });
 
   describe("native routine scan (WASM)", () => {
