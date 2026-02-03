@@ -385,7 +385,7 @@ elementwise kernels and **multi-kernel scan** for bodies with multiple independe
 | `compiled-loop scan` > `with reduction` | [✅ Pass](test/lax-scan.test.ts) | e.g., `carry += sum(x)` or matmul        |
 | `compiled-loop scan` > `with reverse`   | [✅ Pass](test/lax-scan.test.ts) | uses dataIdx like WASM                   |
 | `compiled-loop scan` > `with constants` | [✅ Pass](test/lax-scan.test.ts) | captured constants bound as storage      |
-| `multi-kernel scan`                     | ✅ Pass                          | multiple carries, up to 8 total buffers  |
+| `multi-kernel scan`                     | ✅ Pass                          | derives output mapping from body outputs |
 | `compiled-body scan` (routine bodies)   | ⚠️ Fallback                      | uses JS loop (see Known Limitations)     |
 
 **Note on numCarry ≠ numY:** WebGPU compiled-loop requires `numCarry === numY`. When they differ,
