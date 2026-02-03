@@ -2040,6 +2040,108 @@ describe("scan autodiff", () => {
     });
   });
 
+  describe("WebGL backend", () => {
+    /**
+     * WebGL backend tests for scan functionality.
+     *
+     * NOTE: These tests are UNTESTED in CI because:
+     * - Deno doesn't provide WebGL (only WebGPU)
+     * - Playwright's headless Chromium doesn't expose WebGL in our test environment
+     * - The dev system lacks a display for headed browser testing
+     *
+     * The tests exist to verify scan works on WebGL via the fallback path when
+     * run in a browser with WebGL support. The fallback scanRunner is backend-agnostic
+     * and tested with CPU/WASM/WebGPU, so WebGL should work identically.
+     *
+     * To test manually: run the website demos in a WebGL-capable browser.
+     */
+    it.skipIf(!devicesAvailable.includes("webgl"))(
+      "scan works on WebGL via fallback path",
+      async () => {
+        defaultDevice("webgl");
+
+        let capturedPath: string | null = null;
+        setScanPathCallback((path) => {
+          capturedPath = path;
+        });
+
+        try {
+          const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+            const newCarry = np.add(carry.ref, x);
+            return [newCarry, newCarry.ref];
+          };
+
+          const init = np.zeros([1]);
+          const xs = np.array([[1.0], [2.0], [3.0]]);
+
+          const [finalCarry, ys] = lax.scan(step, init, xs);
+
+          // Verify results
+          expect(finalCarry.shape).toEqual([1]);
+          expect(ys.shape).toEqual([3, 1]);
+
+          const carryData = await finalCarry.data();
+          expect(carryData[0]).toBeCloseTo(6.0); // 1 + 2 + 3
+
+          const ysData = await ys.data();
+          expect(ysData[0]).toBeCloseTo(1.0);
+          expect(ysData[1]).toBeCloseTo(3.0);
+          expect(ysData[2]).toBeCloseTo(6.0);
+
+          // WebGL should use fallback path (no native scan support)
+          expect(capturedPath).toBe("fallback");
+        } finally {
+          setScanPathCallback(null);
+        }
+      },
+    );
+
+    it.skipIf(!devicesAvailable.includes("webgl"))(
+      "jit(scan) works on WebGL via fallback path",
+      async () => {
+        defaultDevice("webgl");
+
+        let capturedPath: string | null = null;
+        setScanPathCallback((path) => {
+          capturedPath = path;
+        });
+
+        try {
+          const jitScan = jit((xs: np.Array) => {
+            const step = (
+              carry: np.Array,
+              x: np.Array,
+            ): [np.Array, np.Array] => {
+              const newCarry = np.add(carry.ref, x);
+              return [newCarry, newCarry.ref];
+            };
+            const init = np.zeros([1]);
+            const [finalCarry, ys] = lax.scan(step, init, xs);
+            return [finalCarry, ys] as [np.Array, np.Array];
+          });
+
+          const xs = np.array([[1.0], [2.0], [3.0]]);
+          const [finalCarry, ys] = jitScan(xs);
+
+          const carryData = await finalCarry.data();
+          expect(carryData[0]).toBeCloseTo(6.0);
+
+          const ysData = await ys.data();
+          expect(ysData[0]).toBeCloseTo(1.0);
+          expect(ysData[1]).toBeCloseTo(3.0);
+          expect(ysData[2]).toBeCloseTo(6.0);
+
+          // WebGL should use fallback path
+          expect(capturedPath).toBe("fallback");
+
+          jitScan.dispose();
+        } finally {
+          setScanPathCallback(null);
+        }
+      },
+    );
+  });
+
   /**
    * ============================================================================
    * KNOWN LIMITATIONS - Tests that verify documented missing features

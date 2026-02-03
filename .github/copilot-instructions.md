@@ -393,6 +393,25 @@ WebGPU falls back to JS loop. WASM's general scan handles this case.
 
 **Tested on:** NVIDIA RTX 4070 Ti SUPER via Deno WebGPU (headless, no X11)
 
+### WebGL Backend
+
+The WebGL backend has **no native scan support**. All scans use the JS fallback path, which executes
+the body program per iteration. This works correctly but lacks the compiled-loop optimization.
+
+| Feature / Test | Status      | Notes                                         |
+| -------------- | ----------- | --------------------------------------------- |
+| `scan basic`   | ⚠️ Untested | Uses fallback path; requires browser with GPU |
+| `jit + scan`   | ⚠️ Untested | Uses fallback path                            |
+
+**Note:** WebGL tests exist in `test/lax-scan.test.ts` but are **untested in CI** because:
+
+- Deno doesn't provide WebGL (only WebGPU)
+- Playwright's headless Chromium doesn't expose WebGL in the test environment
+- The dev system lacks a display for headed browser testing
+
+The fallback `scanRunner` is backend-agnostic and tested with CPU/WASM/WebGPU, so WebGL should work
+identically. To verify manually, run website demos in a WebGL-capable browser.
+
 ---
 
 ## Design Choices & Rationales
