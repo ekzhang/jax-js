@@ -10,6 +10,7 @@ import {
   dtypedArray,
   dtypedJsArray,
   Kernel,
+  MultiKernel,
   Reduction,
 } from "../alu";
 import { Backend, Device, Executable, getBackend, Slot } from "../backend";
@@ -79,7 +80,7 @@ export class PendingExecute {
 
   constructor(
     readonly backend: Backend,
-    readonly source: Kernel | Routine,
+    readonly source: Kernel | MultiKernel | Routine,
     readonly inputs: Slot[],
     readonly outputs: Slot[],
   ) {
@@ -110,6 +111,8 @@ export class PendingExecute {
     this.#promise = (async () => {
       if (this.source instanceof Kernel) {
         this.prepared = await this.backend.prepareKernel(this.source);
+      } else if (this.source instanceof MultiKernel) {
+        this.prepared = await this.backend.prepareMultiKernel(this.source);
       } else {
         this.prepared = await this.backend.prepareRoutine(this.source);
       }
@@ -121,6 +124,8 @@ export class PendingExecute {
     if (this.prepared) return;
     if (this.source instanceof Kernel) {
       this.prepared = this.backend.prepareKernelSync(this.source);
+    } else if (this.source instanceof MultiKernel) {
+      this.prepared = this.backend.prepareMultiKernelSync(this.source);
     } else {
       this.prepared = this.backend.prepareRoutineSync(this.source);
     }

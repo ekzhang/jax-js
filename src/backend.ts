@@ -9,7 +9,7 @@
 //
 // The "cpu" backend is very slow and used for debugging. Prefer "wasm".
 
-import { AluOp, DType, Kernel } from "./alu";
+import { AluOp, DType, Kernel, MultiKernel } from "./alu";
 import { CpuBackend } from "./backend/cpu";
 import { WasmBackend } from "./backend/wasm";
 import { Routine, Routines } from "./routine";
@@ -192,6 +192,12 @@ export interface Backend {
   /** Prepare an expression to be executed later, blocking variant. */
   prepareKernelSync(kernel: Kernel): Executable;
 
+  /** Prepare a multi-output kernel to be executed later. */
+  prepareMultiKernel(multiKernel: MultiKernel): Promise<Executable>;
+
+  /** Prepare a multi-output kernel to be executed later, blocking variant. */
+  prepareMultiKernelSync(multiKernel: MultiKernel): Executable;
+
   /** Prepare an advanced routine to be executed later. */
   prepareRoutine(routine: Routine): Promise<Executable>;
 
@@ -252,8 +258,8 @@ export interface Backend {
 
 export class Executable<T = any> {
   constructor(
-    /** The `Kernel` or `Routine` that was prepared. */
-    readonly source: Kernel | Routine,
+    /** The `Kernel`, `MultiKernel`, or `Routine` that was prepared. */
+    readonly source: Kernel | MultiKernel | Routine,
     /** Extra data specific to the backend running this executable. */
     readonly data: T,
   ) {}

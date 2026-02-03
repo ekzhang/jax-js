@@ -1403,6 +1403,12 @@ export const AluVar = {
  * Each of these can be processed by a backend into some lower-level
  * representation. It consists of one or more fused operations, optionally
  * indexing into a buffer.
+ *
+ * TODO(future): Consider unifying Kernel and MultiKernel into a single class
+ * with `outputs: KernelOutput[]`. Non-reducing kernels could have multiple
+ * outputs sharing the same loop. Reducing outputs would require a shared
+ * reductionSize. This would reduce instanceof checks and codegen duplication.
+ * See also: MultiKernel below.
  */
 export class Kernel implements FpHashable {
   constructor(
@@ -1451,6 +1457,85 @@ export class Kernel implements FpHashable {
   /** The number of bytes in the output array when evaluating this kernel. */
   get bytes(): number {
     return this.size * byteWidth(this.dtype);
+  }
+}
+
+/**
+ * Description of a single output in a MultiKernel.
+ */
+export interface MultiKernelOutput {
+  /** Size of this output array in element count. */
+  readonly size: number;
+  /** Expression to be evaluated for this output. */
+  readonly exp: AluExp;
+  /** Data type of this output. */
+  readonly dtype: DType;
+}
+
+/**
+ * Description of a multi-output kernel to be compiled.
+ *
+ * This is an extension of Kernel that produces multiple outputs in a single
+ * dispatch. All outputs share the same inputs and are computed in a single
+ * loop, improving efficiency for operations like Mandelbrot where multiple
+ * arrays are updated simultaneously.
+ *
+ * Multi-output kernels are NOT supported when any output has a reduction,
+ * since reductions require different loop structures.
+ */
+export class MultiKernel implements FpHashable {
+  readonly outputs: MultiKernelOutput[];
+
+  constructor(
+    /** Number of global arguments / arrays. */
+    readonly nargs: number,
+    /** Output specifications: one per output. */
+    outputs: MultiKernelOutput[],
+  ) {
+    if (outputs.length === 0) {
+      throw new Error("MultiKernel requires at least one output");
+    }
+    // Simplify all expressions
+    this.outputs = outputs.map((o) => ({
+      size: o.size,
+      exp: o.exp.simplify(),
+      dtype: o.dtype,
+    }));
+  }
+
+  hash(state: FpHash): void {
+    state.update(this.nargs);
+    for (const out of this.outputs) {
+      state.update(out.size).update(out.exp).update(out.dtype);
+    }
+  }
+
+  pprint(): PPrint {
+    let details = PPrint.pp(`nargs = ${this.nargs}`);
+    for (let i = 0; i < this.outputs.length; i++) {
+      const out = this.outputs[i];
+      details = details.concat(
+        PPrint.pp(`output[${i}] = { size=${out.size}, exp=${out.exp} }`),
+      );
+    }
+    return PPrint.pp("MultiKernel { ").stack(details).stack(PPrint.pp(" }"));
+  }
+
+  toString(): string {
+    return this.pprint().toString();
+  }
+
+  /** The total number of output bytes for all outputs. */
+  get totalBytes(): number {
+    return this.outputs.reduce(
+      (sum, out) => sum + out.size * byteWidth(out.dtype),
+      0,
+    );
+  }
+
+  /** The number of bytes for each output. */
+  get bytesPerOutput(): number[] {
+    return this.outputs.map((out) => out.size * byteWidth(out.dtype));
   }
 }
 

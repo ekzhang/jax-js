@@ -1,4 +1,12 @@
-import { AluExp, AluGroup, AluOp, DType, isFloatDtype, Kernel } from "../alu";
+import {
+  AluExp,
+  AluGroup,
+  AluOp,
+  DType,
+  isFloatDtype,
+  Kernel,
+  MultiKernel,
+} from "../alu";
 import {
   Backend,
   Device,
@@ -271,6 +279,23 @@ export class WebGLBackend implements Backend {
     const dispatch = compileShader(this.gl, shader);
     this.#programCache.set(shader.code, dispatch);
     return new Executable(kernel, dispatch);
+  }
+
+  async prepareMultiKernel(
+    _multiKernel: MultiKernel,
+  ): Promise<Executable<ShaderDispatch>> {
+    // WebGL does not support multi-output rendering in this context
+    throw new Error(
+      "MultiKernel not supported for WebGL - should fall back to single kernels",
+    );
+  }
+
+  prepareMultiKernelSync(
+    _multiKernel: MultiKernel,
+  ): Executable<ShaderDispatch> {
+    throw new Error(
+      "MultiKernel not supported for WebGL - should fall back to single kernels",
+    );
   }
 
   prepareRoutine(routine: Routine): Promise<Executable> {

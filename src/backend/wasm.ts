@@ -6,6 +6,7 @@ import {
   DType,
   isFloatDtype,
   Kernel,
+  MultiKernel,
 } from "../alu";
 import {
   Backend,
@@ -45,8 +46,11 @@ interface WasmProgram {
 
 /** Describes a step in a general scan body (handles data dependencies). */
 export interface GeneralScanStep {
-  /** The source: either a Kernel (elementwise) or a Routine (special algorithm). */
-  source: Kernel | Routine;
+  /**
+   * The source: either a Kernel (single-output elementwise), MultiKernel
+   * (multi-output elementwise), or a Routine (special algorithm).
+   */
+  source: Kernel | MultiKernel | Routine;
   /**
    * Input slot indices. Can reference:
    * - [0, numConsts): constant slots
@@ -236,6 +240,21 @@ export class WasmBackend implements Backend {
       return new WebAssembly.Module(bytes);
     });
     return new Executable(kernel, { module });
+  }
+
+  async prepareMultiKernel(
+    multiKernel: MultiKernel,
+  ): Promise<Executable<WasmProgram>> {
+    return this.prepareMultiKernelSync(multiKernel);
+  }
+
+  prepareMultiKernelSync(multiKernel: MultiKernel): Executable<WasmProgram> {
+    const kernelHash = FpHash.hash(multiKernel);
+    const module = runWithCache(moduleCache, kernelHash.toString(), () => {
+      const bytes = codegenWasmMulti(multiKernel);
+      return new WebAssembly.Module(bytes);
+    });
+    return new Executable(multiKernel, { module });
   }
 
   async prepareRoutine(routine: Routine): Promise<Executable<WasmProgram>> {
@@ -802,6 +821,102 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
 }
 
 /**
+ * Apply nullopt tuning to a single expression (no reduction).
+ * Substitutes gidx with special var and rewrites GlobalViews.
+ */
+function tuneNulloptExp(exp: AluExp, size: number): AluExp {
+  const gidx = AluExp.special(DType.Int32, "gidx", size);
+  return exp.substitute({ gidx }).rewriteGlobalViews().simplify();
+}
+
+/**
+ * Generate WASM bytecode for a multi-output kernel.
+ *
+ * This generates a single loop that computes and stores multiple outputs
+ * simultaneously, improving efficiency for operations like Mandelbrot where
+ * multiple arrays are updated together.
+ *
+ * Memory layout for function arguments:
+ * [...inputs (nargs), ...outputs (numOutputs)]
+ */
+function codegenWasmMulti(multiKernel: MultiKernel): Uint8Array<ArrayBuffer> {
+  const cg = new CodeGenerator();
+  cg.memory.import("env", "memory");
+
+  // All outputs must have the same size (validated by jitCompile batching)
+  const size = multiKernel.outputs[0].size;
+
+  // Tune all output expressions first (need size for this)
+  const tunedOutputs = multiKernel.outputs.map((out) => ({
+    exp: tuneNulloptExp(out.exp, size),
+    size: out.size,
+    dtype: out.dtype,
+  }));
+
+  // Collect all distinct operations from all tuned outputs
+  const allOps: Map<AluOp, Set<DType>> = new Map();
+  for (const out of tunedOutputs) {
+    const ops = out.exp.distinctOps();
+    for (const [op, dtypes] of ops) {
+      if (!allOps.has(op)) allOps.set(op, new Set());
+      for (const dtype of dtypes) allOps.get(op)!.add(dtype);
+    }
+  }
+  const funcs = importWasmHelperFuncs(cg, allOps);
+
+  const numOutputs = tunedOutputs.length;
+
+  // Function takes nargs inputs + numOutputs outputs
+  const kernelFunc = cg.function(
+    rep(multiKernel.nargs + numOutputs, cg.i32),
+    [],
+    () => {
+      const gidx = cg.local.declare(cg.i32);
+      cg.loop(cg.void);
+      {
+        // if (gidx >= size) break;
+        cg.block(cg.void);
+        cg.local.get(gidx);
+        cg.i32.const(size);
+        cg.i32.ge_u();
+        cg.br_if(0);
+
+        // For each output, compute and store value
+        for (let outIdx = 0; outIdx < numOutputs; outIdx++) {
+          const out = tunedOutputs[outIdx];
+
+          // Push memory index of this output onto stack
+          cg.local.get(multiKernel.nargs + outIdx); // output buffer argument
+          cg.local.get(gidx);
+          cg.i32.const(byteWidth(out.dtype));
+          cg.i32.mul();
+          cg.i32.add();
+
+          // Translate expression and push value onto stack
+          translateExp(cg, funcs, out.exp, { gidx });
+
+          // Store value into output buffer
+          dty(cg, null, out.dtype).store(Math.log2(byteWidth(out.dtype)));
+        }
+
+        // gidx++
+        cg.local.get(gidx);
+        cg.i32.const(1);
+        cg.i32.add();
+        cg.local.set(gidx);
+
+        cg.br(1); // continue gidx loop
+        cg.end();
+      }
+      cg.end();
+    },
+  );
+  cg.export(kernelFunc, "kernel");
+
+  return cg.finish();
+}
+
+/**
  * Generate WASM bytecode for a general native scan.
  * Handles scan bodies with data dependencies and numCarry !== numY.
  *
@@ -945,6 +1060,27 @@ function codegenNativeScanGeneral(
     // Step 2: Main scan loop
     cg.i32.const(0);
     cg.local.set(iter);
+
+    // Helper to create base GeneralScanContext (used by both Kernel and MultiKernel steps)
+    const makeScanContext = (): GeneralScanContext => ({
+      gidx,
+      iter,
+      dataIdx,
+      ridx: -1, // No reduction by default; Kernel with reduction will set this
+      constsBase,
+      constSizes,
+      numConsts,
+      xsBase,
+      xsStrides,
+      carryBase: carryOutBase, // Read from carryOut (updated each iter)
+      carrySizes,
+      numCarry,
+      internalsBase,
+      internalSizes,
+      numInternal,
+      numInputs: numConsts + numCarry + numX,
+    });
+
     cg.loop(cg.void);
     {
       cg.block(cg.void);
@@ -1090,6 +1226,61 @@ function codegenNativeScanGeneral(
 
           // Call the routine
           cg.call(funcIdx);
+        } else if (step.source instanceof MultiKernel) {
+          // MultiKernel step: compute all outputs in a single loop
+          const multiKernel = step.source;
+          const outIndices = step.outputInternalIndices!;
+
+          // All outputs have the same size (validated during fusion)
+          const size = multiKernel.outputs[0].size;
+
+          // Tune all output expressions
+          const tunedOutputs = multiKernel.outputs.map((out) => ({
+            exp: tuneNulloptExp(out.exp, size),
+            dtype: out.dtype,
+          }));
+
+          // Inner loop over output elements
+          cg.i32.const(0);
+          cg.local.set(gidx);
+          cg.loop(cg.void);
+          {
+            cg.block(cg.void);
+            cg.local.get(gidx);
+            cg.i32.const(size);
+            cg.i32.ge_u();
+            cg.br_if(0);
+
+            const scanCtx = makeScanContext();
+
+            // For each output, compute and store value
+            for (let outIdx = 0; outIdx < tunedOutputs.length; outIdx++) {
+              const out = tunedOutputs[outIdx];
+              const internalIdx = outIndices[outIdx];
+
+              // Compute output address: internals[internalIdx] + gidx * elementSize
+              cg.local.get(internalsBase + internalIdx);
+              cg.local.get(gidx);
+              cg.i32.const(byteWidth(out.dtype));
+              cg.i32.mul();
+              cg.i32.add();
+
+              // Translate expression and push value onto stack
+              translateExpWithGeneralScanContext(cg, funcs, out.exp, scanCtx);
+
+              // Store result to internal buffer (address already on stack)
+              dty(cg, null, out.dtype).store(Math.log2(byteWidth(out.dtype)));
+            }
+
+            // gidx++
+            cg.local.get(gidx);
+            cg.i32.const(1);
+            cg.i32.add();
+            cg.local.set(gidx);
+            cg.br(1);
+            cg.end();
+          }
+          cg.end();
         } else {
           // Kernel step: existing codegen
           const kernel = step.source;
@@ -1114,25 +1305,7 @@ function codegenNativeScanGeneral(
             cg.i32.mul();
             cg.i32.add();
 
-            // Context for translateExpWithGeneralScanContext
-            const scanCtx: GeneralScanContext = {
-              gidx,
-              iter,
-              dataIdx,
-              ridx: -1,
-              constsBase,
-              constSizes,
-              numConsts,
-              xsBase,
-              xsStrides,
-              carryBase: carryOutBase, // Read from carryOut (updated each iter)
-              carrySizes,
-              numCarry,
-              internalsBase,
-              internalSizes,
-              numInternal,
-              numInputs: numConsts + numCarry + numX,
-            };
+            const scanCtx = makeScanContext();
 
             if (re) {
               // Reduction: define accumulator and inner ridx loop
@@ -1511,6 +1684,11 @@ function translateExpWithGeneralScanContext(
         cg.i32.trunc_sat_f32_s();
       } else if (srcDtype === DType.Int32 && dtype === DType.Float32) {
         cg.f32.convert_i32_s();
+      } else if (srcDtype === DType.Bool && dtype === DType.Float32) {
+        // Bool is stored as i32 (0 or 1), convert to f32
+        cg.f32.convert_i32_s();
+      } else if (srcDtype === DType.Bool && dtype === DType.Int32) {
+        // Bool is already i32, no-op
       } else if (srcDtype === DType.Float32 && dtype === DType.Float64) {
         cg.f64.promote_f32();
       } else if (srcDtype === DType.Float64 && dtype === DType.Float32) {
@@ -1519,6 +1697,12 @@ function translateExpWithGeneralScanContext(
         cg.f32.convert_i32_u();
       } else if (srcDtype === DType.Float32 && dtype === DType.Uint32) {
         cg.i32.trunc_sat_f32_u();
+      } else if (srcDtype === DType.Int32 && dtype === DType.Float64) {
+        cg.f64.convert_i32_s();
+      } else if (srcDtype === DType.Bool && dtype === DType.Float64) {
+        cg.f64.convert_i32_s();
+      } else if (srcDtype === DType.Float64 && dtype === DType.Int32) {
+        cg.i32.trunc_sat_f64_s();
       } else {
         throw new Error(
           `Cast ${srcDtype} -> ${dtype} in scan not yet supported`,

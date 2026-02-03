@@ -6,6 +6,7 @@ import {
   DType,
   isFloatDtype,
   Kernel,
+  MultiKernel,
 } from "../alu";
 import {
   Backend,
@@ -314,6 +315,24 @@ export class WebGPUBackend implements Backend {
     const shader = this.#cachedShader(kernel);
     const pipeline = this.pipelines.prepareSync(shader);
     return new Executable(kernel, [{ ...shader, pipeline }]);
+  }
+
+  async prepareMultiKernel(
+    _multiKernel: MultiKernel,
+  ): Promise<Executable<ShaderDispatch[]>> {
+    // For now, WebGPU falls back to executing multi-output kernels separately.
+    // TODO: Implement native multi-output kernel support for WebGPU.
+    throw new Error(
+      "MultiKernel not yet implemented for WebGPU - should fall back to single kernels",
+    );
+  }
+
+  prepareMultiKernelSync(
+    _multiKernel: MultiKernel,
+  ): Executable<ShaderDispatch[]> {
+    throw new Error(
+      "MultiKernel not yet implemented for WebGPU - should fall back to single kernels",
+    );
   }
 
   async prepareRoutine(

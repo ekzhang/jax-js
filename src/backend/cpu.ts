@@ -1,4 +1,4 @@
-import { AluOp, dtypedArray, Kernel } from "../alu";
+import { AluOp, DType, dtypedArray, Kernel, MultiKernel } from "../alu";
 import { Backend, Device, Executable, Slot, SlotError } from "../backend";
 import { Routine, runCpuRoutine } from "../routine";
 import { tuneNullopt } from "../tuner";
@@ -76,6 +76,16 @@ export class CpuBackend implements Backend {
     return new Executable(kernel, undefined);
   }
 
+  async prepareMultiKernel(
+    multiKernel: MultiKernel,
+  ): Promise<Executable<void>> {
+    return this.prepareMultiKernelSync(multiKernel);
+  }
+
+  prepareMultiKernelSync(multiKernel: MultiKernel): Executable<void> {
+    return new Executable(multiKernel, undefined);
+  }
+
   async prepareRoutine(routine: Routine): Promise<Executable> {
     return this.prepareRoutineSync(routine);
   }
@@ -91,6 +101,10 @@ export class CpuBackend implements Backend {
         inputs.map((slot) => this.#getBuffer(slot)),
         outputs.map((slot) => this.#getBuffer(slot)),
       );
+    }
+
+    if (exe.source instanceof MultiKernel) {
+      return this.#dispatchMultiKernel(exe.source, inputs, outputs);
     }
 
     const kernel = exe.source as Kernel;
@@ -140,6 +154,52 @@ export class CpuBackend implements Backend {
           acc = kernel.reduction.evaluate(acc, item);
         }
         outputArray[i] = epilogue!.evaluate({ acc, gidx: i }, globals);
+      }
+    }
+  }
+
+  #dispatchMultiKernel(
+    multiKernel: MultiKernel,
+    inputs: Slot[],
+    outputs: Slot[],
+  ): void {
+    const inputBuffers = inputs.map((slot) => this.#getBuffer(slot));
+    const size = multiKernel.outputs[0].size;
+
+    // Collect all used args from all output expressions
+    const allUsedArgs = new Map<number, DType>();
+    for (const out of multiKernel.outputs) {
+      const usedArgs = out.exp.collect(
+        (exp) => exp.op === AluOp.GlobalIndex || exp.op === AluOp.GlobalView,
+      );
+      for (const exp of usedArgs) {
+        allUsedArgs.set(exp.arg[0] as number, exp.dtype);
+      }
+    }
+
+    const inputArrays = inputBuffers.map((buf, i) => {
+      const dtype = allUsedArgs.get(i);
+      if (!dtype) return null!;
+      return dtypedArray(dtype, buf);
+    });
+
+    const outputArrays = outputs.map((slot, i) =>
+      dtypedArray(multiKernel.outputs[i].dtype, this.#getBuffer(slot)),
+    );
+
+    const globals = (gid: number, bufidx: number) => {
+      if (gid < 0 || gid >= inputArrays.length)
+        throw new Error("gid out of bounds: " + gid);
+      if (bufidx < 0 || bufidx >= inputArrays[gid].length)
+        throw new Error("bufidx out of bounds: " + bufidx);
+      return inputArrays[gid][bufidx];
+    };
+
+    // Multi-output kernels have no reduction support
+    for (let i = 0; i < size; i++) {
+      for (let outIdx = 0; outIdx < multiKernel.outputs.length; outIdx++) {
+        const out = multiKernel.outputs[outIdx];
+        outputArrays[outIdx][i] = out.exp.evaluate({ gidx: i }, globals);
       }
     }
   }

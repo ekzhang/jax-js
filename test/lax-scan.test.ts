@@ -2346,16 +2346,17 @@ describe("scan autodiff", () => {
       }
     });
 
-    it("Scan body multi-output: creates separate kernels instead of fusing (WASM)", async () => {
-      // Scan bodies with multiple carry outputs create separate kernels for each output,
-      // while regular jit() fuses them into a single multi-output kernel.
+    it("Scan body multi-output: uses native scan with MultiKernel (WASM)", async () => {
+      // Multi-output kernel fusion is implemented via MultiKernel.
+      // Regular jit() and scan body compilation produce MultiKernel for
+      // multiple outputs with the same size.
       //
-      // Example: Mandelbrot with 3 carry outputs (A, B, V):
-      // - Regular jit(f): 1 kernel with 3 outputs
-      // - Scan body: 6 kernels (each output + intermediates)
+      // Native scan (WASM compiled-loop) now supports MultiKernel, so scans
+      // with multi-output bodies use the fused path.
       //
-      // Fix approach: Reuse existing kernel fusion from jitCompile() for scan body.
-      // The splitGraphDataflow() algorithm already supports multi-output fusion.
+      // This test verifies:
+      // 1. Body compilation produces fewer execute steps (fusion working)
+      // 2. Native scan uses fused path with MultiKernel
       //
       // Testing note: Test each backend separately:
       // - WASM: this test (runs in vitest/node)
@@ -2421,33 +2422,29 @@ describe("scan autodiff", () => {
         "Scan path callback should have fired",
       ).not.toBeNull();
 
-      // WASM should use the fused path
+      // Native scan now supports MultiKernel - should use fused path
       expect(capturedPath).toBe("fused");
 
-      // This test PASSES if the limitation still exists (multiple execute steps)
-      // An ideal implementation would fuse to 1-2 kernels for this elementwise body
-      // Currently we see ~6 execute steps
+      // Body compilation produces fewer execute steps (MultiKernel fusion working)
+      // With MultiKernel: 2-3 steps (two multi-kernels)
+      // Without MultiKernel: 5-6 steps (separate kernels)
       expect(
         bodyExecuteSteps,
-        `🎉 LIMITATION FIXED! Scan body now fuses to ${bodyExecuteSteps} kernel(s). ` +
-          "If bodyExecuteSteps <= 2, multi-output fusion is working! " +
-          "Please update .github/copilot-instructions.md and celebrate! 🎊",
-      ).toBeGreaterThan(2);
+        `Body has ${bodyExecuteSteps} execute steps. ` +
+          "With MultiKernel fusion, should be 2-3. Without fusion, would be 5-6.",
+      ).toBeLessThanOrEqual(3);
     });
 
     it.skipIf(!devicesAvailable.includes("webgpu"))(
-      "Scan body multi-output: creates separate kernels instead of fusing (WebGPU)",
+      "Scan body multi-output: uses native scan with MultiKernel (WebGPU)",
       async () => {
-        // Same limitation as WASM: scan bodies with multiple carry outputs create
-        // separate kernels for each output instead of fusing them.
-        //
-        // Note: WebGPU multi-output scan currently falls back to JS loop for
-        // numCarry !== numY, but this test uses numCarry === numY to verify
-        // the fusion limitation in the fused path.
+        // Multi-output scan bodies now use native scan via prepareNativeScanMulti.
+        // Each output in a MultiKernel is extracted and converted to a separate
+        // kernel step, enabling the fused path.
 
         defaultDevice("webgpu");
 
-        // Simpler body with 2 carry outputs - should fuse to 1 kernel but doesn't
+        // Body with 2 carry outputs - fuses to multi-kernel native scan
         const step = (
           carry: np.Array[],
           _x: np.Array,
@@ -2474,28 +2471,23 @@ describe("scan autodiff", () => {
         try {
           const f = jit(() => lax.scan(step, [A0, B0], xs));
           const [[A, B], _ys] = f() as [np.Array[], np.Array[]];
-          await A.data();
-          await B.data();
+
+          // Verify results
+          const aData = await A.data();
+          const bData = await B.data();
+
+          // A: 0 + 1 + 1 + 1 = 3
+          expect(aData[0]).toBe(3);
+          // B: 1 * 2 * 2 * 2 = 8
+          expect(bData[0]).toBe(8);
+
           f.dispose();
         } finally {
           setScanPathCallback(null);
         }
 
-        // WebGPU with numCarry === numY should use fused path
-        // If it falls back, that's a separate limitation
-        expect(
-          capturedPath,
-          "Scan path callback should have fired",
-        ).not.toBeNull();
-
-        // This test documents that WebGPU multi-output scan falls back
-        // (even with numCarry === numY, multi-output bodies may not fuse)
-        // When fixed, this will use "fused" path
-        expect(
-          capturedPath,
-          "🎉 LIMITATION FIXED! WebGPU now uses fused path for multi-output scan. " +
-            "Please update .github/copilot-instructions.md and celebrate! 🎊",
-        ).toBe("fallback");
+        // WebGPU should now use fused path for multi-output scan
+        expect(capturedPath).toBe("fused");
       },
     );
 

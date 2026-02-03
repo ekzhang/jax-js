@@ -186,9 +186,18 @@ The JIT system lives in `src/frontend/jit.ts` and `src/frontend/jaxpr.ts`.
 1. **Tracing** – `makeJaxpr(f)` traces a function to produce a `Jaxpr` (IR in ANF form)
 2. **Simplification** – `jaxpr.flatten().simplify()` canonicalizes the graph
 3. **Graph splitting** – `splitGraphDataflow()` identifies "black nodes" vs fusable ops
-4. **Kernel fusion** – Consecutive elementwise ops merge into a single `Kernel`
+4. **Kernel fusion** – Consecutive elementwise ops merge into a single `Kernel` or `MultiKernel`
 5. **Compilation** – `jitCompile(backend, jaxpr)` emits a `JitProgram` (list of `JitStep`s)
 6. **Execution** – `JitProgram.execute(slots)` runs steps, managing memory lifetime
+
+**Multi-output kernel fusion:**
+
+When multiple black nodes have the same size and no reductions, they are batched into a
+`MultiKernel`. This reduces kernel dispatch overhead for functions with multiple outputs.
+
+- Inputs are unioned across all outputs, and expressions are reindexed accordingly
+- Example: `(a + b, a - b, a * b)` becomes one MultiKernel with 3 outputs and 2 inputs
+- Batching triggers at flush points: reductions, routines, size changes, or end of compilation
 
 **Key types:**
 
@@ -196,7 +205,8 @@ The JIT system lives in `src/frontend/jit.ts` and `src/frontend/jaxpr.ts`.
 | --------------------------------- | ------------ | ------------------------------------------ |
 | `Jaxpr`, `JaxprEqn`, `Var`, `Lit` | `jaxpr.ts`   | IR nodes and bindings                      |
 | `JitProgram`, `JitStep`           | `jit.ts`     | Compiled program + step types              |
-| `Kernel`                          | `alu.ts`     | Fused elementwise kernel descriptor        |
+| `Kernel`                          | `alu.ts`     | Fused elementwise kernel (single output)   |
+| `MultiKernel`                     | `alu.ts`     | Fused multi-output kernel (no reductions)  |
 | `Routine`                         | `routine.ts` | Backend-specific op (sort, cholesky, etc.) |
 
 **Adding a new primitive:**
@@ -826,46 +836,43 @@ WASM. The gradient computation expresses the math in terms of these primitives.
 
 | Limitation                       | Workaround                | Backend |
 | -------------------------------- | ------------------------- | ------- |
-| Scan body multi-output fusion    | Uses separate kernels     | All     |
 | WebGPU routine bodies (compiled) | Uses fallback (JS loop)   | WebGPU  |
 | `numCarry ≠ numY` on WebGPU      | Falls back to JS loop     | WebGPU  |
 | `grad(scan)` memory O(N)         | None (stores all carries) | All     |
 
-**Resolved:** WebGPU kernel-only bodies now use native scan via `tryPrepareWebGPUNativeScan()`.
+**Resolved:**
+
+- WebGPU kernel-only bodies now use native scan via `tryPrepareWebGPUNativeScan()`.
+- **Scan body multi-output fusion** now works via `MultiKernel`. Body compilation produces fused
+  multi-output kernels, and WASM native scan now supports MultiKernel codegen.
+- **WASM scan cast operations** now support Bool→Float32, Bool→Int32, Bool→Float64, Int32→Float64,
+  and Float64→Int32 in `translateExpWithGeneralScanContext()`. Previously, patterns like
+  `.less(100).astype(np.float32)` in scan bodies would throw "Cast bool -> float32 not supported".
 
 ### Future work
 
 | Priority | Feature                              | Notes                                              |
 | -------- | ------------------------------------ | -------------------------------------------------- |
-| High     | Scan body multi-output kernel fusion | Reuse existing `jitCompile` fusion for body        |
 | High     | Sqrt(N) checkpointing for grad(scan) | Reduce memory from O(N) to O(√N) with 2× recompute |
 | Medium   | Fix WebGPU compiled-body binding     | `wrapRoutineForScan` arg mapping is incorrect      |
 | Low      | `lax.scatter` / `dynamic_slice`      | Would enable Jaxpr-based routines                  |
 
-### Scan Body Multi-Output Kernel Fusion
+### MultiKernel in Native Scan
 
-Scan bodies with multiple carry outputs (e.g., Mandelbrot with A, B, V arrays) currently compile to
-**separate kernels for each output**, while regular `jit()` fuses them into a single multi-output
-kernel.
+The `MultiKernel` class enables fusing multiple outputs into a single kernel dispatch. This is used
+in regular `jitCompile()` for functions with multiple same-size outputs.
 
-**Example:** Mandelbrot body with 3 carry outputs:
+**Current status:**
 
-- Regular `jit(f)`: **1 kernel** with 3 outputs
-- Scan body: **6 kernels** (each carry + intermediates)
+- Regular JIT: ✅ Uses MultiKernel for multi-output functions
+- Scan body compilation: ✅ Produces MultiKernel
+- Native scan (WASM): ✅ Supports MultiKernel codegen in `codegenNativeScanGeneral()`
+- Native scan (WebGPU): ✅ Supports MultiKernel via `prepareNativeScanMulti()` expansion
 
-**Impact:** `jit(scan(vectorized_body))` is ~25-30% slower than JS-loop + `jit(body)` for
-purely-elementwise multi-output bodies.
+**Example:** Mandelbrot body with 3 carry outputs compiles to 2-3 MultiKernel steps instead of 6
+separate Kernel steps, and runs via the fused native scan path on both WASM and WebGPU.
 
-**Fix approach:** Reuse existing kernel fusion from `jitCompile()` for scan body compilation. The
-`splitGraphDataflow()` algorithm already supports multi-output fusion — the issue is that scan body
-compilation runs each output through separate kernel generation.
-
-**Testing note:** This limitation should be tested on each backend separately:
-
-- WASM: `npx tsx` or `pnpm test`
-- WebGPU: Deno (`pnpm run test:deno`)
-
-See test: `test/lax-scan.test.ts` → "KNOWN LIMITATIONS" → "Scan body multi-output fusion"
+See test: `test/lax-scan.test.ts` → "Scan body multi-output: uses native scan with MultiKernel"
 
 ### Fix Compiled-Body Binding Detection
 
