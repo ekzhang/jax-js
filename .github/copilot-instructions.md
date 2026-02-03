@@ -566,6 +566,7 @@ iterations. Both `native-scan` and `batched-scan` implement the "fused" scan pat
 - All body steps are Kernels or supported Routines
 - Constants allowed, reductions allowed
 - Any `numCarry`/`numY` combination
+- Y outputs can be: carry passthrough, xs passthrough, or internal buffer
 - Supported routines: Cholesky, Sort, TriangularSolve, LU, Argsort
 
 **WebGPU compiled-loop (single kernel):**
@@ -589,8 +590,17 @@ All WASM scan variants use `codegenNativeScanGeneral`:
 4. Generate outer loop (iter = 0..length):
    - Compute dataIdx (reverse-aware)
    - For each step: evaluate kernel or call imported routine
-   - Copy outputs to Y and carry buffers
+   - Copy Y outputs from source (carry passthrough, xs passthrough, or internal buffer)
+   - Copy carry outputs for next iteration
 5. Free internal buffers, return WebAssembly.Module
+
+**Y output sources (`YOutputSource` type):**
+
+| Type             | Source                              | Use case                         |
+| ---------------- | ----------------------------------- | -------------------------------- |
+| `passthrough`    | Copy from carry input               | `return [newC, oldC.ref]`        |
+| `xs-passthrough` | Copy from xs slice at current iter  | `return [newC, x.ref]`           |
+| `internal`       | Copy from internal buffer (compute) | `return [newC, someComputation]` |
 
 ### WebGPU compiled-loop details
 

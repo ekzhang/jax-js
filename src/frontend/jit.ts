@@ -1994,12 +1994,19 @@ function tryPrepareNativeScanGeneral(
     carryOutSources.push({ type: "internal", internalIdx });
   }
 
-  // Find Y output sources: either passthrough from carry input or from internal buffer
+  // Find Y output sources: passthrough from carry, passthrough from xs, or internal buffer
   type YOutputSource = {
-    type: "passthrough" | "internal";
+    type: "passthrough" | "xs-passthrough" | "internal";
     carryIdx?: number;
+    xsIdx?: number;
     internalIdx?: number;
   };
+
+  // Get xs input slots for xs passthrough detection
+  const xsInputSlots = bodyProgram.inputs.slice(
+    numConsts + numCarry,
+    numConsts + numCarry + numX,
+  );
 
   const yOutputSlots = bodyProgram.outputs.slice(numCarry);
   const yOutputSources: YOutputSource[] = [];
@@ -2009,6 +2016,13 @@ function tryPrepareNativeScanGeneral(
     const carryIdx = carryInputSlots.indexOf(slot);
     if (carryIdx !== -1) {
       yOutputSources.push({ type: "passthrough", carryIdx });
+      continue;
+    }
+
+    // Check if it's a passthrough from xs input
+    const xsIdx = xsInputSlots.indexOf(slot);
+    if (xsIdx !== -1) {
+      yOutputSources.push({ type: "xs-passthrough", xsIdx });
       continue;
     }
 
