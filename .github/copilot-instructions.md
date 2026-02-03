@@ -273,6 +273,13 @@ const [finalCarry, stackedOutputs] = await lax.scan(f, initCarry, xs, options);
 - `reverse?: boolean` — Process xs in reverse order (default: false)
 - `requirePath?: ScanPath | ScanPath[]` — Enforce scan path; throws if path doesn't match
 
+**Scan paths (`ScanPath` type):**
+
+- `"fused"` — Loop runs in native code (`native-scan` or `batched-scan` step)
+- `"fallback"` — JS loop with per-iteration dispatch (`scan` step)
+
+Use `requirePath: "fused"` in tests to ensure native compilation doesn't regress.
+
 **Use cases:**
 
 - Cumulative sum/product
@@ -601,6 +608,13 @@ All WASM scan variants use `codegenNativeScanGeneral`:
 | `passthrough`    | Copy from carry input               | `return [newC, oldC.ref]`        |
 | `xs-passthrough` | Copy from xs slice at current iter  | `return [newC, x.ref]`           |
 | `internal`       | Copy from internal buffer (compute) | `return [newC, someComputation]` |
+
+**Carry output sources (`CarryOutputSource` type):**
+
+| Type          | Source                    | Use case                                 |
+| ------------- | ------------------------- | ---------------------------------------- |
+| `passthrough` | Copy from carry input     | `return [oldC.ref, y]` (carry unchanged) |
+| `internal`    | Copy from internal buffer | `return [computation, y]`                |
 
 ### WebGPU compiled-loop details
 

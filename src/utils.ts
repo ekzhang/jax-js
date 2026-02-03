@@ -38,11 +38,19 @@ let scanPathCallback: ScanPathCallback | null = null;
  * Set a callback to be notified when scan implementations are chosen.
  * Useful for testing to verify the expected code path is taken.
  *
+ * For most use cases, prefer the `requirePath` option on `lax.scan()` which
+ * throws an error if the required path cannot be used. Use this callback when
+ * you need to observe the path without throwing, or need the backend/details.
+ *
  * @param callback - Function called with (path, backend, details) when scan path is chosen.
  *                   Pass null to disable tracking.
  *
  * @example
  * ```ts
+ * // Option 1: Use requirePath (recommended for tests)
+ * lax.scan(f, init, xs, { requirePath: "fused" }); // throws if not fused
+ *
+ * // Option 2: Use callback to observe without throwing
  * let usedPath: ScanPath | null = null;
  * setScanPathCallback((path, backend) => { usedPath = path; });
  * await jitScan(init, xs);
