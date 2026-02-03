@@ -1687,6 +1687,283 @@ describe("scan autodiff", () => {
     });
   });
 
+  describe("transform sandwiches", () => {
+    // Tests for compositions of transformations with scan.
+    // These verify that jit, grad, and vmap compose correctly in various orders.
+
+    it("jit(grad(scan)) computes gradient through JIT-compiled grad", async () => {
+      // Compile the gradient computation itself
+      const cumsumScan = (xs: np.Array) => {
+        const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+          const newCarry = np.add(carry.ref, x);
+          return [newCarry, newCarry.ref];
+        };
+        const init = np.zeros([1]);
+        const [finalCarry, _] = lax.scan(step, init, xs);
+        return finalCarry.sum();
+      };
+
+      // JIT compile the gradient function
+      const jitGrad = jit(grad(cumsumScan));
+
+      const xs = np.array([[1.0], [2.0], [3.0]]);
+
+      // First call (traces and compiles)
+      const dxs1 = jitGrad(xs.ref);
+      expect(dxs1.shape).toEqual([3, 1]);
+      expect(await dxs1.data()).toEqual(new Float32Array([1, 1, 1]));
+
+      // Second call (uses cached compilation)
+      const xs2 = np.array([[4.0], [5.0], [6.0]]);
+      const dxs2 = jitGrad(xs2);
+      expect(await dxs2.data()).toEqual(new Float32Array([1, 1, 1]));
+
+      jitGrad.dispose();
+    });
+
+    it("grad with jit inside scan body computes gradient correctly", async () => {
+      // Test gradient through a function where jit is used inside
+      // (grad(jit(f)) directly doesn't work - this tests the supported pattern)
+      const cumsumWithJitBody = (xs: np.Array) => {
+        // JIT-compile just the body computation
+        const jitAdd = jit((a: np.Array, b: np.Array) => np.add(a, b));
+        
+        const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+          const newCarry = jitAdd(carry.ref, x);
+          return [newCarry, newCarry.ref];
+        };
+        const init = np.zeros([1]);
+        const [finalCarry, _] = lax.scan(step, init, xs);
+        const result = finalCarry.sum();
+        jitAdd.dispose();
+        return result;
+      };
+
+      const xs = np.array([[1.0], [2.0], [3.0]]);
+
+      // Take gradient - jit inside works because grad traces through it
+      const dxs = grad(cumsumWithJitBody)(xs);
+      expect(dxs.shape).toEqual([3, 1]);
+      expect(await dxs.data()).toEqual(new Float32Array([1, 1, 1]));
+    });
+
+    it("vmap(scan) vs scan(vmap(body)) equivalence", async () => {
+      // vmap(scan) applies scan independently to each batch element
+      // scan(vmap(body)) applies a batched body at each timestep
+      // For element-wise operations these should produce equivalent results
+
+      // Approach 1: vmap(scan) - independent scans over batch
+      const singleScan = (xs: np.Array) => {
+        const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+          const newCarry = np.add(carry.ref, x);
+          return [newCarry, newCarry.ref];
+        };
+        const init = np.zeros([1]);
+        const [finalCarry, ys] = lax.scan(step, init, xs);
+        return [finalCarry, ys] as [np.Array, np.Array];
+      };
+
+      const batchedXs = np.array([
+        [[1.0], [2.0], [3.0]], // batch 0: cumsum = [1, 3, 6], final = 6
+        [[2.0], [2.0], [2.0]], // batch 1: cumsum = [2, 4, 6], final = 6
+      ]);
+
+      // vmap over first axis
+      const vmappedScan = vmap(singleScan);
+      const [vmapCarries, vmapYs] = vmappedScan(batchedXs.ref);
+
+      expect(vmapCarries.shape).toEqual([2, 1]);
+      expect(vmapYs.shape).toEqual([2, 3, 1]);
+      const vmapCarryData = await vmapCarries.data();
+      expect(vmapCarryData[0]).toBeCloseTo(6.0);
+      expect(vmapCarryData[1]).toBeCloseTo(6.0);
+      const vmapYsData = await vmapYs.data();
+      // batch 0: [1, 3, 6], batch 1: [2, 4, 6]
+      expect(vmapYsData[0]).toBeCloseTo(1.0);
+      expect(vmapYsData[1]).toBeCloseTo(3.0);
+      expect(vmapYsData[2]).toBeCloseTo(6.0);
+      expect(vmapYsData[3]).toBeCloseTo(2.0);
+      expect(vmapYsData[4]).toBeCloseTo(4.0);
+      expect(vmapYsData[5]).toBeCloseTo(6.0);
+
+      // Approach 2: scan(vmap(body)) - batched body at each timestep
+      // Transpose xs to be [time, batch, features]
+      const transposedXs = batchedXs.transpose([1, 0, 2]); // [3, 2, 1]
+
+      const vmapStep = vmap(
+        (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+          const newCarry = np.add(carry.ref, x);
+          return [newCarry, newCarry.ref];
+        },
+      );
+
+      const batchInit = np.zeros([2, 1]); // batch of init carries
+      const batchStep = (
+        carry: np.Array,
+        x: np.Array,
+      ): [np.Array, np.Array] => {
+        return vmapStep(carry, x);
+      };
+
+      const [scanVmapCarry, scanVmapYs] = lax.scan(
+        batchStep,
+        batchInit,
+        transposedXs,
+      );
+
+      expect(scanVmapCarry.shape).toEqual([2, 1]);
+      const scanVmapCarryData = await scanVmapCarry.data();
+      expect(scanVmapCarryData[0]).toBeCloseTo(6.0);
+      expect(scanVmapCarryData[1]).toBeCloseTo(6.0);
+
+      // Transpose outputs back for comparison: [3, 2, 1] -> [2, 3, 1]
+      const scanVmapYsTransposed = scanVmapYs.ref.transpose([1, 0, 2]);
+      expect(scanVmapYsTransposed.shape).toEqual([2, 3, 1]);
+      const scanVmapYsData = await scanVmapYsTransposed.data();
+      expect(scanVmapYsData[0]).toBeCloseTo(1.0);
+      expect(scanVmapYsData[1]).toBeCloseTo(3.0);
+      expect(scanVmapYsData[2]).toBeCloseTo(6.0);
+      expect(scanVmapYsData[3]).toBeCloseTo(2.0);
+      expect(scanVmapYsData[4]).toBeCloseTo(4.0);
+      expect(scanVmapYsData[5]).toBeCloseTo(6.0);
+    });
+
+    it("jit(vmap(scan)) works on WASM backend", async () => {
+      // Explicitly test jit(vmap(scan)) on WASM (vs the existing test that may use CPU)
+      defaultDevice("wasm");
+
+      const cumsumScan = (xs: np.Array) => {
+        const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+          const newCarry = np.add(carry.ref, x);
+          return [newCarry, newCarry.ref];
+        };
+        const init = np.zeros([1]);
+        const [finalCarry, ys] = lax.scan(step, init, xs);
+        return [finalCarry, ys] as [np.Array, np.Array];
+      };
+
+      const jitVmapScan = jit(vmap(cumsumScan));
+
+      const batchedXs = np.array([
+        [[1.0], [2.0], [3.0]], // batch 0
+        [[2.0], [2.0], [2.0]], // batch 1
+        [[1.0], [1.0], [1.0]], // batch 2
+      ]);
+
+      const [carries, ys] = jitVmapScan(batchedXs);
+
+      expect(carries.shape).toEqual([3, 1]);
+      expect(ys.shape).toEqual([3, 3, 1]);
+
+      const carryData = await carries.data();
+      expect(carryData[0]).toBeCloseTo(6.0);
+      expect(carryData[1]).toBeCloseTo(6.0);
+      expect(carryData[2]).toBeCloseTo(3.0);
+
+      jitVmapScan.dispose();
+    });
+
+    it.skipIf(!devicesAvailable.includes("webgpu"))(
+      "jit(vmap(scan)) works on WebGPU backend",
+      async () => {
+        // Explicitly test jit(vmap(scan)) on WebGPU
+        defaultDevice("webgpu");
+
+      const cumsumScan = (xs: np.Array) => {
+        const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+          const newCarry = np.add(carry.ref, x);
+          return [newCarry, newCarry.ref];
+        };
+        const init = np.zeros([1]);
+        const [finalCarry, ys] = lax.scan(step, init, xs);
+        return [finalCarry, ys] as [np.Array, np.Array];
+      };
+
+      const jitVmapScan = jit(vmap(cumsumScan));
+
+      const batchedXs = np.array([
+        [[1.0], [2.0], [3.0]], // batch 0
+        [[2.0], [2.0], [2.0]], // batch 1
+        [[1.0], [1.0], [1.0]], // batch 2
+      ]);
+
+      const [carries, ys] = jitVmapScan(batchedXs);
+
+      expect(carries.shape).toEqual([3, 1]);
+      expect(ys.shape).toEqual([3, 3, 1]);
+
+      const carryData = await carries.data();
+      expect(carryData[0]).toBeCloseTo(6.0);
+      expect(carryData[1]).toBeCloseTo(6.0);
+      expect(carryData[2]).toBeCloseTo(3.0);
+
+      jitVmapScan.dispose();
+    },
+    );
+
+    it("grad(vmap(scan)) computes batched gradients", async () => {
+      // Gradient of a batched scan (sum of all final carries)
+      const batchedCumsum = vmap((xs: np.Array) => {
+        const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+          const newCarry = np.add(carry.ref, x);
+          return [newCarry, newCarry.ref];
+        };
+        const init = np.zeros([1]);
+        const [finalCarry, _] = lax.scan(step, init, xs);
+        return finalCarry;
+      });
+
+      // Wrapper that returns a scalar
+      const loss = (batchedXs: np.Array) => {
+        const carries = batchedCumsum(batchedXs);
+        return np.sum(carries);
+      };
+
+      const batchedXs = np.array([
+        [[1.0], [2.0], [3.0]], // batch 0: final = 6
+        [[2.0], [2.0], [2.0]], // batch 1: final = 6
+      ]);
+
+      // Each xs element contributes 1 to each final carry (since it's a sum)
+      // Gradient should be all ones
+      const dxs = grad(loss)(batchedXs);
+      expect(dxs.shape).toEqual([2, 3, 1]);
+      const gradData = await dxs.data();
+      for (let i = 0; i < 6; i++) {
+        expect(gradData[i]).toBeCloseTo(1.0);
+      }
+    });
+
+    it("vmap(grad(scan)) computes gradient per batch element", async () => {
+      // vmap of gradient (different from grad of vmap)
+      const cumsumWithSum = (xs: np.Array) => {
+        const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+          const newCarry = np.add(carry.ref, x);
+          return [newCarry, newCarry.ref];
+        };
+        const init = np.zeros([1]);
+        const [finalCarry, _] = lax.scan(step, init, xs);
+        return finalCarry.sum();
+      };
+
+      const gradOfCumsum = grad(cumsumWithSum);
+      const vmapGrad = vmap(gradOfCumsum);
+
+      const batchedXs = np.array([
+        [[1.0], [2.0], [3.0]], // batch 0
+        [[2.0], [2.0], [2.0]], // batch 1
+      ]);
+
+      const dxs = vmapGrad(batchedXs);
+      expect(dxs.shape).toEqual([2, 3, 1]);
+      const gradData = await dxs.data();
+      // Each batch gets gradient [1, 1, 1]
+      for (let i = 0; i < 6; i++) {
+        expect(gradData[i]).toBeCloseTo(1.0);
+      }
+    });
+  });
+
   describe("requirePath option", () => {
     it("throws when requirePath is not satisfied", async () => {
       // Use CPU backend where scans always use fallback path
