@@ -556,15 +556,22 @@ Body jaxpr input: [...consts, ...carry, ...x_slice]
 
 The documentation uses descriptive terms that map to code constructs:
 
-| Doc Term          | Code Step Type | Backend | Description                                  |
-| ----------------- | -------------- | ------- | -------------------------------------------- |
-| **compiled-loop** | `native-scan`  | WASM    | Entire scan loop compiled to WASM module     |
-| **compiled-loop** | `batched-scan` | WebGPU  | Scan loop in GPU shader (multi-kernel)       |
-| **compiled-body** | (broken)       | WebGPU  | Pre-encoded dispatches, JS loop (deprecated) |
-| **fallback**      | `scan`         | All     | JS loop calling body program per iteration   |
+| Doc Term          | Code Step Type | Backend      | Description                                  |
+| ----------------- | -------------- | ------------ | -------------------------------------------- |
+| **compiled-loop** | `native-scan`  | WASM, WebGPU | Entire scan loop compiled to native code     |
+| **compiled-loop** | `batched-scan` | WebGPU       | Multi-kernel scan in GPU shader              |
+| **compiled-body** | (fallback)     | WebGPU       | Pre-encoded dispatches, JS loop (deprecated) |
+| **fallback**      | `scan`         | All          | JS loop calling body program per iteration   |
 
 Note: `batched-scan` is named for its ability to handle multiple kernels/buffers, not for batching
 iterations. Both `native-scan` and `batched-scan` implement the "fused" scan path.
+
+### Native scan routing
+
+The `tryPrepareNativeScan()` dispatcher routes to backend-specific implementations:
+
+- **WebGPU kernel-only** → `tryPrepareWebGPUNativeScan()` → uses `prepareNativeScan()` or `prepareNativeScanMulti()`
+- **WASM (kernels + routines)** → `tryPrepareWasmNativeScan()` → uses `prepareNativeScanGeneral()`
 
 ### Compiled-loop eligibility
 
@@ -728,14 +735,14 @@ Each batch element runs an independent scan:
 
 ### Adding a new routine (checklist)
 
-| Step | File                        | What to add                                                   |
-| ---- | --------------------------- | ------------------------------------------------------------- |
-| 1    | `src/routines/<name>.ts`    | AssemblyScript implementation                                 |
-| 2    | `src/routine.ts`            | Add to `Routines` enum                                        |
-| 3    | `src/frontend/core.ts`      | Add to `routinePrimitives` map                                |
-| 4    | `src/backend/wasm.ts`       | Add to `routineModuleNames`, add dispatch case                |
-| 5    | `src/frontend/jit.ts`       | Add to `supportedRoutines` in `tryPrepareNativeScanGeneral()` |
-| 6    | `src/backend/wasm.ts`       | Add codegen case in `codegenNativeScanGeneral()`              |
+| Step | File                        | What to add                                                 |
+| ---- | --------------------------- | ----------------------------------------------------------- |
+| 1    | `src/routines/<name>.ts`    | AssemblyScript implementation                               |
+| 2    | `src/routine.ts`            | Add to `Routines` enum                                      |
+| 3    | `src/frontend/core.ts`      | Add to `routinePrimitives` map                              |
+| 4    | `src/backend/wasm.ts`       | Add to `routineModuleNames`, add dispatch case              |
+| 5    | `src/frontend/jit.ts`       | Add to `supportedRoutines` in `tryPrepareWasmNativeScan()`  |
+| 6    | `src/backend/wasm.ts`       | Add codegen case in `codegenNativeScanGeneral()`            |
 | opt  | `src/routine.ts`            | Add CPU fallback in `runCpuRoutine()`                         |
 | opt  | `src/frontend/jvp.ts`       | Add JVP rule if autodiff needed                               |
 | opt  | `src/frontend/linearize.ts` | Add transpose rule if grad needed                             |
