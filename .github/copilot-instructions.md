@@ -717,6 +717,11 @@ Each batch element runs an independent scan:
 
 **Compositions work:** `jit(vmap(scan))` and `vmap(jit(scan))`
 
+**Transform sandwiches tested:** The `test/lax-scan.test.ts` "transform sandwiches" suite verifies
+additional compositions: `jit(grad(scan))`, `grad(vmap(scan))`, `vmap(grad(scan))`, and `vmap(scan)`
+vs `scan(vmap(body))` equivalence. Note: `grad(jit(scan))` is not supported — use `jit` inside the
+grad-wrapped function instead.
+
 ---
 
 ## Routine System

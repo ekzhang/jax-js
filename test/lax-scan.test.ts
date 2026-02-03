@@ -1727,7 +1727,7 @@ describe("scan autodiff", () => {
       const cumsumWithJitBody = (xs: np.Array) => {
         // JIT-compile just the body computation
         const jitAdd = jit((a: np.Array, b: np.Array) => np.add(a, b));
-        
+
         const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
           const newCarry = jitAdd(carry.ref, x);
           return [newCarry, newCarry.ref];
@@ -1869,36 +1869,36 @@ describe("scan autodiff", () => {
         // Explicitly test jit(vmap(scan)) on WebGPU
         defaultDevice("webgpu");
 
-      const cumsumScan = (xs: np.Array) => {
-        const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
-          const newCarry = np.add(carry.ref, x);
-          return [newCarry, newCarry.ref];
+        const cumsumScan = (xs: np.Array) => {
+          const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+            const newCarry = np.add(carry.ref, x);
+            return [newCarry, newCarry.ref];
+          };
+          const init = np.zeros([1]);
+          const [finalCarry, ys] = lax.scan(step, init, xs);
+          return [finalCarry, ys] as [np.Array, np.Array];
         };
-        const init = np.zeros([1]);
-        const [finalCarry, ys] = lax.scan(step, init, xs);
-        return [finalCarry, ys] as [np.Array, np.Array];
-      };
 
-      const jitVmapScan = jit(vmap(cumsumScan));
+        const jitVmapScan = jit(vmap(cumsumScan));
 
-      const batchedXs = np.array([
-        [[1.0], [2.0], [3.0]], // batch 0
-        [[2.0], [2.0], [2.0]], // batch 1
-        [[1.0], [1.0], [1.0]], // batch 2
-      ]);
+        const batchedXs = np.array([
+          [[1.0], [2.0], [3.0]], // batch 0
+          [[2.0], [2.0], [2.0]], // batch 1
+          [[1.0], [1.0], [1.0]], // batch 2
+        ]);
 
-      const [carries, ys] = jitVmapScan(batchedXs);
+        const [carries, ys] = jitVmapScan(batchedXs);
 
-      expect(carries.shape).toEqual([3, 1]);
-      expect(ys.shape).toEqual([3, 3, 1]);
+        expect(carries.shape).toEqual([3, 1]);
+        expect(ys.shape).toEqual([3, 3, 1]);
 
-      const carryData = await carries.data();
-      expect(carryData[0]).toBeCloseTo(6.0);
-      expect(carryData[1]).toBeCloseTo(6.0);
-      expect(carryData[2]).toBeCloseTo(3.0);
+        const carryData = await carries.data();
+        expect(carryData[0]).toBeCloseTo(6.0);
+        expect(carryData[1]).toBeCloseTo(6.0);
+        expect(carryData[2]).toBeCloseTo(3.0);
 
-      jitVmapScan.dispose();
-    },
+        jitVmapScan.dispose();
+      },
     );
 
     it("grad(vmap(scan)) computes batched gradients", async () => {
