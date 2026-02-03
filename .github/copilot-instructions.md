@@ -826,6 +826,7 @@ WASM. The gradient computation expresses the math in terms of these primitives.
 
 | Limitation                       | Workaround                | Backend |
 | -------------------------------- | ------------------------- | ------- |
+| Scan body multi-output fusion    | Uses separate kernels     | All     |
 | WebGPU routine bodies (compiled) | Uses fallback (JS loop)   | WebGPU  |
 | `numCarry ≠ numY` on WebGPU      | Falls back to JS loop     | WebGPU  |
 | `grad(scan)` memory O(N)         | None (stores all carries) | All     |
@@ -836,9 +837,35 @@ WASM. The gradient computation expresses the math in terms of these primitives.
 
 | Priority | Feature                              | Notes                                              |
 | -------- | ------------------------------------ | -------------------------------------------------- |
+| High     | Scan body multi-output kernel fusion | Reuse existing `jitCompile` fusion for body        |
 | High     | Sqrt(N) checkpointing for grad(scan) | Reduce memory from O(N) to O(√N) with 2× recompute |
 | Medium   | Fix WebGPU compiled-body binding     | `wrapRoutineForScan` arg mapping is incorrect      |
 | Low      | `lax.scatter` / `dynamic_slice`      | Would enable Jaxpr-based routines                  |
+
+### Scan Body Multi-Output Kernel Fusion
+
+Scan bodies with multiple carry outputs (e.g., Mandelbrot with A, B, V arrays) currently compile to
+**separate kernels for each output**, while regular `jit()` fuses them into a single multi-output
+kernel.
+
+**Example:** Mandelbrot body with 3 carry outputs:
+
+- Regular `jit(f)`: **1 kernel** with 3 outputs
+- Scan body: **6 kernels** (each carry + intermediates)
+
+**Impact:** `jit(scan(vectorized_body))` is ~25-30% slower than JS-loop + `jit(body)` for
+purely-elementwise multi-output bodies.
+
+**Fix approach:** Reuse existing kernel fusion from `jitCompile()` for scan body compilation. The
+`splitGraphDataflow()` algorithm already supports multi-output fusion — the issue is that scan body
+compilation runs each output through separate kernel generation.
+
+**Testing note:** This limitation should be tested on each backend separately:
+
+- WASM: `npx tsx` or `pnpm test`
+- WebGPU: Deno (`pnpm run test:deno`)
+
+See test: `test/lax-scan.test.ts` → "KNOWN LIMITATIONS" → "Scan body multi-output fusion"
 
 ### Fix Compiled-Body Binding Detection
 

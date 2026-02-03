@@ -27,6 +27,7 @@ import {
   prod,
   range,
   rep,
+  reportScanBodySteps,
   reportScanPath,
   type ScanPath,
 } from "../utils";
@@ -2054,6 +2055,9 @@ function tryPrepareWasmNativeScan(
           : ""),
     );
   }
+
+  // Report body steps for testing (to verify kernel fusion)
+  reportScanBodySteps(executeSteps.length, "wasm", { numCarry, numY });
 
   // Number of jaxpr inputs
   const numInputs = numConsts + numCarry + numX;

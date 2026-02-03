@@ -13,7 +13,12 @@ import * as random from "./library/random";
 import * as scipySpecial from "./library/scipy-special";
 import * as tree from "./tree";
 import type { JsTree, JsTreeDef, MapJsTree } from "./tree";
-import { type ScanPath, setDebug, setScanPathCallback } from "./utils";
+import {
+  type ScanPath,
+  setDebug,
+  setScanBodyStepsCallback,
+  setScanPathCallback,
+} from "./utils";
 
 import "./polyfills";
 
@@ -36,6 +41,7 @@ export {
   random,
   type ScanPath,
   setDebug,
+  setScanBodyStepsCallback,
   setScanPathCallback,
   scipySpecial,
   tree,

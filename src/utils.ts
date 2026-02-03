@@ -34,6 +34,52 @@ export type ScanPathCallback = (
 
 let scanPathCallback: ScanPathCallback | null = null;
 
+/** Callback for tracking scan body execute steps (for testing fusion). */
+export type ScanBodyStepsCallback = (
+  executeSteps: number,
+  backend: string,
+  details?: { numCarry?: number; numY?: number },
+) => void;
+
+let scanBodyStepsCallback: ScanBodyStepsCallback | null = null;
+
+/**
+ * Set a callback to be notified when scan body is analyzed.
+ * Reports the number of execute steps in the compiled body program.
+ *
+ * This is useful for testing kernel fusion in scan bodies. An ideal
+ * implementation would fuse elementwise multi-output bodies into a
+ * single kernel, but currently each output creates a separate kernel.
+ *
+ * @param callback - Function called with (executeSteps, backend, details).
+ *                   Pass null to disable tracking.
+ *
+ * @example
+ * ```ts
+ * let bodySteps = 0;
+ * setScanBodyStepsCallback((steps) => { bodySteps = steps; });
+ * jit(() => lax.scan(body, init, xs))();
+ * expect(bodySteps).toBe(1); // Would be 1 if fully fused
+ * setScanBodyStepsCallback(null); // cleanup
+ * ```
+ */
+export function setScanBodyStepsCallback(
+  callback: ScanBodyStepsCallback | null,
+): void {
+  scanBodyStepsCallback = callback;
+}
+
+/** Internal: report scan body step count to registered callback. */
+export function reportScanBodySteps(
+  executeSteps: number,
+  backend: string,
+  details?: { numCarry?: number; numY?: number },
+): void {
+  if (scanBodyStepsCallback) {
+    scanBodyStepsCallback(executeSteps, backend, details);
+  }
+}
+
 /**
  * Set a callback to be notified when scan implementations are chosen.
  * Useful for testing to verify the expected code path is taken.

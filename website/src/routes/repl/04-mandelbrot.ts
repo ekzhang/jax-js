@@ -1,6 +1,9 @@
 import { jit, numpy as np } from "@jax-js/jax";
 
 // This example draws a Mandelbrot fractal using array operations and jit() for each step.
+// The computation is already fully vectorized: each iteration operates on all 750x600 pixels
+// simultaneously, making it GPU-friendly. The jit() compilation fuses operations into
+// efficient kernels, and WebGPU backends process all pixels in parallel.
 const width = 750;
 const height = 600;
 
