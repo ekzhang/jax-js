@@ -67,25 +67,21 @@ describe("AssemblyScript routines", () => {
       env: { memory },
     });
     const exports = instance.exports as {
-      triangular_solve_f32: (
-        aPtr: number,
-        bPtr: number,
-        xPtr: number,
-        n: number,
-        unitDiagonal: number,
-      ) => void;
       triangular_solve_batched_f32: (
         aPtr: number,
         bPtr: number,
         xPtr: number,
         n: number,
-        batch: number,
+        batchRows: number,
+        numBatches: number,
         unitDiagonal: number,
+        lower: number,
       ) => void;
     };
 
     const n = 32;
-    const batch = 100;
+    const batchRows = 100;
+    const numBatches = 1;
     const view = new Float32Array(memory.buffer);
 
     // Create upper-triangular matrix
@@ -98,19 +94,28 @@ describe("AssemblyScript routines", () => {
     // Create batch of RHS vectors
     const aPtr = 0;
     const bPtr = n * n * 4;
-    const xPtr = bPtr + batch * n * 4;
-    for (let b = 0; b < batch; b++) {
+    const xPtr = bPtr + batchRows * n * 4;
+    for (let b = 0; b < batchRows; b++) {
       for (let i = 0; i < n; i++) {
         view[(bPtr >> 2) + b * n + i] = Math.random();
       }
     }
 
     bench(`triangular-solve ${n}x${n} single`, () => {
-      exports.triangular_solve_f32(aPtr, bPtr, xPtr, n, 0);
+      exports.triangular_solve_batched_f32(aPtr, bPtr, xPtr, n, 1, 1, 0, 0);
     });
 
-    bench(`triangular-solve ${n}x${n} x${batch} batched`, () => {
-      exports.triangular_solve_batched_f32(aPtr, bPtr, xPtr, n, batch, 0);
+    bench(`triangular-solve ${n}x${n} x${batchRows} batched`, () => {
+      exports.triangular_solve_batched_f32(
+        aPtr,
+        bPtr,
+        xPtr,
+        n,
+        batchRows,
+        numBatches,
+        0,
+        0,
+      );
     });
   });
 

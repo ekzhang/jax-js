@@ -553,8 +553,9 @@ suite.each(devices)("lax.scan device:%s", (device) => {
     });
   });
 
-  describe("native routine scan (WASM)", () => {
-    // Tests for compiled scan with Cholesky routine embedded in WASM module
+  describe("routine in scan body (fallback path)", () => {
+    // Tests for scan with routine ops in body (uses fallback JS loop since
+    // routines are pre-compiled AS modules that can't be embedded inline)
 
     test.skipIf(!devicesAvailable.includes("wasm"))(
       "cholesky in body",
@@ -699,9 +700,8 @@ suite.each(devices)("lax.scan device:%s", (device) => {
         };
 
         const jitScan = jit((matrices: np.Array) => {
-          return lax.scan(step, initCarry.ref, matrices, {
-            requirePath: "fused",
-          });
+          // Note: routines use fallback path (pre-compiled AS modules)
+          return lax.scan(step, initCarry.ref, matrices);
         });
 
         const [finalCarry, outputs] = jitScan(xs.ref);
@@ -751,9 +751,8 @@ suite.each(devices)("lax.scan device:%s", (device) => {
         };
 
         const jitScan = jit((matrices: np.Array) => {
-          return lax.scan(step, initCarry.ref, matrices, {
-            requirePath: "fused",
-          });
+          // Note: routines use fallback path (pre-compiled AS modules)
+          return lax.scan(step, initCarry.ref, matrices);
         });
 
         const [finalCarry, outputs] = jitScan(xs.ref);

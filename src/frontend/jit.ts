@@ -1685,16 +1685,13 @@ function tryPrepareNativeScanGeneral(
   const usedRoutines = new Set<Routines>();
   for (const step of executeSteps) {
     if (step.source instanceof Routine) {
-      const routineName = step.source.name as Routines;
-      // Only Cholesky and Sort are supported in native scan
-      if (routineName !== Routines.Cholesky && routineName !== Routines.Sort) {
-        if (DEBUG >= 1)
-          console.log(
-            `[general-scan] skipped, unsupported routine: ${step.source.name}`,
-          );
-        return null;
-      }
-      usedRoutines.add(routineName);
+      // Native scan no longer supports routines (they use pre-compiled AS modules)
+      // Fall back to JS loop for any routine in scan body
+      if (DEBUG >= 1)
+        console.log(
+          `[general-scan] skipped, routines use pre-compiled AS modules: ${step.source.name}`,
+        );
+      return null;
     }
   }
 
