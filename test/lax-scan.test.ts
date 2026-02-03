@@ -1005,6 +1005,142 @@ suite.each(devices)("lax.scan device:%s", (device) => {
       expect(Array.from(outputData)).toEqual([6, 5, 3]);
     });
   });
+
+  describe("scan with xs=null (carry-only)", () => {
+    test("generates sequence with no input arrays", async () => {
+      // Generate 0, 1, 2, 3, 4 without allocating input xs
+      const step = (carry: np.Array, _x: null): [np.Array, np.Array] => {
+        // .ref needed because carry is used twice: in add and returned as output
+        const newCarry = np.add(carry.ref, np.array([1.0]));
+        return [newCarry, carry];
+      };
+
+      const initCarry = np.array([0.0]);
+
+      // Must provide length when xs is null
+      const [finalCarry, outputs] = await lax.scan(step, initCarry, null, {
+        length: 5,
+      });
+
+      const finalData = await finalCarry.data();
+      expect(finalData[0]).toBeCloseTo(5.0);
+
+      const outputData = await outputs.data();
+      expect(Array.from(outputData)).toEqual([0, 1, 2, 3, 4]);
+    });
+
+    test("generates fibonacci sequence", async () => {
+      // Fibonacci: carry = [a, b], output = a, next = [b, a+b]
+      const step = (carry: np.Array, _x: null): [np.Array, np.Array] => {
+        // Use slice to get elements (take expects int indices)
+        const a = np.take(carry.ref, np.array(0, { dtype: np.int32 }));
+        const b = np.take(carry, np.array(1, { dtype: np.int32 }));
+        const newCarry = np.stack([b.ref, np.add(a.ref, b)]);
+        return [newCarry, a];
+      };
+
+      const initCarry = np.array([0.0, 1.0]);
+
+      const [finalCarry, outputs] = await lax.scan(step, initCarry, null, {
+        length: 8,
+      });
+
+      const outputData = await outputs.data();
+      expect(Array.from(outputData)).toEqual([0, 1, 1, 2, 3, 5, 8, 13]);
+
+      const finalData = await finalCarry.data();
+      expect(finalData[0]).toBeCloseTo(21.0); // fib(8)
+      expect(finalData[1]).toBeCloseTo(34.0); // fib(9)
+    });
+
+    test("with jit", async () => {
+      const step = (carry: np.Array, _x: null): [np.Array, np.Array] => {
+        const newCarry = np.add(carry.ref, np.array([1.0]));
+        return [newCarry, carry];
+      };
+
+      const jitScan = jit((init: np.Array) =>
+        lax.scan(step, init, null, { length: 5 }),
+      );
+
+      const initCarry = np.array([0.0]);
+      const [finalCarry, outputs] = await jitScan(initCarry);
+
+      const finalData = await finalCarry.data();
+      expect(finalData[0]).toBeCloseTo(5.0);
+
+      const outputData = await outputs.data();
+      expect(Array.from(outputData)).toEqual([0, 1, 2, 3, 4]);
+
+      jitScan.dispose();
+    });
+
+    test("throws when length not provided", async () => {
+      const step = (carry: np.Array, _x: null): [np.Array, np.Array] => {
+        return [carry.ref, carry.ref];
+      };
+
+      const initCarry = np.array([0.0]);
+
+      expect(() => lax.scan(step, initCarry, null)).toThrow(
+        "length option is required when xs is null",
+      );
+    });
+
+    test("with reverse", async () => {
+      // With reverse=true, outputs are in reverse order
+      const step = (carry: np.Array, _x: null): [np.Array, np.Array] => {
+        const newCarry = np.add(carry.ref, np.array([1.0]));
+        return [newCarry, carry];
+      };
+
+      const initCarry = np.array([0.0]);
+
+      const [finalCarry, outputs] = await lax.scan(step, initCarry, null, {
+        length: 5,
+        reverse: true,
+      });
+
+      const finalData = await finalCarry.data();
+      expect(finalData[0]).toBeCloseTo(5.0);
+
+      // Reverse scan still outputs 0,1,2,3,4 but in reverse order
+      const outputData = await outputs.data();
+      expect(Array.from(outputData)).toEqual([4, 3, 2, 1, 0]);
+    });
+
+    test("with pytree carry", async () => {
+      type Carry = { a: np.Array; b: np.Array };
+
+      const step = (carry: Carry, _x: null): [Carry, np.Array] => {
+        // Need .ref for multiple uses of carry.a and carry.b
+        const newA = np.add(carry.a.ref, carry.b.ref);
+        const newB = np.add(carry.b, np.array([1.0]));
+        return [{ a: newA, b: newB }, carry.a];
+      };
+
+      const initCarry = { a: np.array([0.0]), b: np.array([1.0]) };
+
+      const [finalCarry, outputs] = await lax.scan(step, initCarry, null, {
+        length: 5,
+      });
+
+      // Trace: (a, b) starts at (0, 1)
+      // iter 0: newA=0+1=1, newB=1+1=2, output=0
+      // iter 1: newA=1+2=3, newB=2+1=3, output=1
+      // iter 2: newA=3+3=6, newB=3+1=4, output=3
+      // iter 3: newA=6+4=10, newB=4+1=5, output=6
+      // iter 4: newA=10+5=15, newB=5+1=6, output=10
+      const aData = await finalCarry.a.data();
+      const bData = await finalCarry.b.data();
+      expect(aData[0]).toBeCloseTo(15.0);
+      expect(bData[0]).toBeCloseTo(6.0);
+
+      // outputs = [0, 1, 3, 6, 10] (a values before update)
+      const outputData = await outputs.data();
+      expect(Array.from(outputData)).toEqual([0, 1, 3, 6, 10]);
+    });
+  });
 });
 
 describe("scan autodiff", () => {

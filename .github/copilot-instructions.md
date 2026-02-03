@@ -520,6 +520,15 @@ const [carry, ys] = lax.scan(f, init, xs);
 // Use .ref if you need them after: lax.scan(f, init.ref, xs.ref)
 ```
 
+**xs=null for carry-only scans:**
+
+```ts
+// When xs is null, you must provide length option
+const [carry, ys] = lax.scan(f, init, null, { length: 100 });
+// No memory allocated for xs - useful for generators, RNG sequences, etc.
+// Body receives null as second argument: f(carry, null) => [newCarry, y]
+```
+
 **Body function — borrowed references:**
 
 ```ts
@@ -542,12 +551,13 @@ stackedYs.dispose();
 
 **Common patterns:**
 
-| Pattern      | Code                                   | Notes                |
-| ------------ | -------------------------------------- | -------------------- |
-| Simple body  | `return [newCarry, y]`                 | Two distinct arrays  |
-| Passthrough  | `return [newCarry.ref, newCarry]`      | Same array in both   |
-| Pytree carry | `return [{ a: a.ref, b }, { out: a }]` | Mix of refs          |
-| Keep inputs  | `scan(f, init.ref, xs.ref)`            | Don't consume inputs |
+| Pattern      | Code                                   | Notes                           |
+| ------------ | -------------------------------------- | ------------------------------- |
+| Simple body  | `return [newCarry, y]`                 | Two distinct arrays             |
+| Passthrough  | `return [newCarry.ref, newCarry]`      | Same array in both              |
+| Pytree carry | `return [{ a: a.ref, b }, { out: a }]` | Mix of refs                     |
+| Keep inputs  | `scan(f, init.ref, xs.ref)`            | Don't consume inputs            |
+| Carry-only   | `scan(f, init, null, { length: N })`   | No xs allocation (saves memory) |
 
 ---
 

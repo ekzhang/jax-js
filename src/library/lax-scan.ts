@@ -59,13 +59,14 @@ export interface ScanOptions {
  *
  * ```ts
  * scan(f, init, xs) → [finalCarry, ys]
+ * scan(f, init, null, { length }) → [finalCarry, ys]  // carry-only scan
  *
  * // Where:
- * // f: (carry: C, x: X) => [C, Y]  -- step function
- * // init: C                        -- initial carry
- * // xs: X[]                        -- input array (leading axis = iterations)
- * // finalCarry: C                  -- carry after last iteration
- * // ys: Y[]                        -- stacked outputs from each iteration
+ * // f: (carry: C, x: X | null) => [C, Y]  -- step function
+ * // init: C                               -- initial carry
+ * // xs: X[] | null                        -- input array or null for carry-only
+ * // finalCarry: C                         -- carry after last iteration
+ * // ys: Y[]                               -- stacked outputs from each iteration
  * ```
  *
  * ## Semantics
@@ -106,12 +107,13 @@ export interface ScanOptions {
  *
  * @param f - Step function `(carry, x) => [newCarry, y]` where:
  *   - `carry` is the current state (same structure as `init`)
- *   - `x` is a slice of `xs` along axis 0 (shape = `xs.shape.slice(1)`)
+ *   - `x` is a slice of `xs` along axis 0, or `null` if `xs` is null
  *   - `newCarry` is the updated state (same structure/shape as `carry`)
  *   - `y` is the output for this iteration
  * @param init - Initial carry value. Can be a single array or a pytree of arrays.
- * @param xs - Input sequence to scan over. The leading axis is the scan dimension.
- *   Can be a single array or a pytree of arrays (all with same leading axis size).
+ * @param xs - Input sequence to scan over, or `null` for carry-only scans.
+ *   When an array/pytree, the leading axis is the scan dimension.
+ *   When `null`, you must provide `{ length }` in options.
  * @param options - Scan options or legacy `length` number
  * @returns `[finalCarry, ys]` where:
  *   - `finalCarry` has the same structure as `init`
@@ -176,6 +178,23 @@ export interface ScanOptions {
  * const [final, ys] = await lax.scan(step, init, xs, { reverse: true });
  * ```
  *
+ * @example Carry-only scan (xs=null)
+ * ```ts
+ * // Generate a sequence without allocating input arrays.
+ * // Useful for RNG, counters, Fibonacci, or any state-only iteration.
+ * const step = (carry, _x) => {
+ *   const next = np.add(carry.ref, np.array([1.0]));
+ *   return [next, carry];  // output is old carry value
+ * };
+ *
+ * const init = np.array([0.0]);
+ * // Must provide length when xs is null
+ * const [final, ys] = await lax.scan(step, init, null, { length: 5 });
+ *
+ * console.log(await ys.data());  // [0, 1, 2, 3, 4]
+ * console.log(await final.data());  // [5]
+ * ```
+ *
  * @example jit(scan) - Compile the entire scan loop
  * ```ts
  * import { jit, lax, numpy as np } from '@jax-js/jax';
@@ -231,11 +250,25 @@ export interface ScanOptions {
  * const [dInit, dXs] = await gradLoss(init, xs);
  * ```
  *
+ * @example Carry-only scan (no input xs)
+ * ```ts
+ * // Generate sequence without input arrays (saves memory)
+ * const step = (carry, _) => {
+ *   const next = np.add(carry, np.array([1]));
+ *   return [next, carry.ref];
+ * };
+ *
+ * const init = np.array([0]);
+ * // Must provide length when xs is null
+ * const [final, ys] = await lax.scan(step, init, null, { length: 5 });
+ * // ys = [[0], [1], [2], [3], [4]], final = [5]
+ * ```
+ *
  * @see {@link https://docs.jax.dev/en/latest/_autosummary/jax.lax.scan.html | JAX lax.scan}
  */
 export function scan<
   Carry extends JsTree<Array>,
-  X extends JsTree<Array>,
+  X extends JsTree<Array> | null | undefined,
   Y extends JsTree<Array>,
 >(
   f: (carry: Carry, x: X) => [Carry, Y],
@@ -247,15 +280,23 @@ export function scan<
   const opts: ScanOptions =
     typeof options === "number" ? { length: options } : (options ?? {});
   const { length: lengthOpt, reverse = false, requirePath } = opts;
+
+  // Handle xs=null case (carry-only scan with no input arrays)
+  const xsIsNull = xs === null || xs === undefined;
+
   // Flatten inputs for primitive call
   const [initFlat, initTreedef] = tree.flatten(init);
-  const [xsFlat, xsTreedef] = tree.flatten(xs);
+  const [xsFlat, xsTreedef] = xsIsNull ? [[], null] : tree.flatten(xs);
 
   // Determine scan length from input
   const n = lengthOpt ?? (xsFlat.length > 0 ? xsFlat[0].shape[0] : 0);
 
   if (n === 0) {
-    throw new Error("scan: cannot determine length from empty inputs");
+    throw new Error(
+      xsIsNull
+        ? "scan: length option is required when xs is null"
+        : "scan: cannot determine length from empty inputs",
+    );
   }
 
   // Get abstract values for carry and x_slice (xs with leading dim removed)
@@ -272,8 +313,11 @@ export function scan<
     xSliceFlat: Array[],
   ): [Array[], Array[]] => {
     const carry = tree.unflatten(initTreedef, carryFlat) as Carry;
-    const xSlice = tree.unflatten(xsTreedef, xSliceFlat) as X;
-    const [newCarry, y] = f(carry, xSlice);
+    // For xs=null, pass null/undefined to body function (matches JAX behavior)
+    const xSlice = xsIsNull
+      ? xs
+      : (tree.unflatten(xsTreedef!, xSliceFlat) as X);
+    const [newCarry, y] = f(carry, xSlice as X);
     const [newCarryFlat] = tree.flatten(newCarry);
     const [yFlat, yTreedef] = tree.flatten(y);
     // Store yTreedef for later reconstruction
