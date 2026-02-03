@@ -381,12 +381,12 @@ elementwise kernels and **multi-kernel scan** for bodies with multiple independe
 | `vmap` > `jit(vmap(scan))`              | [✅ Pass](test/lax-scan.test.ts) |                                          |
 | `vmap` > `vmap(jit(scan))`              | [✅ Pass](test/lax-scan.test.ts) |                                          |
 | `scan over views`                       | [✅ Pass](test/lax-scan.test.ts) | sliced/transposed xs                     |
-| `compiled-loop scan`                    | [✅ Pass](test/lax-scan.test.ts) | elementwise kernels, single carry/output |
+| `compiled-loop scan`                    | [✅ Pass](test/lax-scan.test.ts) | kernel gids reindexed to scan layout     |
 | `compiled-loop scan` > `with reduction` | [✅ Pass](test/lax-scan.test.ts) | e.g., `carry += sum(x)` or matmul        |
 | `compiled-loop scan` > `with reverse`   | [✅ Pass](test/lax-scan.test.ts) | uses dataIdx like WASM                   |
 | `compiled-loop scan` > `with constants` | [✅ Pass](test/lax-scan.test.ts) | captured constants bound as storage      |
 | `multi-kernel scan`                     | ✅ Pass                          | multiple carries, up to 8 total buffers  |
-| `compiled-body scan` (routine bodies)   | ⚠️ Broken                        | see Known Limitations                    |
+| `compiled-body scan` (routine bodies)   | ⚠️ Fallback                      | uses JS loop (see Known Limitations)     |
 
 **Note on numCarry ≠ numY:** WebGPU compiled-loop requires `numCarry === numY`. When they differ,
 WebGPU falls back to JS loop. WASM's general scan handles this case.
@@ -399,11 +399,11 @@ WebGPU falls back to JS loop. WASM's general scan handles this case.
 
 ### Why compiled-loop vs compiled-body?
 
-| Approach          | How it works                                  | When used                          |
-| ----------------- | --------------------------------------------- | ---------------------------------- |
-| **Compiled-loop** | Entire scan loop in native code (WASM/shader) | Elementwise kernels, routines      |
-| **Compiled-body** | Pre-encode dispatches, JS drives iteration    | WebGPU routines (currently broken) |
-| **Fallback**      | JS loop calling body program per iteration    | Unsupported patterns               |
+| Approach          | How it works                                  | When used                                  |
+| ----------------- | --------------------------------------------- | ------------------------------------------ |
+| **Compiled-loop** | Entire scan loop in native code (WASM/shader) | Elementwise kernels (WASM+WebGPU), WASM routines |
+| **Compiled-body** | Pre-encode dispatches, JS drives iteration    | WebGPU routines (falls back, binding issue)|
+| **Fallback**      | JS loop calling body program per iteration    | WebGPU routines, unsupported patterns      |
 
 **Rationale:** Compiled-loop is preferred because:
 
@@ -792,11 +792,13 @@ WASM. The gradient computation expresses the math in terms of these primitives.
 
 ### Current limitations
 
-| Limitation                  | Workaround                | Backend |
-| --------------------------- | ------------------------- | ------- |
-| WebGPU compiled-body broken | Uses fallback (JS loop)   | WebGPU  |
-| `numCarry ≠ numY` on WebGPU | Falls back to JS loop     | WebGPU  |
-| `grad(scan)` memory O(N)    | None (stores all carries) | All     |
+| Limitation                       | Workaround                | Backend |
+| -------------------------------- | ------------------------- | ------- |
+| WebGPU routine bodies (compiled) | Uses fallback (JS loop)   | WebGPU  |
+| `numCarry ≠ numY` on WebGPU      | Falls back to JS loop     | WebGPU  |
+| `grad(scan)` memory O(N)         | None (stores all carries) | All     |
+
+**Resolved:** WebGPU kernel-only bodies now use native scan via `tryPrepareWebGPUNativeScan()`.
 
 ### Future work
 
