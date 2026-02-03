@@ -38,6 +38,7 @@
   "scripts": {
     "build": "tsdown",
     "build:watch": "TSDOWN_WATCH_MODE=1 tsdown",
+    "build:routines": "node scripts/build-routines.mjs",
     "check": "tsc",
     "docs": "tsx typedoc.ts",
     "format": "prettier --write .",
@@ -56,6 +57,7 @@
     "@vitest/browser-playwright": "^4.0.9",
     "@vitest/coverage-v8": "4.0.9",
     "@webgpu/types": "^0.1.68",
+    "assemblyscript": "^0.28.9",
     "eslint": "^9.31.0",
     "eslint-plugin-import": "^2.32.0",
     "globals": "^16.0.0",

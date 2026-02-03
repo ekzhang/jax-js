@@ -1467,7 +1467,7 @@ function translateExpWithGeneralScanContext(
  * This differs from translateExp by handling GlobalView with iteration-dependent offsets
  * and supporting ridx/acc for reductions.
  */
-function translateExpWithScanContext(
+function _translateExpWithScanContext(
   cg: CodeGenerator,
   funcs: Record<string, number>,
   exp: AluExp,
@@ -1643,7 +1643,7 @@ function translateExpWithScanContext(
         );
       }
     } else {
-      throw new Error(`translateExpWithScanContext: unsupported op ${op}`);
+      throw new Error(`_translateExpWithScanContext: unsupported op ${op}`);
     }
 
     if ((references.get(e) ?? 0) > 1) {

@@ -38,6 +38,7 @@ pnpm -C website dev                # local dev server for demos
 **Before any commit**, run the full CI validation to catch issues early:
 
 ```bash
+pnpm build:routines                # Rebuild AssemblyScript routines (if src/routines/ changed)
 pnpm build                         # Build the project
 pnpm check                         # TypeScript type checking
 pnpm lint --max-warnings 0         # ESLint with zero warnings tolerance
@@ -579,24 +580,72 @@ will FAIL with instructions to update this documentation.
 
 ## WASM Routine Implementation Status
 
-Native WASM implementations of routines for maximum performance. These replace the JS
-`runCpuRoutine` fallback.
+Native WASM implementations of routines for maximum performance. Routines are written in
+**AssemblyScript** (a TypeScript-like language) and compiled to WASM at build time.
 
-| Routine             | WASM Status    | Test                                          | Notes                                                                  |
-| ------------------- | -------------- | --------------------------------------------- | ---------------------------------------------------------------------- |
-| **Cholesky**        | ✅ Implemented | [lax-linalg.test.ts](test/lax-linalg.test.ts) | `src/backend/wasm/cholesky.ts`, ~37M matrices/sec (4×4)                |
-| **TriangularSolve** | ✅ Implemented | [lax-linalg.test.ts](test/lax-linalg.test.ts) | `src/backend/wasm/triangular-solve.ts`, forward/back-substitution      |
-| **LU**              | ✅ Implemented | [lax-linalg.test.ts](test/lax-linalg.test.ts) | `src/backend/wasm/lu.ts`, Gaussian elim + partial pivoting             |
-| **Sort**            | ✅ Implemented | [numpy.test.ts](test/numpy.test.ts)           | `src/backend/wasm/sort.ts`, bottom-up merge sort O(n log n), NaN-aware |
-| **Argsort**         | ✅ Implemented | [numpy.test.ts](test/numpy.test.ts)           | `src/backend/wasm/argsort.ts`, stable merge sort on indices            |
+| Routine             | Status         | Source                             | Notes                                         |
+| ------------------- | -------------- | ---------------------------------- | --------------------------------------------- |
+| **Cholesky**        | ✅ Implemented | `src/routines/cholesky.ts`         | f32/f64, single/batched, 740 bytes compiled   |
+| **TriangularSolve** | ✅ Implemented | `src/routines/triangular-solve.ts` | Upper-triangular back-substitution, 604 bytes |
+| **LU**              | ✅ Implemented | `src/routines/lu.ts`               | Partial pivoting, 1,308 bytes compiled        |
+| **Sort**            | ✅ Implemented | `src/routines/sort.ts`             | Bottom-up merge sort, NaN-aware, 930 bytes    |
+| **Argsort**         | ✅ Implemented | `src/routines/argsort.ts`          | Stable merge sort on indices, 1,215 bytes     |
 
-**Implementation pattern:** See `src/backend/wasm/cholesky.ts` for reference. Each routine:
+**Build command:** `pnpm build:routines` compiles `src/routines/*.ts` →
+`src/backend/wasm/generated/routines.ts`
 
-1. Defines a `wasm_<routine>(cg, ft)` function that generates WASM bytecode using wasmblr
-   - `cg` is the CodeGenerator, `ft` is the float type (`cg.f32` or `cg.f64`)
-2. Wraps in `create<Routine>Module()` with batching loop
-3. Caches module/instance in `WasmBackend` for reuse
-4. Dispatches via `#dispatch<Routine>Wasm()` method
+**How it works:**
+
+1. AssemblyScript sources in `src/routines/` define exported functions (e.g., `cholesky_f32`)
+2. `scripts/build-routines.mjs` compiles each to WASM with
+   `--runtime stub --optimize --importMemory`
+3. Generated file exports base64-encoded WASM + `getRoutineModuleSync(name)` loader
+4. `WasmBackend` instantiates modules with shared memory for zero-copy data access
+
+**Adding a new routine:**
+
+1. Create `src/routines/<name>.ts` following AssemblyScript patterns (see below)
+2. Run `pnpm build:routines` to regenerate
+3. Wire into `WasmBackend` dispatch methods
+4. Update the JS fallback in `src/routine.ts` to match (for CPU backend)
+
+**AssemblyScript patterns:**
+
+```typescript
+// File: src/routines/example.ts
+
+/**
+ * Naming convention: <routine>_<dtype> and <routine>_batched_<dtype>
+ * Types: f32, f64 (use usize for pointers, i32 for dimensions)
+ */
+export function example_f32(inPtr: usize, outPtr: usize, n: i32): void {
+  const elemSize: i32 = 4; // f32 = 4 bytes
+
+  for (let i: i32 = 0; i < n; i++) {
+    // Read: load<T>(ptr + offset)
+    const val: f32 = load<f32>(inPtr + <usize>(i * elemSize));
+
+    // Write: store<T>(ptr + offset, value)
+    store<f32>(outPtr + <usize>(i * elemSize), val * 2.0);
+  }
+}
+
+// Batched version calls single version in a loop
+export function example_batched_f32(inPtr: usize, outPtr: usize, n: i32, batch: i32): void {
+  const size: i32 = n * 4;
+  for (let b: i32 = 0; b < batch; b++) {
+    example_f32(inPtr + <usize>(b * size), outPtr + <usize>(b * size), n);
+  }
+}
+```
+
+**Key AssemblyScript differences from TypeScript:**
+
+- Use `usize` for memory pointers, `i32` for integers, `f32`/`f64` for floats
+- Use `load<T>(ptr)` and `store<T>(ptr, val)` for memory access
+- Cast offsets: `<usize>(i * elemSize)` — required for pointer arithmetic
+- Use `sqrt<f32>(x)` not `Math.sqrt(x)` — generic builtins
+- No closures, classes, or dynamic memory — pure procedural code
 
 ---
 
@@ -811,7 +860,8 @@ During transpose:
 
 ### Unified General Scan Implementation
 
-All WASM scan variants are now handled by a single unified implementation: `codegenNativeScanGeneral`.
+All WASM scan variants are now handled by a single unified implementation:
+`codegenNativeScanGeneral`.
 
 **Handles all cases:**
 
@@ -838,7 +888,8 @@ All WASM scan variants are now handled by a single unified implementation: `code
 
 **Key types:**
 
-- `NativeScanGeneralParams`: length, carrySizes, xsStrides, internalSizes, steps, carryOutSources, yOutputSources
+- `NativeScanGeneralParams`: length, carrySizes, xsStrides, internalSizes, steps, carryOutSources,
+  yOutputSources
 - `GeneralScanStep`: source (Kernel | Routine), inputSlots, outputInternalIdx
 - `translateExpWithScanContext()`: scan-aware expression codegen
 
@@ -1023,24 +1074,24 @@ through the JIT compilation.
 The unified general scan path supports Routines with these requirements:
 
 1. Supported in `tryPrepareNativeScanGeneral` (currently: Cholesky, Sort)
-2. Has a WASM codegen function (`wasm_cholesky`, `wasm_merge_sort`)
-3. Function embedded in `codegenNativeScanGeneral` via step handler
+2. Has AssemblyScript source in `src/routines/` compiled to WASM
+3. Routine dispatch wired into `codegenNativeScanGeneral` step handler
 
-**How to add a routine:**
+**How to add a routine to native scan:**
 
-1. Add routine name check in `tryPrepareNativeScanGeneral` (jit.ts)
-2. Implement `wasm_<routine>(cg, ft)` function in `wasm.ts`
+1. Ensure routine has AssemblyScript implementation in `src/routines/`
+2. Add routine name check in `tryPrepareNativeScanGeneral` (jit.ts)
 3. Add case in `codegenNativeScanGeneral` step loop for the routine
 
-**Routine eligibility:**
+**Routine eligibility for native scan:**
 
-| Routine         | Status         | Notes                                            |
-| --------------- | -------------- | ------------------------------------------------ |
-| Cholesky        | ✅ Implemented | `wasm_cholesky(cg, ft)` embedded in general scan |
-| Sort            | ✅ Implemented | `wasm_merge_sort(cg, ft)` + aux buffer support   |
-| Argsort         | ❌ Not yet     | Would need 2 output buffers (values + indices)   |
-| TriangularSolve | ❌ Not yet     | Would need 2 inputs (A constant + x variable)    |
-| LU              | ❌ Not yet     | Would need 3 outputs (L, U, pivots)              |
+| Routine         | Native Scan    | Notes                                          |
+| --------------- | -------------- | ---------------------------------------------- |
+| Cholesky        | ✅ Implemented | Embedded in general scan path                  |
+| Sort            | ✅ Implemented | Embedded with aux buffer support               |
+| Argsort         | ❌ Not yet     | Would need 2 output buffers (values + indices) |
+| TriangularSolve | ❌ Not yet     | Would need 2 inputs (A constant + x variable)  |
+| LU              | ❌ Not yet     | Would need 3 outputs (L, U, pivots)            |
 
 **Key insight:** Routines are **black-box primitives** in Jaxpr. The autodiff rules are defined in
 terms of other primitives (e.g., Cholesky's JVP calls TriangularSolve), so the backend

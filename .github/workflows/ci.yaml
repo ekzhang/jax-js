@@ -21,6 +21,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - run: pnpm build:routines
+      - run: git diff --exit-code src/backend/wasm/generated/
+        name: Check generated routines are up to date
+
       - run: pnpm build
 
       - run: pnpm check
