@@ -373,12 +373,12 @@ The JIT system lives in `src/frontend/jit.ts` and `src/frontend/jaxpr.ts`.
 
 **Key types:**
 
-| Type                              | File         | Role                                     |
-| --------------------------------- | ------------ | ---------------------------------------- |
-| `Jaxpr`, `JaxprEqn`, `Var`, `Lit` | `jaxpr.ts`   | IR nodes and bindings                    |
-| `JitProgram`, `JitStep`           | `jit.ts`     | Compiled program + step types            |
-| `Kernel`                          | `alu.ts`     | Fused elementwise kernel descriptor      |
-| `Routine`                         | `routine.ts` | Backend-specific op (matmul, conv, etc.) |
+| Type                              | File         | Role                                       |
+| --------------------------------- | ------------ | ------------------------------------------ |
+| `Jaxpr`, `JaxprEqn`, `Var`, `Lit` | `jaxpr.ts`   | IR nodes and bindings                      |
+| `JitProgram`, `JitStep`           | `jit.ts`     | Compiled program + step types              |
+| `Kernel`                          | `alu.ts`     | Fused elementwise kernel descriptor        |
+| `Routine`                         | `routine.ts` | Backend-specific op (sort, cholesky, etc.) |
 
 **Adding a new primitive:**
 
@@ -584,13 +584,13 @@ will FAIL with instructions to update this documentation.
 Native WASM implementations of routines for maximum performance. Routines are written in
 **AssemblyScript** (a TypeScript-like language) and compiled to WASM at build time.
 
-| Routine             | Status         | Source                             | Notes                                         |
-| ------------------- | -------------- | ---------------------------------- | --------------------------------------------- |
-| **Cholesky**        | ✅ Implemented | `src/routines/cholesky.ts`         | f32/f64, single/batched, 740 bytes compiled   |
-| **TriangularSolve** | ✅ Implemented | `src/routines/triangular-solve.ts` | Upper-triangular back-substitution, 604 bytes |
-| **LU**              | ✅ Implemented | `src/routines/lu.ts`               | Partial pivoting, 1,308 bytes compiled        |
-| **Sort**            | ✅ Implemented | `src/routines/sort.ts`             | Bottom-up merge sort, NaN-aware, 930 bytes    |
-| **Argsort**         | ✅ Implemented | `src/routines/argsort.ts`          | Stable merge sort on indices, 1,215 bytes     |
+| Routine             | Status         | Source                             | Notes                                          |
+| ------------------- | -------------- | ---------------------------------- | ---------------------------------------------- |
+| **Cholesky**        | ✅ Implemented | `src/routines/cholesky.ts`         | f32/f64, single/batched, 740 bytes compiled    |
+| **TriangularSolve** | ✅ Implemented | `src/routines/triangular-solve.ts` | Upper/lower triangular, unit/non-unit diagonal |
+| **LU**              | ✅ Implemented | `src/routines/lu.ts`               | Partial pivoting, 1,308 bytes compiled         |
+| **Sort**            | ✅ Implemented | `src/routines/sort.ts`             | Bottom-up merge sort, NaN-aware, 930 bytes     |
+| **Argsort**         | ✅ Implemented | `src/routines/argsort.ts`          | Stable merge sort on indices, 1,215 bytes      |
 
 **Build command:** `pnpm build:routines` compiles `src/routines/*.ts` →
 `src/backend/wasm/generated/routines.ts`
@@ -603,12 +603,66 @@ Native WASM implementations of routines for maximum performance. Routines are wr
 3. Generated file exports base64-encoded WASM + `getRoutineModuleSync(name)` loader
 4. `WasmBackend` instantiates modules with shared memory for zero-copy data access
 
-**Adding a new routine:**
+**Adding a new routine (complete checklist):**
 
-1. Create `src/routines/<name>.ts` following AssemblyScript patterns (see below)
-2. Run `pnpm build:routines` to regenerate
-3. Wire into `WasmBackend` dispatch methods
-4. Update the JS fallback in `src/routine.ts` to match (for CPU backend)
+Adding a routine requires edits to **5 files**. The build script auto-generates the WASM loader, but
+wiring is manual.
+
+| Step | File                        | What to add                                                        |
+| ---- | --------------------------- | ------------------------------------------------------------------ |
+| 1    | `src/routines/<name>.ts`    | AssemblyScript implementation (see patterns below)                 |
+| 2    | `src/routine.ts`            | Add to `Routines` enum with JSDoc                                  |
+| 3    | `src/frontend/core.ts`      | Add to `routinePrimitives` map if exposing as a Primitive          |
+| 4    | `src/backend/wasm.ts`       | Add to `routineModuleNames`, add dispatch case + `#dispatch<Name>` |
+| 5    | `src/frontend/jit.ts`       | Add to `supportedRoutines` in `tryPrepareNativeScanGeneral()`      |
+| 6    | `src/backend/wasm.ts`       | Add codegen case in `codegenNativeScanGeneral()` (~20 lines)       |
+| opt  | `src/routine.ts`            | Add CPU fallback in `runCpuRoutine()` (for debugging)              |
+| opt  | `src/frontend/jvp.ts`       | Add JVP rule if routine needs autodiff support                     |
+| opt  | `src/frontend/linearize.ts` | Add transpose rule if routine needs grad support                   |
+
+**Detailed steps:**
+
+```typescript
+// Step 1: src/routines/<name>.ts - AssemblyScript implementation
+// Run `pnpm build:routines` after creating this file
+
+// Step 2: src/routine.ts - Add to enum
+export enum Routines {
+  // ... existing
+  MyRoutine = "MyRoutine",
+}
+
+// Step 3: src/frontend/core.ts - Register primitive (if applicable)
+export const routinePrimitives = new Map([
+  // ... existing
+  [Primitive.MyRoutine, Routines.MyRoutine],
+]);
+
+// Step 4: src/backend/wasm.ts - Add module name mapping
+const routineModuleNames: Record<Routines, string> = {
+  // ... existing
+  [Routines.MyRoutine]: "my-routine",  // matches filename without .ts
+};
+
+// Step 4b: src/backend/wasm.ts - Add dispatch case
+case Routines.MyRoutine:
+  return this.#dispatchMyRoutine(routine, inputs, outputs, elementSize);
+
+// Step 5: src/frontend/jit.ts - Enable for native scan
+const supportedRoutines = new Set([
+  // ... existing
+  Routines.MyRoutine,
+]);
+
+// Step 6: src/backend/wasm.ts - Add scan codegen in codegenNativeScanGeneral()
+} else if (routineType === Routines.MyRoutine) {
+  pushSlotPtr(step.inputSlots[0]);  // input pointer
+  cg.local.get(internalsBase + internalIdx);  // output pointer
+  for (const param of callInfo.staticParams) {
+    cg.i32.const(param);  // static params (dimensions, flags, etc.)
+  }
+}
+```
 
 **AssemblyScript patterns:**
 
@@ -745,7 +799,8 @@ expression safe for embedding.
 - Constants allowed
 - Reductions allowed (matmul = Mul→Sum)
 - Any `numCarry`/`numY` combination (general handles `numCarry ≠ numY`)
-- **Routine support**: Cholesky and Sort routines can be embedded in the scan loop
+- **Routine support**: All routines (Cholesky, Sort, TriangularSolve, LU, Argsort) can be embedded
+  in the scan loop
 - Passthrough carry patterns supported (when carry is returned unchanged)
 
 **WASM general scan with routines:**
@@ -754,7 +809,7 @@ The unified general scan path supports both Kernels and Routines in the same sca
 complex scans mixing elementwise ops with routines (e.g., `multiply → cholesky → matmul`) can be
 compiled into a single WASM module.
 
-- Supported routines: Cholesky, Sort
+- Supported routines: Cholesky, Sort, TriangularSolve, LU, Argsort (all 5 routines)
 - Files: `tryPrepareNativeScanGeneral()` in `jit.ts`, `codegenNativeScanGeneral()` in `wasm.ts`
 - Routine functions are imported from pre-compiled AssemblyScript modules via WASM imports
 

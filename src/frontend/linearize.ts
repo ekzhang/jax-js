@@ -356,13 +356,7 @@ class PartialEvalTrace extends Trace {
     params: PrimitiveParams<Primitive.Scan>,
     tracers: PartialEvalTracer[],
   ): Tracer[] {
-    const {
-      jaxpr: _jaxpr,
-      numConsts,
-      numCarry,
-      length: _length,
-      reverse: _reverse,
-    } = params;
+    const { numConsts: _numConsts, numCarry } = params;
 
     // Determine which tracers are known/unknown
     const isKnown = tracers.map((t) => t.pval.isKnown);
@@ -410,8 +404,6 @@ class PartialEvalTrace extends Trace {
 
     const numPrimalCarry = numCarry / 2;
     const numPrimalY = numY / 2;
-    const numX = tracers.length - numConsts - numCarry;
-    const _numPrimalX = numX / 2;
 
     // Run primal-only computation using known inputs + zeros for tangent
     const fullInputs = tracers.map((t) => {

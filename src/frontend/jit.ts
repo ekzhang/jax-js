@@ -376,13 +376,10 @@ export class JitProgram {
           const carryOutSlots = outputSlots.slice(0, step.numCarry);
           const ysStackedSlots = outputSlots.slice(step.numCarry);
 
-          // Check if backend supports native scan dispatch
-          const backend = this.backend as any;
-
           // Use general dispatch if generalParams is provided (handles both kernels and routines)
           if (step.generalParams) {
-            if (typeof backend.dispatchNativeScanGeneral === "function") {
-              backend.dispatchNativeScanGeneral(
+            if (this.backend.dispatchNativeScanGeneral) {
+              this.backend.dispatchNativeScanGeneral(
                 step.executable,
                 step.generalParams,
                 constSlots,
@@ -396,8 +393,8 @@ export class JitProgram {
                 "internal: general native-scan requires backend.dispatchNativeScanGeneral",
               );
             }
-          } else if (typeof backend.dispatchNativeScan === "function") {
-            backend.dispatchNativeScan(
+          } else if (this.backend.dispatchNativeScan) {
+            this.backend.dispatchNativeScan(
               step.executable,
               constSlots,
               initCarrySlots,
@@ -430,10 +427,8 @@ export class JitProgram {
           const carryOutSlots = outputSlots.slice(0, step.numCarry);
           const ysStackedSlots = outputSlots.slice(step.numCarry);
 
-          // Check if backend supports batched scan dispatch
-          const backend = this.backend as any;
-          if (typeof backend.dispatchBatchedScan === "function") {
-            backend.dispatchBatchedScan(
+          if (this.backend.dispatchBatchedScan) {
+            this.backend.dispatchBatchedScan(
               step.batchedParams, // PreparedBatchedScan
               constSlots,
               initCarrySlots,
@@ -1582,8 +1577,7 @@ function tryPrepareBatchedScan(
   const ysElemStrides = carryAvals.map((a) => a.size); // elements per slice
 
   // Try to prepare the routine executable
-  const webgpuBackend = backend as any;
-  if (typeof webgpuBackend.prepareRoutineSync !== "function") {
+  if (!backend.prepareRoutineSync) {
     if (DEBUG >= 2)
       console.log("Batched scan: skipped, backend has no prepareRoutineSync");
     return null;
@@ -1591,14 +1585,14 @@ function tryPrepareBatchedScan(
 
   let bodyRoutineExe;
   try {
-    bodyRoutineExe = webgpuBackend.prepareRoutineSync(bodyRoutine);
+    bodyRoutineExe = backend.prepareRoutineSync(bodyRoutine);
   } catch (e) {
     if (DEBUG >= 2) console.warn("Batched scan: prepareRoutineSync failed:", e);
     return null;
   }
 
   // Try to prepare batched scan
-  if (typeof webgpuBackend.prepareBatchedScan !== "function") {
+  if (!backend.prepareBatchedScan) {
     if (DEBUG >= 2)
       console.log("Batched scan: skipped, backend has no prepareBatchedScan");
     return null;
@@ -1618,7 +1612,7 @@ function tryPrepareBatchedScan(
   };
 
   try {
-    const prepared = webgpuBackend.prepareBatchedScan(batchedScanParams);
+    const prepared = backend.prepareBatchedScan(batchedScanParams);
     if (prepared) {
       if (DEBUG >= 1)
         console.log(
@@ -2029,8 +2023,7 @@ function tryPrepareNativeScanGeneral(
   }
 
   // Try to prepare general native scan
-  const nativeBackend = backend as any;
-  if (typeof nativeBackend.prepareNativeScanGeneral !== "function") {
+  if (!backend.prepareNativeScanGeneral) {
     if (DEBUG >= 2)
       console.log("[general-scan] backend has no prepareNativeScanGeneral");
     return null;
@@ -2057,7 +2050,7 @@ function tryPrepareNativeScanGeneral(
   };
 
   try {
-    const exe = nativeBackend.prepareNativeScanGeneral(params);
+    const exe = backend.prepareNativeScanGeneral(params);
     if (exe) {
       if (DEBUG >= 1) {
         const hasRoutines = steps.some((s) => s.source instanceof Routine);

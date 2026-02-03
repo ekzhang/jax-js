@@ -20,7 +20,7 @@
 
 import { ShaderInfo } from "./codegen";
 
-interface BufferBinding {
+export interface BufferBinding {
   group: number;
   binding: number;
   name: string;

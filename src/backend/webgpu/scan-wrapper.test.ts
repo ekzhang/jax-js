@@ -4,7 +4,9 @@
 
 import { describe, expect, it } from "vitest";
 
+import { ShaderInfo } from "./codegen";
 import {
+  BufferBinding,
   createAllIterationsOffsetsBuffer,
   parseBufferBindings,
   ScanBindingInfo,
@@ -49,19 +51,19 @@ describe("scan-wrapper", () => {
   describe("transformArrayAccesses", () => {
     it("transforms simple array access", () => {
       const code = `output[idx] = input[idx];`;
-      const bindings = [
+      const bindings: BufferBinding[] = [
         {
           group: 0,
           binding: 0,
           name: "input",
-          access: "read" as const,
+          access: "read",
           type: "f32",
         },
         {
           group: 0,
           binding: 1,
           name: "output",
-          access: "read_write" as const,
+          access: "read_write",
           type: "f32",
         },
       ];
@@ -72,19 +74,19 @@ describe("scan-wrapper", () => {
 
     it("transforms nested expressions", () => {
       const code = `output[base + i * n + j] = input[base + j * n + i];`;
-      const bindings = [
+      const bindings: BufferBinding[] = [
         {
           group: 0,
           binding: 0,
           name: "input",
-          access: "read" as const,
+          access: "read",
           type: "f32",
         },
         {
           group: 0,
           binding: 1,
           name: "output",
-          access: "read_write" as const,
+          access: "read_write",
           type: "f32",
         },
       ];
@@ -95,12 +97,12 @@ describe("scan-wrapper", () => {
 
     it("handles select() with nested array access", () => {
       const code = `shared[idx] = select(pad, input[base + idx], idx < n);`;
-      const bindings = [
+      const bindings: BufferBinding[] = [
         {
           group: 0,
           binding: 0,
           name: "input",
-          access: "read" as const,
+          access: "read",
           type: "f32",
         },
       ];
@@ -117,7 +119,7 @@ describe("scan-wrapper", () => {
       // Inputs: [carry_in (read), x (read)]
       // Outputs: [carry_out (read_write)]
       // But for scan: carry is ping-pong (no offset), x needs offset, y needs offset
-      const shaderInfo = {
+      const shaderInfo: ShaderInfo = {
         code: `
 @group(0) @binding(0) var<storage, read> carry_in: array<f32>;
 @group(0) @binding(1) var<storage, read> x: array<f32>;
@@ -135,7 +137,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         numInputs: 2,
         numOutputs: 2,
         hasUniform: false,
-        passes: [{ grid: [1, 1] as [number, number] }],
+        passes: [{ grid: [1, 1] }],
       };
 
       const scanInfo: ScanBindingInfo = {
@@ -174,7 +176,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
     it("returns unchanged shader when no xs/ys bindings", () => {
       // Pure carry operation with no xs/ys
-      const shaderInfo = {
+      const shaderInfo: ShaderInfo = {
         code: `
 @group(0) @binding(0) var<storage, read> carry_in: array<f32>;
 @group(0) @binding(1) var<storage, read_write> carry_out: array<f32>;
@@ -187,7 +189,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         numInputs: 1,
         numOutputs: 1,
         hasUniform: false,
-        passes: [{ grid: [1, 1] as [number, number] }],
+        passes: [{ grid: [1, 1] }],
       };
 
       const scanInfo: ScanBindingInfo = {

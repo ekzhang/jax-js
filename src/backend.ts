@@ -206,6 +206,48 @@ export interface Backend {
    * on that slot to finish.
    */
   dispatch(exe: Executable, inputs: Slot[], outputs: Slot[]): void;
+
+  // Optional scan capabilities (implemented by WASM and WebGPU backends)
+
+  /** Prepare a general native scan operation (WASM backend). */
+  prepareNativeScanGeneral?(params: any): Executable | null;
+
+  /** Dispatch a general native scan operation (WASM backend). */
+  dispatchNativeScanGeneral?(
+    exe: Executable,
+    params: any,
+    consts: Slot[],
+    initCarry: Slot[],
+    xs: Slot[],
+    carryOut: Slot[],
+    ysStacked: Slot[],
+  ): void;
+
+  /** Prepare a native scan operation (WebGPU backend). */
+  prepareNativeScan?(params: any): Executable | null;
+
+  /** Dispatch a native scan operation (WebGPU backend). */
+  dispatchNativeScan?(
+    exe: Executable,
+    consts: Slot[],
+    initCarry: Slot[],
+    xs: Slot[],
+    carryOut: Slot[],
+    ysStacked: Slot[],
+  ): void;
+
+  /** Prepare a batched scan operation (WebGPU backend). */
+  prepareBatchedScan?(params: any): any | null;
+
+  /** Dispatch a batched scan operation (WebGPU backend). */
+  dispatchBatchedScan?(
+    prepared: any,
+    consts: Slot[],
+    initCarry: Slot[],
+    xs: Slot[],
+    carryOut: Slot[],
+    ysStacked: Slot[],
+  ): void;
 }
 
 export class Executable<T = any> {
