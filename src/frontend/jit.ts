@@ -1766,12 +1766,54 @@ function tryPrepareWebGPUNativeScan(
   // Build steps for multi-kernel scan
   // Each step needs: kernel, inputs mapping, outputCarryIdx, outputSize
 
-  // Map output slots to their source info
-  const slotToInternal = new Map<JitId, number>();
+  // Map output slots to their source step index
+  const slotToStepIdx = new Map<JitId, number>();
   for (let i = 0; i < executeSteps.length; i++) {
-    slotToInternal.set(executeSteps[i].outputs[0], i);
+    slotToStepIdx.set(executeSteps[i].outputs[0], i);
   }
 
+  // Derive carry output sources: which step produces each carry output
+  // This is the proper mapping (like WASM does) instead of assuming step i → carry i
+  const carryOutSlots = bodyProgram.outputs.slice(0, numCarry);
+  const carryInputSlots = bodyProgram.inputs.slice(
+    numConsts,
+    numConsts + numCarry,
+  );
+
+  // Build a map: stepIdx → which carry indices it produces
+  const stepToCarryOutputs = new Map<number, number[]>();
+  for (let carryIdx = 0; carryIdx < numCarry; carryIdx++) {
+    const slot = carryOutSlots[carryIdx];
+
+    // Check if it's a passthrough from carry input (no step produces it)
+    const passthroughIdx = carryInputSlots.indexOf(slot);
+    if (passthroughIdx !== -1) {
+      // Passthrough: WebGPU multi-kernel can't handle this directly
+      // (would need to copy carry input to carry output without a kernel)
+      if (DEBUG >= 2)
+        console.log(
+          `[webgpu-scan] multi-kernel: carry ${carryIdx} is passthrough, not supported`,
+        );
+      return null;
+    }
+
+    // Find which step produces this carry output
+    const stepIdx = slotToStepIdx.get(slot);
+    if (stepIdx === undefined) {
+      if (DEBUG >= 2)
+        console.log(
+          `[webgpu-scan] multi-kernel: carry output ${carryIdx} (slot ${slot}) not produced by any step`,
+        );
+      return null;
+    }
+
+    // Record that this step produces this carry index
+    const existing = stepToCarryOutputs.get(stepIdx) ?? [];
+    existing.push(carryIdx);
+    stepToCarryOutputs.set(stepIdx, existing);
+  }
+
+  // Build multiSteps with proper output mapping
   const multiSteps: NativeScanMultiStep[] = [];
   for (let i = 0; i < executeSteps.length; i++) {
     const step = executeSteps[i];
@@ -1783,9 +1825,9 @@ function tryPrepareWebGPUNativeScan(
       if (inputId < numInputs) {
         inputs.push(inputId);
       } else {
-        const internalIdx = slotToInternal.get(inputId);
-        if (internalIdx !== undefined) {
-          inputs.push(numInputs + internalIdx);
+        const stepIdx = slotToStepIdx.get(inputId);
+        if (stepIdx !== undefined) {
+          inputs.push(numInputs + stepIdx);
         } else {
           if (DEBUG >= 2)
             console.log(
@@ -1806,10 +1848,27 @@ function tryPrepareWebGPUNativeScan(
       reindexedReduction,
     );
 
-    // Determine which carry this step writes to
-    // For MVP, we assume step i writes to carry i (simple 1:1 mapping)
-    // This works for simple cases like cumsum, Kalman filter
-    const outputCarryIdx = i < numCarry ? i : 0;
+    // Get the carry indices this step writes to
+    const carryOutputs = stepToCarryOutputs.get(i);
+    if (!carryOutputs || carryOutputs.length === 0) {
+      // This step doesn't produce any carry output - it's an intermediate
+      // WebGPU multi-kernel currently requires all steps to produce carry outputs
+      if (DEBUG >= 2)
+        console.log(
+          `[webgpu-scan] multi-kernel: step ${i} doesn't produce a carry output`,
+        );
+      return null;
+    }
+    if (carryOutputs.length > 1) {
+      // This step produces multiple carry outputs - not supported
+      if (DEBUG >= 2)
+        console.log(
+          `[webgpu-scan] multi-kernel: step ${i} produces multiple carry outputs: ${carryOutputs}`,
+        );
+      return null;
+    }
+
+    const outputCarryIdx = carryOutputs[0];
 
     multiSteps.push({
       kernel: reindexedKernel,
