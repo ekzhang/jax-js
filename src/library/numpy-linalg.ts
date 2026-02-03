@@ -88,7 +88,11 @@ export function lstsq(a: ArrayLike, b: ArrayLike): Array {
     const aat = np.matmul(a, at.ref); // A @ A.T, shape (M, M)
     const l = cholesky(aat, { symmetrizeInput: false }); // L @ L.T = A @ A.T
     const lb = triangularSolve(l.ref, b, { leftSide: true, lower: true }); // L^-1 @ B
-    const llb = triangularSolve(l, lb, { leftSide: true, lower: true, transposeA: true }); // (A @ A.T)^-1 @ B
+    const llb = triangularSolve(l, lb, {
+      leftSide: true,
+      lower: true,
+      transposeA: true,
+    }); // (A @ A.T)^-1 @ B
     return np.matmul(at, llb.ref); // A.T @ (A @ A.T)^-1 @ B
   } else {
     // Overdetermined system: (A.T @ A)^-1 @ A.T @ B
@@ -96,7 +100,11 @@ export function lstsq(a: ArrayLike, b: ArrayLike): Array {
     const l = cholesky(ata, { symmetrizeInput: false }); // L @ L.T = A.T @ A
     const atb = np.matmul(at, b); // A.T @ B
     const lb = triangularSolve(l.ref, atb, { leftSide: true, lower: true }); // L^-1 @ A.T @ B
-    const llb = triangularSolve(l, lb, { leftSide: true, lower: true, transposeA: true }); // (A.T @ A)^-1 @ A.T @ B
+    const llb = triangularSolve(l, lb, {
+      leftSide: true,
+      lower: true,
+      transposeA: true,
+    }); // (A.T @ A)^-1 @ A.T @ B
     return llb;
   }
 }

@@ -706,18 +706,20 @@ export function example_batched_f32(inPtr: usize, outPtr: usize, n: i32, batch: 
 
 Routines are implemented **3 times** across backends, with different algorithms per backend:
 
-| Backend | Implementation | Location | Algorithm Style |
-|---------|---------------|----------|-----------------|
-| **CPU** | JavaScript (TypedArray) | `src/routine.ts` | Sequential (for debugging) |
-| **WASM** | AssemblyScript → WASM | `src/routines/*.ts` | Sequential (optimized) |
-| **WebGPU** | Hand-written WGSL | `src/backend/webgpu/routines.ts` | Parallel (GPU-optimized) |
+| Backend    | Implementation          | Location                         | Algorithm Style            |
+| ---------- | ----------------------- | -------------------------------- | -------------------------- |
+| **CPU**    | JavaScript (TypedArray) | `src/routine.ts`                 | Sequential (for debugging) |
+| **WASM**   | AssemblyScript → WASM   | `src/routines/*.ts`              | Sequential (optimized)     |
+| **WebGPU** | Hand-written WGSL       | `src/backend/webgpu/routines.ts` | Parallel (GPU-optimized)   |
 
 **Why 3 implementations?**
 
 1. **CPU backend assumes WASM is unavailable** — exists for environments without WebAssembly
-2. **WebGPU uses different algorithms** — GPU parallelism requires fundamentally different approaches:
+2. **WebGPU uses different algorithms** — GPU parallelism requires fundamentally different
+   approaches:
    - Sort: **Bitonic sort** (parallel) vs merge sort (sequential)
-   - Cholesky: **Column-parallel Cholesky-Crout** with workgroup barriers vs row-by-row Cholesky-Banachiewicz
+   - Cholesky: **Column-parallel Cholesky-Crout** with workgroup barriers vs row-by-row
+     Cholesky-Banachiewicz
 
 **Maintenance implications:**
 
@@ -727,16 +729,17 @@ Routines are implemented **3 times** across backends, with different algorithms 
 
 **Potential future unification (not yet implemented):**
 
-| Approach | What it would unify | Status |
-|----------|---------------------|--------|
-| **JS → AS codegen** | CPU + WASM (auto-generate AS from JS source) | Considered |
+| Approach                 | What it would unify                                 | Status                                                  |
+| ------------------------ | --------------------------------------------------- | ------------------------------------------------------- |
+| **JS → AS codegen**      | CPU + WASM (auto-generate AS from JS source)        | Considered                                              |
 | **Jaxpr-based routines** | All backends (express routines as traced functions) | Blocked by missing `scatter`/`dynamic_slice` primitives |
 
 The Jaxpr approach would require implementing `lax.scatter`, `lax.dynamic_slice`, and
-`lax.dynamic_update_slice` to enable writing algorithms that modify arrays at computed indices.
-This would provide additional benefits beyond routine unification (sparse ops, embeddings, etc.).
+`lax.dynamic_update_slice` to enable writing algorithms that modify arrays at computed indices. This
+would provide additional benefits beyond routine unification (sparse ops, embeddings, etc.).
 
 For now, when modifying a routine:
+
 1. Update the JS fallback in `src/routine.ts`
 2. Update the AssemblyScript in `src/routines/<name>.ts`
 3. Update the WebGPU shader in `src/backend/webgpu/routines.ts` (if algorithm differs)
