@@ -375,8 +375,11 @@ class PartialEvalTrace extends Trace {
     const avalsOut = abstractEvalRules[Primitive.Scan](avalsIn, params);
     const numY = avalsOut.length - numCarry;
 
-    // Check if this looks like a JVP'd scan (even numCarry and numY)
-    // AND we have the expected known/unknown pattern for JVP
+    // Check if this looks like a JVP'd scan (even numCarry and numY).
+    // This heuristic is safe within linearize/transpose because:
+    // 1. JVP always doubles carries and outputs (primal + tangent)
+    // 2. This code only runs during autodiff, not user-written scans
+    // 3. A user scan with even counts would still work, just skip JVP optimizations
     const isJvpScan = numCarry % 2 === 0 && numY % 2 === 0;
 
     if (!isJvpScan) {
@@ -1169,7 +1172,9 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
     const numX = args.length - numConsts - numCarry;
     const numY = cts.length - numCarry;
 
-    // Detect JVP structure: even numCarry and numY
+    // Detect JVP structure: even numCarry, numX, and numY.
+    // Safe heuristic: this code only runs during transpose of JVP'd functions,
+    // where scan inputs are always doubled (primal + tangent pairs).
     const isJvpScan = numCarry % 2 === 0 && numY % 2 === 0 && numX % 2 === 0;
 
     // For JVP'd scan, identify which positions are primal vs tangent
@@ -1322,8 +1327,12 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
       },
     )(...forwardInTypes);
 
-    // Run primal forward scan to get all intermediate carries
-    // We need to collect carries at each iteration
+    // Run primal forward scan to get all intermediate carries.
+    // We need to collect carries at each iteration for the backward pass.
+    //
+    // TODO: This stores all N carries, using O(N) memory. For long scans, consider
+    // implementing binomial checkpointing to reduce memory to O(√N) with 2× recompute.
+    // See: Griewank & Walther, "Algorithm 799: Revolve"
     const allCarries: Tracer[][] = [];
     let currentCarry = carryResiduals.map((c) => c.ref);
     allCarries.push(currentCarry.map((c) => c.ref)); // carries[0] = init

@@ -1095,7 +1095,13 @@ export class Array extends Tracer {
 
         const jp = jitCompile(backend, jaxpr);
 
-        // Create scanRunner callback that executes scan body using compiled bodyProgram
+        // Create scanRunner callback that executes scan body using compiled bodyProgram.
+        // This is the JS-loop fallback path. It has per-iteration overhead from:
+        // - Creating Array wrappers for slots
+        // - ShapeTracker slicing for xs
+        // - Object allocation inside the loop
+        // The native paths (native-scan, batched-scan) avoid this overhead entirely
+        // by running the entire loop in WASM or GPU shader code.
         const scanRunner: ScanRunner = (
           bodyProgram,
           _backend,

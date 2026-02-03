@@ -70,10 +70,12 @@ export interface GeneralScanStep {
 
 /** Describes the source for a Y output. */
 export interface YOutputSource {
-  /** 'passthrough' copies a carry input, 'internal' copies from internal buffer. */
-  type: "passthrough" | "internal";
+  /** 'passthrough' copies a carry input, 'xs-passthrough' copies from xs input, 'internal' copies from internal buffer. */
+  type: "passthrough" | "xs-passthrough" | "internal";
   /** For passthrough: index into carry inputs. */
   carryIdx?: number;
+  /** For xs-passthrough: index into xs inputs. */
+  xsIdx?: number;
   /** For internal: index into internal buffers. */
   internalIdx?: number;
 }
@@ -490,6 +492,11 @@ export class WasmBackend implements Backend {
    * - Bodies with data dependencies between steps
    * - Bodies where numCarry !== numY
    * - Routine steps (Cholesky, Sort) mixed with Kernel steps
+   *
+   * Note: This compiles a new WASM module for each distinct set of scan parameters.
+   * However, `jit()` caching at the higher level protects against recompilation:
+   * the JitProgram (including the native-scan step) is cached after the first trace,
+   * so repeated calls to the same jit'd function reuse the compiled module.
    */
   prepareNativeScanGeneral(
     params: NativeScanGeneralParams,
@@ -1199,12 +1206,20 @@ function codegenNativeScanGeneral(
         const yStride = ysStrides[y];
 
         // Determine source pointer and size
-        let srcArgIdx: number;
         let size: number;
+        let isXsPassthrough = false;
+        let srcArgIdx: number = 0;
+        let xsPassthroughIdx: number = 0;
+
         if (source.type === "passthrough") {
           // Read from carryOut (has carry values entering this iteration)
           srcArgIdx = carryOutBase + source.carryIdx!;
           size = carrySizes[source.carryIdx!];
+        } else if (source.type === "xs-passthrough") {
+          // Read from xs at current iteration offset
+          isXsPassthrough = true;
+          xsPassthroughIdx = source.xsIdx!;
+          size = xsStrides[xsPassthroughIdx];
         } else {
           // Read from internal buffer (computed in step 2a)
           srcArgIdx = internalsBase + source.internalIdx!;
@@ -1231,10 +1246,21 @@ function codegenNativeScanGeneral(
           cg.local.get(copyIdx);
           cg.i32.add();
 
-          // src[copyIdx]
-          cg.local.get(srcArgIdx);
-          cg.local.get(copyIdx);
-          cg.i32.add();
+          // src[copyIdx] - different computation for xs-passthrough
+          if (isXsPassthrough) {
+            // xs[xsIdx] + dataIdx * xsStrides[xsIdx] + copyIdx
+            cg.local.get(xsBase + xsPassthroughIdx);
+            cg.local.get(dataIdx);
+            cg.i32.const(xsStrides[xsPassthroughIdx]);
+            cg.i32.mul();
+            cg.i32.add();
+            cg.local.get(copyIdx);
+            cg.i32.add();
+          } else {
+            cg.local.get(srcArgIdx);
+            cg.local.get(copyIdx);
+            cg.i32.add();
+          }
           cg.i32.load8_u(0);
 
           // store
