@@ -1,7 +1,14 @@
 # GitHub Copilot instructions for jax-js
 
-These notes help AI coding agents be immediately productive: what to read, how to run the project,
-and non-obvious conventions.
+These notes help AI coding agents be immediately productive and document the scan feature
+development for PR review. The document has two parts:
+
+1. **Repository Overview** — General jax-js knowledge for any development work
+2. **Scan Feature Development** — Detailed tracking of the `lax.scan` implementation for PR review
+
+---
+
+# Part 1: Repository Overview
 
 ## Architecture overview
 
@@ -35,7 +42,7 @@ pnpm -C website dev                # local dev server for demos
 
 ### Pre-commit CI checks
 
-**Before any commit**, run the full CI validation to catch issues early:
+**Before any commit**, run the full CI validation:
 
 ```bash
 pnpm build:routines                # Rebuild AssemblyScript routines (if src/routines/ changed)
@@ -47,26 +54,21 @@ pnpm test                          # Run all tests
 pnpm format:check                  # Verify Prettier formatting (or `pnpm format` to fix)
 ```
 
-These match the checks in `.github/workflows/ci.yaml` (`build-test` and `format` jobs).
+These match the checks in `.github/workflows/ci.yaml`.
 
 ### Temporary files
 
-Use `tmp/` in the project root for temporary/scratch files instead of `/tmp`. This directory is
-gitignored and allows file operations without manual approval in VS Code. Create it if needed:
-`mkdir -p tmp`.
+Use `tmp/` in the project root for temporary/scratch files. This directory is gitignored and allows
+file operations without manual approval in VS Code.
 
 ### Debug logging
 
-**IMPORTANT:** Do NOT use environment variables like `DEBUG=1` to enable debug logging. jax-js uses
-a runtime function instead:
+**IMPORTANT:** Do NOT use environment variables like `DEBUG=1`. Use the runtime function:
 
 ```typescript
-import { setDebug } from "@jax-js/jax"; // or "../dist/index.js" for local dev
-
+import { setDebug } from "@jax-js/jax";
 setDebug(1); // Enable debug logging BEFORE any jit compilation
 ```
-
-**Debug levels:**
 
 | Level | Output                                    |
 | ----- | ----------------------------------------- |
@@ -77,60 +79,29 @@ setDebug(1); // Enable debug logging BEFORE any jit compilation
 | 4     | JIT programs, tuning details              |
 | 5     | Most verbose operation traces             |
 
-**Example debug script:**
-
-```typescript
-import { init, jit, lax, numpy as np, setDebug, defaultDevice } from "../dist/index.js";
-
-await init();
-setDebug(2); // Must be set BEFORE jit() calls to see shader code
-defaultDevice("webgpu");
-
-const scanFn = jit((init, xs) => lax.scan((c, x) => [np.add(c, x), c], init, xs));
-const [carry, ys] = await scanFn(np.array([0]), np.array([[1], [2], [3]]));
-```
-
 ### WebGPU testing on headless servers
 
-For GPU tests on a headless dev server (no display), Chrome requires specific flags:
+For GPU tests on a headless server, Chrome requires specific flags:
 
 ```bash
 google-chrome --headless=new --use-angle=vulkan --enable-features=Vulkan \
   --disable-vulkan-surface --enable-unsafe-webgpu --disable-software-rasterizer
 ```
 
-**Prerequisites:**
-
-- NVIDIA Vulkan ICD: `sudo apt install libnvidia-gl-<version>` (e.g., `libnvidia-gl-565`)
-- Verify Vulkan: `vulkaninfo --summary` should show your GPU
-
-**Known limitation:** Chrome's headless mode may not expose `navigator.gpu` on some systems even
-with correct Vulkan setup. In that case, WebGPU tests will be skipped; cpu and wasm backends still
-run. To test WebGPU, use a machine with a display or run headed Chrome via xvfb:
+**Alternative: Deno for headless hardware WebGPU** — Deno's WebGPU (based on wgpu-rs) works headless
+without X11:
 
 ```bash
-sudo apt-get install -y xvfb
-xvfb-run -a pnpm test run
-```
-
-**Alternative: Deno for headless hardware WebGPU** Deno's WebGPU implementation (based on wgpu-rs)
-works headless without X11:
-
-```bash
-# Install Deno
 curl -fsSL https://deno.land/install.sh | sh
-
-# Verify hardware GPU access (no display required)
 deno eval --unstable-webgpu 'const a = await navigator.gpu.requestAdapter(); console.log(a?.info)'
-# Should print: { description: "NVIDIA GeForce RTX 4070 Ti SUPER", ... }
-
-# Run Deno-based tests
-pnpm run test:deno                # runs test/deno/*.test.ts
+pnpm run test:deno
 ```
 
-**Deno WebGPU workaround:** Deno's `createComputePipelineAsync` has a WebIDL binding bug where the
-`compute` field is not recognized. jax-js automatically uses the synchronous `createComputePipeline`
-when running in Deno, enabling full WebGPU support on hardware GPUs headlessly.
+### GPU device permissions (Linux)
+
+```bash
+sudo usermod -a -G render,video $USER  # then log out/in
+```
 
 ## Reference-counting & ownership (critical)
 
@@ -150,25 +121,20 @@ function foo(x) {
 
 // .data() consumes - don't dispose after!
 const result = await arr.data(); // arr is now consumed
-// arr.dispose(); // WRONG - would double-free
 ```
 
 Canonical examples: `test/refcount.test.ts`, `test/conv.test.ts`, `test/deno/webgpu.test.ts`.
 
-### Memory lifecycle in detail
+### Memory lifecycle
 
-1. **Array creation** — `np.array(...)` allocates a backend `Slot` (buffer) with refcount = 1.
-2. **`.ref` accessor** — increments the _Array object's_ `#rc`; same underlying Slot.
+1. **Array creation** — `np.array(...)` allocates a backend `Slot` with refcount = 1.
+2. **`.ref` accessor** — increments the Array object's `#rc`; same underlying Slot.
 3. **Function call** — passing an Array decrements `#rc` by 1 (ownership transfer).
-4. **`.data()` / `.dataSync()`** — reads the buffer, then calls `dispose()` internally (consumes the
-   array).
-5. **`.dispose()`** — decrements `#rc`; when it hits 0:
-   - Cancels any pending `PendingExecute` not yet submitted.
-   - Calls `backend.decRef(slot)` → frees GPU/Wasm memory when slot refcount = 0.
-6. **Pending ops** — `PendingExecute` holds refs on input/output Slots until `submit()` to prevent
-   premature free.
+4. **`.data()` / `.dataSync()`** — reads buffer, then calls `dispose()` internally.
+5. **`.dispose()`** — decrements `#rc`; when 0, calls `backend.decRef(slot)`.
+6. **Pending ops** — `PendingExecute` holds refs on Slots until `submit()`.
 
-### Backend memory (Wasm vs WebGPU)
+### Backend memory comparison
 
 | Aspect        | Wasm (`src/backend/wasm.ts`)              | WebGPU (`src/backend/webgpu.ts`)                      |
 | ------------- | ----------------------------------------- | ----------------------------------------------------- |
@@ -177,33 +143,17 @@ Canonical examples: `test/refcount.test.ts`, `test/conv.test.ts`, `test/deno/web
 | Sync read     | Direct memory view                        | `SyncReader` with staging buffer + `mapAsync`         |
 | Dispatch      | Instantiate Wasm module, call exported fn | `commandEncoder.dispatchWorkgroups()`, queue submit   |
 
-- **cpu** backend (`src/backend/cpu.ts`) is JS-interpreted, no native buffers — for debugging only.
-- **webgl** backend uses textures as storage; less optimized than WebGPU.
+### Autodiff and ownership
 
-### Autodiff (grad/vjp) and ownership
-
-- `grad(f)` internally calls `vjp(f, primals)`, producing a _linear_ backward function.
-- The backward function **captures** references to intermediate arrays from the forward pass (stored
-  in a `ClosedJaxpr`).
-- Calling `dispose()` on the returned `OwnedFunction` (e.g., `vjpFn.dispose()`) releases those
-  intermediates.
-- **Pattern**: always call `.dispose()` on `jit`/`linearize`/`vjp` results when finished, or memory
-  leaks on GPU.
-
-> ⚠️ **Critical difference from Python JAX:** Unlike Python JAX where garbage collection
-> automatically frees memory, letting `vjpFn` go out of scope in jax-js will **NOT** free GPU
-> memory. You **MUST** call `.dispose()` explicitly or you will leak VRAM.
+> ⚠️ **Critical difference from Python JAX:** Letting `vjpFn` go out of scope will **NOT** free GPU
+> memory. You **MUST** call `.dispose()` explicitly.
 
 ```ts
 const [y, vjpFn] = vjp(f, [x]);
 const dx = vjpFn(dy);
 vjpFn.dispose(); // free captured forward-pass intermediates
 
-// jit() also returns OwnedFunction:
-const jitF = jit((x) => {
-  const two = np.array([2]); // captured as constant
-  return np.multiply(x, two);
-});
+const jitF = jit((x) => np.multiply(x, np.array([2])));
 const result = jitF(x);
 jitF.dispose(); // free captured constants
 ```
@@ -216,9 +166,7 @@ All public symbols must be exported from `src/index.ts`. Key exports:
   `hessian`, `linearize`, `makeJaxpr`
 - Device control: `init`, `defaultDevice`, `devicePut`, `blockUntilReady`, `devices`, `getBackend`
 - Namespaces: `numpy`, `lax`, `nn`, `random`, `scipySpecial`, `tree`
-  - Convention: users often alias `import { numpy as np }` for brevity
-- Testing utilities: `setScanPathCallback`, `ScanPath` (type) — for verifying scan implementation
-  paths
+- Testing utilities: `setScanPathCallback`, `ScanPath` (type)
 
 ## Extending the codebase
 
@@ -229,147 +177,18 @@ All public symbols must be exported from `src/index.ts`. Key exports:
 | Loader/tokenizer | `packages/loaders/src/`                            | See `safetensors.ts`, `tokenizers.ts`.                         |
 | ONNX op          | `packages/onnx/src/ops.ts`                         | Implement lowering; wire in `index.ts`.                        |
 
-## Testing
-
-- Tests run in a **headless Chromium** (Playwright) to cover WebGPU.
-- Always exercise `.ref` / `.dispose()` semantics in new tests.
-- Use `website/src/routes/repl/*` and `website/src/routes/mobileclip/*` as integration smoke tests.
-
-### Memory leak detection (Deno tests)
-
-The Deno test harness includes memory leak detection via `test/deno/harness.ts`:
-
-```ts
-import { withLeakCheck, getSlotCount, assertNoLeaks } from "./harness.ts";
-
-// Wrap test function with automatic leak checking
-Deno.test({
-  name: "my test",
-  fn: withLeakCheck(async () => {
-    // test code - all arrays should be consumed/disposed by end
-    const result = await someComputation();
-    await result.data(); // consumes result
-    jitF.dispose(); // release jit-captured constants
-  }),
-});
-
-// Or manual checking
-Deno.test("my test", async () => {
-  const before = getSlotCount();
-  // ... test code ...
-  assertNoLeaks(before, "test name");
-});
-```
-
-**Key functions:**
-
-- `getSlotCount()` — query current backend slot count (via `backend.slotCount()`)
-- `assertNoLeaks(baseline, name)` — throw if slots leaked since baseline
-- `withLeakCheck(fn)` — wrapper that checks for leaks after test completion
-
-### Scan path tracking (test verification)
-
-Use `setScanPathCallback` to verify tests actually exercise the expected scan implementation path:
-
-```ts
-import { setScanPathCallback, type ScanPath } from "../../dist/index.js";
-
-function trackScanPaths() {
-  const paths: { path: ScanPath; backend: string }[] = [];
-  setScanPathCallback((path, backend) => {
-    paths.push({ path, backend });
-  });
-  return {
-    paths,
-    cleanup: () => setScanPathCallback(null),
-    expectPath: (expected: ScanPath) => {
-      if (!paths.some((p) => p.path === expected)) {
-        throw new Error(`Expected ${expected}, got: ${paths.map((p) => p.path)}`);
-      }
-    },
-  };
-}
-
-// Usage in test:
-const tracker = trackScanPaths();
-const scanFn = jit((init, xs) => lax.scan(step, init, xs));
-const [carry, ys] = await scanFn(initCarry, xs);
-tracker.expectPath("fused"); // Verify fused path was used
-tracker.cleanup();
-```
-
-**ScanPath values:** `"fused"` (loop runs in native code) or `"fallback"` (JS loop).
-
-**Why this matters:** Tests named "compiled-loop scan" may silently fall back to JS loop if
-eligibility conditions aren't met. Use `requirePath: "fused"` to ensure tests fail if fusion
-regresses.
-
-**Test coverage:**
-
-| Test Category                                  | Backend | Path     | Purpose                               |
-| ---------------------------------------------- | ------- | -------- | ------------------------------------- |
-| `scan basic` (cumsum, factorial, pytree)       | CPU     | fallback | Core correctness via JS loop          |
-| `compiled-loop scan` (small, large, constants) | WASM    | fused    | Verify fusion works                   |
-| `compiled-loop > reduction`                    | WASM    | fallback | Known limitation (2 steps don't fuse) |
-| `compiled-body scan > matmul`                  | WASM    | fallback | Correctness for routine bodies        |
-| Deno `reduction body (fallback)`               | WebGPU  | fallback | Explicit fallback correctness         |
-| `KNOWN LIMITATIONS` (Cholesky, etc.)           | WebGPU  | fallback | Verify routines fall back gracefully  |
-
-### GPU device permissions (Linux)
-
-To run WebGPU tests on Linux, the user must have access to GPU render devices:
-
-```bash
-# Check current groups
-id
-
-# Add user to render and video groups (requires sudo)
-sudo usermod -a -G render,video $USER
-
-# Log out and back in for changes to take effect
-# Or use `sg render -c 'command'` to run a single command with the new group
-```
-
-The render devices (`/dev/dri/renderD*`) are owned by the `render` group.
-
-## Common pitfalls
-
-- Forgetting `.ref` → double-consume → `ReferenceError` in tests.
-- Exporting a symbol from a library file but not from `src/index.ts` → missing from published types.
-- Changing WebGPU shaders without running browser tests → silent breakage.
-- **CPU backend GlobalView detection**: When iterating over kernel expressions to find used input
-  buffers, collect both `AluOp.GlobalIndex` AND `AluOp.GlobalView` nodes. GlobalView is used for
-  lazy reshape/transpose operations. Missing this causes zeros to be returned instead of actual
-  data.
-- **JIT pending ops before scan**: The scan step reads synchronously from input slots. Any preceding
-  kernels (like Transpose) create `PendingExecute` objects that must be submitted before the scan.
-  Flush pending ops before scan step execution.
-
-## Known flaky tests
-
-- **LU JVP finite-differences** (`test/lax-linalg.test.ts`, all backends): The `lax.linalg.lu > JVP`
-  test occasionally fails with numerical precision errors (e.g., expected 0.30040 vs actual
-  0.30000). This is at the edge of f32 machine epsilon for finite-difference gradients, not a bug in
-  the implementation. The test uses `rtol: 2e-2, atol: 2e-3` but some matrix configurations push
-  values just beyond tolerance. Affects CPU, WASM, and WebGPU equally since the issue is inherent to
-  f32 precision in the finite-difference verification, not the LU algorithm itself.
-
 ## JIT compiler internals
 
 The JIT system lives in `src/frontend/jit.ts` and `src/frontend/jaxpr.ts`.
 
 **Pipeline:**
 
-1. **Tracing** – `makeJaxpr(f)` traces a function to produce a `Jaxpr` (JAX expression), an IR of
-   primitives in ANF form.
-2. **Simplification** – `jaxpr.flatten().simplify()` canonicalizes the graph.
-3. **Graph splitting** – `splitGraphDataflow()` identifies "black nodes" (ops that must dispatch
-   immediately, e.g. routines/reductions) vs fusable elementwise ops.
-4. **Kernel fusion** – Consecutive elementwise ALU ops are merged into a single `Kernel` via lazy
-   `AluExp` composition.
-5. **Compilation** – `jitCompile(backend, jaxpr)` emits a `JitProgram` — a list of `JitStep`s
-   (malloc, execute, free, scan).
-6. **Execution** – `JitProgram.execute(slots)` runs steps on the backend, managing memory lifetime.
+1. **Tracing** – `makeJaxpr(f)` traces a function to produce a `Jaxpr` (IR in ANF form)
+2. **Simplification** – `jaxpr.flatten().simplify()` canonicalizes the graph
+3. **Graph splitting** – `splitGraphDataflow()` identifies "black nodes" vs fusable ops
+4. **Kernel fusion** – Consecutive elementwise ops merge into a single `Kernel`
+5. **Compilation** – `jitCompile(backend, jaxpr)` emits a `JitProgram` (list of `JitStep`s)
+6. **Execution** – `JitProgram.execute(slots)` runs steps, managing memory lifetime
 
 **Key types:**
 
@@ -382,45 +201,64 @@ The JIT system lives in `src/frontend/jit.ts` and `src/frontend/jaxpr.ts`.
 
 **Adding a new primitive:**
 
-1. Declare in `Primitive` enum (`src/frontend/core.ts`).
-2. Add tracing rule in `implRules` / `jvpRules` / `transposeRules` as needed.
-3. If it's fusable elementwise, add an ALU lowering in `jit.ts` switch.
-4. If it needs a dedicated kernel (routine), register in `routinePrimitives` and implement in
-   `src/backend/*`.
+1. Declare in `Primitive` enum (`src/frontend/core.ts`)
+2. Add tracing rule in `implRules` / `jvpRules` / `transposeRules`
+3. If fusable elementwise, add ALU lowering in `jit.ts`
+4. If needs dedicated kernel, register in `routinePrimitives` and implement in `src/backend/*`
+
+## Common pitfalls
+
+- Forgetting `.ref` → double-consume → `ReferenceError` in tests
+- Exporting a symbol from library but not `src/index.ts` → missing from published types
+- Changing WebGPU shaders without browser tests → silent breakage
+- **CPU backend GlobalView detection**: Collect both `AluOp.GlobalIndex` AND `AluOp.GlobalView`
+  nodes when finding used input buffers
+- **JIT pending ops before scan**: Flush pending ops before scan step execution
+
+## Known flaky tests
+
+- **LU JVP finite-differences** (`test/lax-linalg.test.ts`): Occasionally fails with precision
+  errors at the edge of f32 machine epsilon. Not a bug — inherent to finite-difference verification.
 
 ## Commit checklist
 
 **Before every commit**, AI agents MUST:
 
-1. **Run pre-commit CI checks** (see "Pre-commit CI checks" section above):
+1. Run pre-commit CI checks (see above)
+2. Update documentation when adding new features or APIs
+3. Add/adjust tests exercising `.ref` and `.dispose()` for new behavior
+4. Export new public symbols from `src/index.ts`
+5. Update `FEATURES.md` for user-visible changes
 
-   ```bash
-   pnpm build && pnpm check && pnpm lint --max-warnings 0 && pnpm test && pnpm format:check
-   ```
+## Documentation files
 
-   Fix any failures before committing. Use `pnpm format` to auto-fix formatting issues.
+| File                              | Purpose                                    | When to update                 |
+| --------------------------------- | ------------------------------------------ | ------------------------------ |
+| `README.md`                       | Main project intro, tutorial               | Major features, API changes    |
+| `FEATURES.md`                     | JAX/NumPy API compatibility table          | New supported functions        |
+| `.github/copilot-instructions.md` | AI agent onboarding, scan feature tracking | New patterns, scan development |
+| `packages/*/README.md`            | Package-specific docs                      | Package feature changes        |
 
-2. **Update documentation** when adding new features or APIs:
-   - New public API → Add to exports in `src/index.ts`, add TSDoc comments
-   - New architecture/pattern → Update `.github/copilot-instructions.md`
-   - New JAX/NumPy function → Update `FEATURES.md` compatibility table
-   - See "Documentation files" section for full guidelines
+## Where to start reading
 
-**Code-specific checks:**
-
-3. Add/adjust tests exercising `.ref` and `.dispose()` for new behavior.
-4. Export new public symbols from `src/index.ts`; run `pnpm check`.
-5. Update `FEATURES.md` and website examples for user-visible changes.
-6. For backend work, add a micro-benchmark in `bench/` where relevant.
+- Entry & exports: `src/index.ts`
+- Memory model: `test/refcount.test.ts`
+- Backends: `src/backend/webgpu/`, `src/backend/wasm/`
+- Demos: `website/src/routes/repl/`, `website/src/routes/mobileclip/`
+- Deno WebGPU tests: `test/deno/webgpu.test.ts` — headless hardware GPU testing
+- Scan tests: `test/lax-scan.test.ts` — comprehensive scan suite (~2000 lines)
 
 ---
 
-# Scan Primitive (`lax.scan`)
+# Part 2: Scan Feature Development
+
+This section documents the `lax.scan` implementation for PR review. It explains design choices,
+tracks test coverage, and describes the implementation architecture.
+
+## Overview & Motivation
 
 `lax.scan` applies a function over the leading axis of arrays, threading carry state — essential for
 RNNs, Kalman filters, cumulative operations, and other sequential computations.
-
-## Overview
 
 **Signature:**
 
@@ -453,8 +291,8 @@ const [finalCarry, stackedOutputs] = await lax.scan(f, initCarry, xs, options);
 | `src/frontend/jit.ts`                | JIT step types: `scan`, `native-scan`, `batched-scan` |
 | `src/frontend/linearize.ts`          | JVP + transpose rules for autodiff                    |
 | `src/frontend/vmap.ts`               | Scan vmap rule (batches independent scans)            |
-| `src/backend/wasm.ts`                | Compiled-loop scan codegen (single/multi/general)     |
-| `src/backend/webgpu.ts`              | Compiled-loop scan + compiled-body scan for routines  |
+| `src/backend/wasm.ts`                | Compiled-loop scan codegen                            |
+| `src/backend/webgpu.ts`              | Compiled-loop scan + compiled-body scan               |
 | `src/backend/webgpu/scan-wrapper.ts` | WGSL shader transformer for uniform offsets           |
 
 ---
@@ -482,9 +320,7 @@ for correctness testing.
 ### WASM Backend
 
 The WASM backend supports **compiled-loop scan**: the entire scan loop is compiled into a
-WebAssembly module, eliminating JS/WASM boundary overhead per iteration. The unified **general
-scan** path handles both Kernels and Routines in the same scan body, with Cholesky and Sort routines
-embedded directly into the WASM module.
+WebAssembly module, eliminating JS/WASM boundary overhead per iteration.
 
 | Feature / Test                          | Status                           | Notes                        |
 | --------------------------------------- | -------------------------------- | ---------------------------- |
@@ -505,20 +341,12 @@ embedded directly into the WASM module.
 | `routine in scan body`                  | [✅ Pass](test/lax-scan.test.ts) | uses native scan via imports |
 | `grad` through `scan` with routines     | [✅ Pass](test/lax-scan.test.ts) | works via native path        |
 
-**Routine support:** All routines (Cholesky, Sort, TriangularSolve, LU, Argsort) in scan bodies use
-native scan path via WASM imports. The scan module imports routine functions from pre-compiled
-AssemblyScript modules, enabling full native performance (~1.5M iter/sec) without duplicating
-routine implementation.
-
 **Performance benchmarks:**
 
 - Compiled-body (JS loop, Kalman filter): ~308 iter/sec
 - Compiled-loop (general, Kalman filter): ~1.5M iter/sec
 
 **Scan vs jit(loop) overhead:**
-
-For reduction-heavy bodies like matmul, `jit(scan)` has overhead compared to an equivalent unrolled
-`jit(loop)`:
 
 | Matrix Size | Overhead | Notes                                 |
 | ----------- | -------- | ------------------------------------- |
@@ -527,16 +355,12 @@ For reduction-heavy bodies like matmul, `jit(scan)` has overhead compared to an 
 | 64×64       | +28%     | Loop faster                           |
 | 128×128     | +51%     | Loop faster                           |
 
-**Crossover point:** ~48×48 matrices. For smaller matrices, scan wins due to single WASM call. For
-larger matrices, the inner-loop overhead accumulates. An xs pointer precomputation optimization
-(hoisting `dataIdx * stride` out of the reduction loop) reduced overhead from 35% to 28% for 64×64.
+Crossover point: ~48×48 matrices.
 
 ### WebGPU Backend
 
 The WebGPU backend keeps data on GPU between iterations. Supports **compiled-loop scan** for
-elementwise kernels (with or without reductions), **multi-kernel scan** for bodies with multiple
-independent kernels (e.g., Kalman filter with 2 carries), and **compiled-body scan** for routines
-(pre-encoded dispatches, one per iteration).
+elementwise kernels and **multi-kernel scan** for bodies with multiple independent kernels.
 
 | Feature / Test                          | Status                           | Notes                                    |
 | --------------------------------------- | -------------------------------- | ---------------------------------------- |
@@ -555,156 +379,51 @@ independent kernels (e.g., Kalman filter with 2 carries), and **compiled-body sc
 | `compiled-loop scan` > `with reverse`   | [✅ Pass](test/lax-scan.test.ts) | uses dataIdx like WASM                   |
 | `compiled-loop scan` > `with constants` | [✅ Pass](test/lax-scan.test.ts) | captured constants bound as storage      |
 | `multi-kernel scan`                     | ✅ Pass                          | multiple carries, up to 8 total buffers  |
-| `compiled-body scan` (routine bodies)   | ⚠️ Broken                        | see note below                           |
-
-**Multi-kernel scan:** See
-[Compiled-Loop vs Compiled-Body Eligibility](#compiled-loop-vs-compiled-body-eligibility) for
-detailed requirements.
-
-**Note on compiled-body (routine bodies):** Currently broken for all routines — see
-[Future Work > Fix Compiled-Body Binding Detection](#fix-compiled-body-binding-detection) for
-details.
+| `compiled-body scan` (routine bodies)   | ⚠️ Broken                        | see Known Limitations                    |
 
 **Note on numCarry ≠ numY:** WebGPU compiled-loop requires `numCarry === numY`. When they differ,
 WebGPU falls back to JS loop. WASM's general scan handles this case.
-
-The "compiled-body scan" tests in `lax-scan.test.ts` actually use compiled-loop (matmul fuses to
-kernel). True routine bodies fall back to `fallback` (JS loop).
-
-These limitations are verified by tests in [test/lax-scan.test.ts](test/lax-scan.test.ts) under
-"KNOWN LIMITATIONS". Those tests PASS when the limitation exists. If you fix a limitation, the test
-will FAIL with instructions to update this documentation.
 
 **Tested on:** NVIDIA RTX 4070 Ti SUPER via Deno WebGPU (headless, no X11)
 
 ---
 
-## WASM Routine Implementation Status
+## Design Choices & Rationales
 
-Native WASM implementations of routines for maximum performance. Routines are written in
-**AssemblyScript** (a TypeScript-like language) and compiled to WASM at build time.
+### Why compiled-loop vs compiled-body?
 
-| Routine             | Status         | Source                             | Notes                                          |
-| ------------------- | -------------- | ---------------------------------- | ---------------------------------------------- |
-| **Cholesky**        | ✅ Implemented | `src/routines/cholesky.ts`         | f32/f64, single/batched, 740 bytes compiled    |
-| **TriangularSolve** | ✅ Implemented | `src/routines/triangular-solve.ts` | Upper/lower triangular, unit/non-unit diagonal |
-| **LU**              | ✅ Implemented | `src/routines/lu.ts`               | Partial pivoting, 1,308 bytes compiled         |
-| **Sort**            | ✅ Implemented | `src/routines/sort.ts`             | Bottom-up merge sort, NaN-aware, 930 bytes     |
-| **Argsort**         | ✅ Implemented | `src/routines/argsort.ts`          | Stable merge sort on indices, 1,215 bytes      |
+| Approach          | How it works                                  | When used                          |
+| ----------------- | --------------------------------------------- | ---------------------------------- |
+| **Compiled-loop** | Entire scan loop in native code (WASM/shader) | Elementwise kernels, routines      |
+| **Compiled-body** | Pre-encode dispatches, JS drives iteration    | WebGPU routines (currently broken) |
+| **Fallback**      | JS loop calling body program per iteration    | Unsupported patterns               |
 
-**Build command:** `pnpm build:routines` compiles `src/routines/*.ts` →
-`src/backend/wasm/generated/routines.ts`
+**Rationale:** Compiled-loop is preferred because:
 
-**How it works:**
+1. Eliminates JS↔native boundary per iteration (~5000× speedup for WASM)
+2. Enables compiler optimizations across iterations
+3. Single WASM module instantiation vs N calls
 
-1. AssemblyScript sources in `src/routines/` define exported functions (e.g., `cholesky_f32`)
-2. `scripts/build-routines.mjs` compiles each to WASM with
-   `--runtime stub --optimize --importMemory`
-3. Generated file exports base64-encoded WASM + `getRoutineModuleSync(name)` loader
-4. `WasmBackend` instantiates modules with shared memory for zero-copy data access
+Compiled-body was designed for WebGPU routines that can't be inlined into a shader, but buffer
+binding issues make it currently impractical. We use fallback instead.
 
-**Adding a new routine (complete checklist):**
+### Why AssemblyScript for WASM routines?
 
-Adding a routine requires edits to **5 files**. The build script auto-generates the WASM loader, but
-wiring is manual.
+**Problem:** Hand-writing WASM bytecode is error-prone and unmaintainable.
 
-| Step | File                        | What to add                                                        |
-| ---- | --------------------------- | ------------------------------------------------------------------ |
-| 1    | `src/routines/<name>.ts`    | AssemblyScript implementation (see patterns below)                 |
-| 2    | `src/routine.ts`            | Add to `Routines` enum with JSDoc                                  |
-| 3    | `src/frontend/core.ts`      | Add to `routinePrimitives` map if exposing as a Primitive          |
-| 4    | `src/backend/wasm.ts`       | Add to `routineModuleNames`, add dispatch case + `#dispatch<Name>` |
-| 5    | `src/frontend/jit.ts`       | Add to `supportedRoutines` in `tryPrepareNativeScanGeneral()`      |
-| 6    | `src/backend/wasm.ts`       | Add codegen case in `codegenNativeScanGeneral()` (~20 lines)       |
-| opt  | `src/routine.ts`            | Add CPU fallback in `runCpuRoutine()` (for debugging)              |
-| opt  | `src/frontend/jvp.ts`       | Add JVP rule if routine needs autodiff support                     |
-| opt  | `src/frontend/linearize.ts` | Add transpose rule if routine needs grad support                   |
+**Solution:** AssemblyScript — a TypeScript-like language that compiles to WASM.
 
-**Detailed steps:**
+**Benefits:**
 
-```typescript
-// Step 1: src/routines/<name>.ts - AssemblyScript implementation
-// Run `pnpm build:routines` after creating this file
+- Readable, maintainable source code
+- TypeScript-like syntax familiar to contributors
+- Small output (~1KB per routine)
+- Easy to debug via source inspection
 
-// Step 2: src/routine.ts - Add to enum
-export enum Routines {
-  // ... existing
-  MyRoutine = "MyRoutine",
-}
+**Alternative considered:** Emscripten (C/C++) — rejected due to larger runtime overhead and less
+familiar syntax for JS developers.
 
-// Step 3: src/frontend/core.ts - Register primitive (if applicable)
-export const routinePrimitives = new Map([
-  // ... existing
-  [Primitive.MyRoutine, Routines.MyRoutine],
-]);
-
-// Step 4: src/backend/wasm.ts - Add module name mapping
-const routineModuleNames: Record<Routines, string> = {
-  // ... existing
-  [Routines.MyRoutine]: "my-routine",  // matches filename without .ts
-};
-
-// Step 4b: src/backend/wasm.ts - Add dispatch case
-case Routines.MyRoutine:
-  return this.#dispatchMyRoutine(routine, inputs, outputs, elementSize);
-
-// Step 5: src/frontend/jit.ts - Enable for native scan
-const supportedRoutines = new Set([
-  // ... existing
-  Routines.MyRoutine,
-]);
-
-// Step 6: src/backend/wasm.ts - Add scan codegen in codegenNativeScanGeneral()
-} else if (routineType === Routines.MyRoutine) {
-  pushSlotPtr(step.inputSlots[0]);  // input pointer
-  cg.local.get(internalsBase + internalIdx);  // output pointer
-  for (const param of callInfo.staticParams) {
-    cg.i32.const(param);  // static params (dimensions, flags, etc.)
-  }
-}
-```
-
-**AssemblyScript patterns:**
-
-```typescript
-// File: src/routines/example.ts
-
-/**
- * Naming convention: <routine>_<dtype> and <routine>_batched_<dtype>
- * Types: f32, f64 (use usize for pointers, i32 for dimensions)
- */
-export function example_f32(inPtr: usize, outPtr: usize, n: i32): void {
-  const elemSize: i32 = 4; // f32 = 4 bytes
-
-  for (let i: i32 = 0; i < n; i++) {
-    // Read: load<T>(ptr + offset)
-    const val: f32 = load<f32>(inPtr + <usize>(i * elemSize));
-
-    // Write: store<T>(ptr + offset, value)
-    store<f32>(outPtr + <usize>(i * elemSize), val * 2.0);
-  }
-}
-
-// Batched version calls single version in a loop
-export function example_batched_f32(inPtr: usize, outPtr: usize, n: i32, batch: i32): void {
-  const size: i32 = n * 4;
-  for (let b: i32 = 0; b < batch; b++) {
-    example_f32(inPtr + <usize>(b * size), outPtr + <usize>(b * size), n);
-  }
-}
-```
-
-**Key AssemblyScript differences from TypeScript:**
-
-- Use `usize` for memory pointers, `i32` for integers, `f32`/`f64` for floats
-- Use `load<T>(ptr)` and `store<T>(ptr, val)` for memory access
-- Cast offsets: `<usize>(i * elemSize)` — required for pointer arithmetic
-- Use `sqrt<f32>(x)` not `Math.sqrt(x)` — generic builtins
-- No closures, classes, or dynamic memory — pure procedural code
-
-### Routine Implementation Architecture
-
-Routines are implemented **3 times** across backends, with different algorithms per backend:
+### Why 3 routine implementations (CPU/WASM/WebGPU)?
 
 | Backend    | Implementation          | Location                         | Algorithm Style            |
 | ---------- | ----------------------- | -------------------------------- | -------------------------- |
@@ -712,42 +431,48 @@ Routines are implemented **3 times** across backends, with different algorithms 
 | **WASM**   | AssemblyScript → WASM   | `src/routines/*.ts`              | Sequential (optimized)     |
 | **WebGPU** | Hand-written WGSL       | `src/backend/webgpu/routines.ts` | Parallel (GPU-optimized)   |
 
-**Why 3 implementations?**
+**Why 3 routine implementations (CPU/WASM/WebGPU)?**
 
-1. **CPU backend assumes WASM is unavailable** — exists for environments without WebAssembly
+1. **CPU backend assumes WASM unavailable** — exists for environments without WebAssembly
 2. **WebGPU uses different algorithms** — GPU parallelism requires fundamentally different
    approaches:
-   - Sort: **Bitonic sort** (parallel) vs merge sort (sequential)
-   - Cholesky: **Column-parallel Cholesky-Crout** with workgroup barriers vs row-by-row
-     Cholesky-Banachiewicz
+   - Sort: Bitonic sort (parallel) vs merge sort (sequential)
+   - Cholesky: Column-parallel Cholesky-Crout vs row-by-row Cholesky-Banachiewicz
 
-**Maintenance implications:**
+**Future unification options:**
 
-- Changes to routine logic must be made in **multiple places**
-- CPU + WASM implementations share the same algorithm, just different syntax
-- WebGPU implementations are structurally different and cannot be unified with CPU/WASM
+- JS → AS codegen: Auto-generate AssemblyScript from JS (unifies CPU + WASM)
+- Jaxpr-based routines: Express as traced functions (blocked by missing `scatter`/`dynamic_slice`)
 
-**Potential future unification (not yet implemented):**
+### Why WASM imports for routines in scan?
 
-| Approach                 | What it would unify                                 | Status                                                  |
-| ------------------------ | --------------------------------------------------- | ------------------------------------------------------- |
-| **JS → AS codegen**      | CPU + WASM (auto-generate AS from JS source)        | Considered                                              |
-| **Jaxpr-based routines** | All backends (express routines as traced functions) | Blocked by missing `scatter`/`dynamic_slice` primitives |
+**Problem:** How to call routines (Cholesky, Sort, etc.) from inside a compiled scan loop?
 
-The Jaxpr approach would require implementing `lax.scatter`, `lax.dynamic_slice`, and
-`lax.dynamic_update_slice` to enable writing algorithms that modify arrays at computed indices. This
-would provide additional benefits beyond routine unification (sparse ops, embeddings, etc.).
+**Options considered:**
 
-For now, when modifying a routine:
+1. **Duplicate routine code in scan module** — Rejected: code bloat, maintenance burden
+2. **Call out to JS** — Rejected: defeats purpose of compiled loop
+3. **WASM imports** — Chosen: scan module imports pre-compiled routine functions
 
-1. Update the JS fallback in `src/routine.ts`
-2. Update the AssemblyScript in `src/routines/<name>.ts`
-3. Update the WebGPU shader in `src/backend/webgpu/routines.ts` (if algorithm differs)
-4. Run tests on all backends to verify consistency
+**Implementation:**
+
+```typescript
+// At codegen time:
+cg.importFunction("routines", "cholesky_f32", [Type.i32, Type.i32, Type.i32]);
+
+// At instantiation:
+dispatchNativeScanGeneral(module, {
+  routines: { cholesky_f32: routineInstance.exports.cholesky_f32 },
+});
+```
+
+**Result:** Full native performance (~1.5M iter/sec) with zero code duplication.
 
 ---
 
-## Scan Reference Contract
+## API Contract
+
+### Scan reference contract
 
 This contract applies to both `lax.scan()` and `jit(() => lax.scan(...))()`:
 
@@ -792,7 +517,7 @@ stackedYs.dispose();
 
 ## Implementation Architecture
 
-### Execution Flow
+### Execution flow
 
 ```
 lax.scan(f, init, xs, { reverse })
@@ -813,76 +538,111 @@ Primitive args:   [...consts, ...initCarry, ...xs]
 Body jaxpr input: [...consts, ...carry, ...x_slice]
 ```
 
-### JIT Step Types
-
-The JIT compiler emits different step types internally, but the `ScanPath` values reported via
-`setScanPathCallback` are simplified to just two values:
+### JIT step types
 
 | ScanPath   | Meaning                              | Internal Step Types           |
 | ---------- | ------------------------------------ | ----------------------------- |
 | `fused`    | Loop runs in native code (fast path) | `native-scan`, `batched-scan` |
 | `fallback` | JS loop with per-iteration dispatch  | `scan`                        |
 
-**Internal details (for debugging only):**
+### Terminology glossary
 
-- WASM: single/multi/general kernel scans, routine scans (e.g., Cholesky)
-- WebGPU: compiled-loop (elementwise kernels), batched-scan (pre-encoded routine dispatches)
+The documentation uses descriptive terms that map to code constructs:
 
-### Scan Kernel Tuning (WASM & WebGPU)
+| Doc Term          | Code Step Type | Backend | Description                                  |
+| ----------------- | -------------- | ------- | -------------------------------------------- |
+| **compiled-loop** | `native-scan`  | WASM    | Entire scan loop compiled to WASM module     |
+| **compiled-loop** | `batched-scan` | WebGPU  | Scan loop in GPU shader (multi-kernel)       |
+| **compiled-body** | (broken)       | WebGPU  | Pre-encoded dispatches, JS loop (deprecated) |
+| **fallback**      | `scan`         | All     | JS loop calling body program per iteration   |
 
-Compiled-loop scans explicitly use `tuneNullopt` for body kernels instead of backend-specific tuners
-(like `tuneWebgpu`). `tuneNullopt` ensures the body is compiled as a pure, inlineable elementwise
-expression safe for embedding.
+Note: `batched-scan` is named for its ability to handle multiple kernels/buffers, not for batching
+iterations. Both `native-scan` and `batched-scan` implement the "fused" scan path.
 
-### Compiled-Loop vs Compiled-Body Eligibility
+### Compiled-loop eligibility
 
-**WASM compiled-loop** (any of single/multi/general):
+**WASM compiled-loop:**
 
-- All body steps are Kernels (not Routines)
-- Constants allowed
-- Reductions allowed (matmul = Mul→Sum)
-- Any `numCarry`/`numY` combination (general handles `numCarry ≠ numY`)
-- **Routine support**: All routines (Cholesky, Sort, TriangularSolve, LU, Argsort) can be embedded
-  in the scan loop
-- Passthrough carry patterns supported (when carry is returned unchanged)
-
-**WASM general scan with routines:**
-
-The unified general scan path supports both Kernels and Routines in the same scan body. This means
-complex scans mixing elementwise ops with routines (e.g., `multiply → cholesky → matmul`) can be
-compiled into a single WASM module.
-
-- Supported routines: Cholesky, Sort, TriangularSolve, LU, Argsort (all 5 routines)
-- Files: `tryPrepareNativeScanGeneral()` in `jit.ts`, `codegenNativeScanGeneral()` in `wasm.ts`
-- Routine functions are imported from pre-compiled AssemblyScript modules via WASM imports
+- All body steps are Kernels or supported Routines
+- Constants allowed, reductions allowed
+- Any `numCarry`/`numY` combination
+- Supported routines: Cholesky, Sort, TriangularSolve, LU, Argsort
 
 **WebGPU compiled-loop (single kernel):**
 
 - Single Kernel body (elementwise with or without reductions)
 - Single carry/output (`numCarry === 1`, `numY === 1`)
-- Constants supported (bound as read-only storage buffers)
-- Reverse scan supported (uses `dataIdx` for iteration-dependent indexing)
-- Any size (multi-workgroup dispatch)
+- Constants supported, reverse supported
 
 **WebGPU multi-kernel scan:**
 
-- Multiple independent Kernels (each writes to its own carry buffer)
-- `numCarry === numY` (carry outputs match Y outputs)
-- Total buffers ≤ 8: consts + initCarry + xs + carry + ys
-- Supports constants, reductions, and reverse scan
-- Uses conditional execution per kernel (`if (gidx < kernel_size)`)
+- Multiple independent Kernels
+- `numCarry === numY`, total buffers ≤ 8
 
-**WebGPU compiled-body (pre-encoded dispatches):**
+### WASM compiled-loop details
 
-- Single Routine body (TriangularSolve, Cholesky, LU)
-- Routine must not use uniforms (excludes Sort/Argsort)
-- `numCarry === numY`
+All WASM scan variants use `codegenNativeScanGeneral`:
 
-**What qualifies as Kernel vs Routine:**
+1. Allocate WASM locals: iteration counter, data index, element indices
+2. Allocate internal temporary buffers for intermediate results
+3. Copy initCarry to carryOut (working buffer)
+4. Generate outer loop (iter = 0..length):
+   - Compute dataIdx (reverse-aware)
+   - For each step: evaluate kernel or call imported routine
+   - Copy outputs to Y and carry buffers
+5. Free internal buffers, return WebAssembly.Module
 
-- **Kernel**: Fused elementwise ops + reductions (Add, Mul, Sum, Max, Matmul via Mul→Sum)
-- **Routine**: Special algorithms needing dedicated shaders (TriangularSolve, Cholesky, LU, Sort,
-  Argsort)
+### WebGPU compiled-loop details
+
+Shader codegen in `nativeScanShaderSource()`:
+
+```wgsl
+for (var iter: u32 = 0; iter < length; iter++) {
+  var acc: f32 = 0.0;  // reduction identity
+  for (var ridx: u32 = 0; ridx < reductionSize; ridx++) {
+    acc = acc + /* expression using ridx */;
+  }
+  carry[gidx] = /* epilogue using acc */;
+  ys[iter * carrySize + gidx] = carry[gidx];
+}
+```
+
+Key insight: Thread `i` only reads/writes `carry[i]` and `xs[:,i]`. No `workgroupBarrier()` needed.
+
+### WebGPU compiled-body details (broken)
+
+For routine bodies, the approach uses pre-encoded dispatches with uniform-based offsets.
+
+**Why uniform-based (not buffer offsets):**
+
+- `minStorageBufferOffsetAlignment` is 256 bytes on most GPUs
+- Typical strides (e.g., 120 bytes) fail alignment requirements
+- Solution: Bind entire buffers, pass offset as uniform variable
+
+The `wrapRoutineForScan` function transforms routine shaders to add offset uniforms, but incorrectly
+maps bindings — see "Fix Compiled-Body Binding Detection" in Known Limitations.
+
+### Critical implementation patterns
+
+**Pending ops flush:** Scan execution requires flushing pending ops before scan step:
+
+```ts
+case "scan": {
+  for (const p of pending) { p.prepareSync(); p.submit(); }
+  pending.length = 0;
+}
+```
+
+**IncRef for duplicate slots:** When body outputs contain duplicate slots (passthrough):
+
+```ts
+const seenSlots = new Set<Slot>();
+const outArrays = bodyOuts.map((slot) => {
+  if (seenSlots.has(slot)) backend.incRef(slot);
+  else seenSlots.add(slot);
+  return new Array({ source: slot, ... });
+});
+```
 
 ---
 
@@ -890,23 +650,14 @@ compiled into a single WASM module.
 
 ### JVP (Forward-mode AD)
 
-`jvp(f, primals, tangents)` works for functions containing scan.
+JVP tracing produces a doubled scan: primals + tangents flow together:
 
-**How it works:**
-
-- JVP tracing produces a doubled scan: primals + tangents flow together
 - Body becomes `(carryP, carryT, xP, xT) → (newCarryP, newCarryT, yP, yT)`
 - Single scan executes both primal and tangent computation
 
 ### VJP/Grad (Reverse-mode AD)
 
-`grad(f)` works for functions containing scan, using the JVP-transpose pattern.
-
-> **Note:** The JVP-transpose pattern is used specifically for control flow like `scan`. Basic ops
-> (add, mul, sin, etc.) have hand-written, optimized VJP rules in `src/frontend/linearize.ts` for
-> performance.
-
-**Architecture:**
+Uses the JVP-transpose pattern for control flow:
 
 ```
 grad(f)(xs)
@@ -917,313 +668,79 @@ grad(f)(xs)
   → Scan transpose rule: iterate backward, transpose each step
 ```
 
-**Transpose rule key insights:**
+**Key insights:**
 
-1. Extract `tangentBody` from JVP body (only tangent outputs, not all 4)
-2. Forward pass stores all intermediate carries in `allCarries`
-3. Backward pass iterates from `length-1` to `0`, calling `evalJaxprTransposed`
-4. Use `actualUndefMask` (based on `instanceof UndefPrimal`) not JVP structure mask
-5. `evalJaxprTransposed` propagates "known" status through equations (primal vs tangent)
-6. Intermediate variables from primal computations are computed lazily as residuals
-
-**Transpose with complex JVP rules (e.g., Cholesky):**
-
-When the scan body includes routines with complex JVP rules (like Cholesky which uses triangular
-solves and matmuls internally), the JVP'd body jaxpr contains both primal and tangent computations.
-During transpose:
-
-- `evalJaxprTransposed` does a forward pass to identify which intermediate variables are "known"
-  (computed from only primal inputs)
-- Known intermediates are computed on-demand via `getOrComputePrimal()` to serve as residuals
-- Unknown intermediates (depending on tangent inputs) get transposed normally
+1. Forward pass stores all intermediate carries in `allCarries`
+2. Backward pass iterates from `length-1` to `0`
+3. `evalJaxprTransposed` propagates "known" status for residuals
 
 ### Vmap (Vectorized Scan)
 
-`vmap(f)` works for functions containing scan. Each batch element runs an independent scan.
+Each batch element runs an independent scan:
 
-**How it works:**
-
-1. Move batch dims: consts/carry → axis 0, xs → axis 1 (axis 0 is scan length)
-2. Create vmapped body jaxpr with batch at axis 0 for all inputs
+1. Move batch dims: consts/carry → axis 0, xs → axis 1
+2. Create vmapped body jaxpr with batch at axis 0
 3. Run single scan over batched arrays
-4. Move ys batch from axis 1 to axis 0 for output
+4. Move ys batch from axis 1 to axis 0
 
-**Compositions work:**
-
-- `jit(vmap(scan))` — JIT compile a vmapped scan
-- `vmap(jit(scan))` — vmap over a JIT-compiled scan
+**Compositions work:** `jit(vmap(scan))` and `vmap(jit(scan))`
 
 ---
 
-## WASM Compiled-Loop Scan Details
+## Routine System
 
-### Unified General Scan Implementation
+### Implementation status
 
-All WASM scan variants are now handled by a single unified implementation:
-`codegenNativeScanGeneral`.
+| Routine             | Status         | Source                             | Notes                                          |
+| ------------------- | -------------- | ---------------------------------- | ---------------------------------------------- |
+| **Cholesky**        | ✅ Implemented | `src/routines/cholesky.ts`         | f32/f64, single/batched, 740 bytes compiled    |
+| **TriangularSolve** | ✅ Implemented | `src/routines/triangular-solve.ts` | Upper/lower triangular, unit/non-unit diagonal |
+| **LU**              | ✅ Implemented | `src/routines/lu.ts`               | Partial pivoting, 1,308 bytes compiled         |
+| **Sort**            | ✅ Implemented | `src/routines/sort.ts`             | Bottom-up merge sort, NaN-aware, 930 bytes     |
+| **Argsort**         | ✅ Implemented | `src/routines/argsort.ts`          | Stable merge sort on indices, 1,215 bytes      |
 
-**Handles all cases:**
+**Build command:** `pnpm build:routines` compiles `src/routines/*.ts` →
+`src/backend/wasm/generated/routines.ts`
 
-- Single kernel bodies (like cumsum)
-- Multiple independent kernels (like Kalman filter with 2 matmuls)
-- Bodies with data dependencies between steps
-- Bodies where numCarry !== numY (e.g., 2 carry values, 5 outputs)
-- Passthrough patterns (carry values returned unchanged as Y outputs)
-- All routine steps (Cholesky, Sort, TriangularSolve, LU, Argsort) via WASM imports to pre-compiled
-  AssemblyScript modules
+### Adding a new routine (checklist)
 
-**Codegen (`codegenNativeScanGeneral`):**
+| Step | File                        | What to add                                                   |
+| ---- | --------------------------- | ------------------------------------------------------------- |
+| 1    | `src/routines/<name>.ts`    | AssemblyScript implementation                                 |
+| 2    | `src/routine.ts`            | Add to `Routines` enum                                        |
+| 3    | `src/frontend/core.ts`      | Add to `routinePrimitives` map                                |
+| 4    | `src/backend/wasm.ts`       | Add to `routineModuleNames`, add dispatch case                |
+| 5    | `src/frontend/jit.ts`       | Add to `supportedRoutines` in `tryPrepareNativeScanGeneral()` |
+| 6    | `src/backend/wasm.ts`       | Add codegen case in `codegenNativeScanGeneral()`              |
+| opt  | `src/routine.ts`            | Add CPU fallback in `runCpuRoutine()`                         |
+| opt  | `src/frontend/jvp.ts`       | Add JVP rule if autodiff needed                               |
+| opt  | `src/frontend/linearize.ts` | Add transpose rule if grad needed                             |
 
-1. Allocate WASM locals: iteration counter, data index, element indices
-2. Allocate internal temporary buffers for intermediate results
-3. Copy initCarry to carryOut (working buffer)
-4. Generate outer loop (iter = 0..length):
-   - Compute dataIdx (reverse-aware): `dataIdx = reverse ? (length-1-iter) : iter`
-   - For each Kernel step: inner loop evaluating expression, optionally with reduction
-   - Copy Y outputs from internal buffers or passthrough from carry
-   - Copy carry outputs from internal buffers or passthrough
-5. Free internal buffers, return WebAssembly.Module
+### AssemblyScript patterns
 
-**Key types:**
-
-- `NativeScanGeneralParams`: length, carrySizes, xsStrides, internalSizes, steps, carryOutSources,
-  yOutputSources
-- `GeneralScanStep`: source (Kernel), inputSlots, outputInternalIdx
-- `translateExpWithGeneralScanContext()`: scan-aware expression codegen
-
-**JIT preparation (`tryPrepareNativeScanGeneral`):**
-
-- Analyzes body program to extract steps, internal buffers, output mappings
-- Handles Kernel steps (elementwise with optional reductions)
-- Handles all Routine steps via WASM imports
-
-### Reverse Scan Support
-
-The unified implementation supports `reverse=true`:
-
-- Uses `dataIdx` local: `dataIdx = reverse ? (length-1-iter) : iter`
-- Uses `dataIdx` for xs/ys offset computation
-- `iter` always counts forward (0..length) for loop control
-- Keep `iter` for loop counter (always forward)
-
----
-
-## WebGPU Compiled-Loop Scan Details
-
-WebGPU compiled-loop scan is wired into the JIT pipeline and supports elementwise kernels with
-reductions. The shader codegen lives in `nativeScanShaderSource()` in `webgpu.ts`.
-
-### Elementwise Compiled-Loop
-
-For elementwise bodies where each element's scan is independent:
-
-```
-Element 0: carry[0] → f(carry[0], xs[0,0]) → f(..., xs[1,0]) → ...
-Element 1: carry[1] → f(carry[1], xs[0,1]) → f(..., xs[1,1]) → ...
-```
-
-**Key insight:** Thread `i` only reads/writes `carry[i]` and `xs[:,i]`. No `workgroupBarrier()`
-needed.
-
-**Reduction support:** For kernels with reductions (e.g., `carry += sum(x)`), the shader generates
-an inner `ridx` loop over the reduction dimension:
-
-```wgsl
-// Generated structure for reduction scan
-for (var iter: u32 = 0; iter < length; iter++) {
-  var acc: f32 = 0.0;  // identity for Add
-  for (var ridx: u32 = 0; ridx < reductionSize; ridx++) {
-    acc = acc + /* expression using ridx */;
-  }
-  carry[gidx] = /* epilogue using acc */;
-  ys[iter * carrySize + gidx] = carry[gidx];
-}
-```
-
-**Multi-workgroup support:** The shader uses `calculateGrid(Math.ceil(kernelSize / 256))` to
-dispatch multiple workgroups for arrays larger than 256 elements.
-
-### Compiled-Body Scan (Routine Bodies)
-
-For routine bodies (TriangularSolve, Cholesky, LU), uses pre-encoded dispatches with uniform-based
-offsets.
-
-**Why uniform-based (not buffer offsets):**
-
-- `minStorageBufferOffsetAlignment` is 256 bytes on most GPUs
-- Typical strides (e.g., 120 bytes) fail alignment requirements
-- Solution: Bind entire buffers, pass offset as uniform variable
-
-**Architecture:**
-
-```
-prepareCompiledBodyScan():
-  1. Wrap shader with uniform offset variables
-  2. Create uniform buffer with all iteration offsets (aligned)
-
-dispatchCompiledBodyScan():
-  1. Ping-pong buffers for carry state
-  2. Bind full buffers (group 0)
-  3. Dynamic uniform offsets for iterations (group 1)
-  4. Encode all iterations in single command buffer
-```
-
-**Critical:** Must create explicit `GPUBindGroupLayout` with `hasDynamicOffset: true`. Layout "auto"
-doesn't work for dynamic offsets.
-
----
-
-## Critical Implementation Patterns
-
-### Pending Ops Flush
-
-Scan execution requires flushing pending ops at multiple points to ensure data is ready:
-
-**Before scan step execution** — flush JIT-accumulated pending ops:
-
-```ts
-case "scan": {
-  for (const p of pending) {
-    p.prepareSync();
-    p.submit();
-  }
-  pending.length = 0;
-  // ... then run scanRunner
-}
-```
-
-Without this, preceding kernels (like Transpose in `vmap(scan)`) haven't written their outputs yet.
-
-**Before body execution** — flush xSlice pending ops:
-
-```ts
-for (const x of xSlice) {
-  for (const exe of x.#pending) {
-    exe.prepareSync();
-    exe.submit();
+```typescript
+export function example_f32(inPtr: usize, outPtr: usize, n: i32): void {
+  const elemSize: i32 = 4;
+  for (let i: i32 = 0; i < n; i++) {
+    const val: f32 = load<f32>(inPtr + <usize>(i * elemSize));
+    store<f32>(outPtr + <usize>(i * elemSize), val * 2.0);
   }
 }
 ```
 
-**After each iteration** — flush body pending ops:
+**Key differences from TypeScript:**
 
-```ts
-for (const exe of pending) {
-  exe.prepareSync();
-  exe.submit();
-}
-```
+- Use `usize` for pointers, `i32` for integers, `f32`/`f64` for floats
+- Use `load<T>(ptr)` and `store<T>(ptr, val)` for memory access
+- Cast offsets: `<usize>(i * elemSize)`
+- Use `sqrt<f32>(x)` not `Math.sqrt(x)`
 
-### IncRef for Duplicate Slots
+### Autodiff of routines (example: Cholesky)
 
-When body outputs contain duplicate slots (passthrough pattern), increment refcount to prevent
-double-free:
+Routines remain **opaque primitives** — the Jaxpr just contains `cholesky a`. The internal algorithm
+is NOT traced.
 
-```ts
-const seenSlots = new Set<Slot>();
-const outArrays = bodyOuts.map((slot) => {
-  if (seenSlots.has(slot)) {
-    backend.incRef(slot);  // Prevent double-free
-  } else {
-    seenSlots.add(slot);
-  }
-  return new Array({ source: slot, ... });
-});
-```
-
-### Passthrough Y Output Lifecycle
-
-When body returns carry as Y output (passthrough pattern):
-
-```ts
-const oldCarrySlots = new Set(carry.map((c) => c._realizeSource()));
-for (const y of ySlice) {
-  const slot = y._realizeSource();
-  if (oldCarrySlots.has(slot)) backend.incRef(slot);
-}
-carry.forEach((c) => c.dispose());
-```
-
----
-
-## Future Work
-
-| Priority | Feature                                    | Notes                                                   |
-| -------- | ------------------------------------------ | ------------------------------------------------------- |
-| High     | Sqrt(N) checkpointing for grad(scan)       | Reduce memory from O(N) to O(√N) with 2× recompute      |
-| Medium   | Fix WebGPU compiled-body (routine) binding | `wrapRoutineForScan` incorrectly maps routine→scan args |
-
-### Fix Compiled-Body Binding Detection
-
-The `wrapRoutineForScan` function in `scan-wrapper.ts` incorrectly assumes routine shader bindings
-correspond to scan body args (consts, carry, xs). In practice:
-
-- Scan body has args: `[carry, x]`
-- Routine is called with: `[x]` only
-- Routine shader bindings: 1 input (x), 1 output (L)
-
-The wrapper tries to find xs bindings starting at index `numConsts + numCarry` but the routine only
-has 1 input at index 0. Fix would require tracking the mapping from body args to routine args
-through the JIT compilation.
-
-### Native Scan Routine Support via WASM Imports
-
-All routines are now supported in native scan loops via WASM module imports. The scan module imports
-routine functions from pre-compiled AssemblyScript modules using `cg.importFunction()`.
-
-**Supported routines:** Cholesky, Sort, TriangularSolve, LU, Argsort
-
-**How it works:**
-
-1. At scan codegen time, `cg.importFunction("routines", exportName, params)` imports routine
-   functions
-2. In the scan loop, the imported function is called with input/output pointers
-3. At instantiation, `dispatchNativeScanGeneral()` provides routine functions as WASM imports
-
-**Performance:** Native scan with routine imports achieves ~1.5M iter/sec, compared to ~308 iter/sec
-with JS loop fallback.
-
-### Alternative: Expressing routines with lax.scan
-
-Some routines could potentially be rewritten using `lax.scan` + elementwise primitives, making them
-fully traceable and automatically compilable through the JIT pipeline. This would enable autodiff
-without explicit JVP rules.
-
-**Blocked by missing primitives:**
-
-| Primitive                | JAX name                   | Purpose                                 | Status             |
-| ------------------------ | -------------------------- | --------------------------------------- | ------------------ |
-| **Scatter**              | `lax.scatter`              | Write at indices: `L[i,j] = value`      | ❌ Not implemented |
-| **Dynamic slice**        | `lax.dynamic_slice`        | Slice with runtime bounds: `x[i:i+k]`   | ❌ Not implemented |
-| **Dynamic update slice** | `lax.dynamic_update_slice` | Update at runtime: `x.at[i:i+k].set(v)` | ❌ Not implemented |
-
-**Routine feasibility with scan:**
-
-| Routine         | Feasibility | Notes                                             |
-| --------------- | ----------- | ------------------------------------------------- |
-| TriangularSolve | ⚠️ Possible | Could build result vector incrementally with scan |
-| Cholesky        | ⚠️ Possible | Row-by-row construction might work                |
-| LU              | ❌ Blocked  | Needs row swaps (scatter) for pivoting            |
-| Sort/Argsort    | ❌ Blocked  | Needs scatter for element swaps                   |
-
-### Autodiff of Routines (Cholesky example)
-
-**Q: Does Cholesky get translated to a Jaxpr?**
-
-Yes, but it remains an **opaque primitive** — the Jaxpr just contains `cholesky a`:
-
-```
-{ lambda a:float32[2,2] .
-  let b:float32[2,2] = cholesky a
-  in ( b ) }
-```
-
-The internal algorithm (nested loops) is NOT traced. Cholesky is a black-box primitive.
-
-**Q: How does grad(cholesky) work then?**
-
-The JVP rule for Cholesky ([jvp.ts#L336](src/frontend/jvp.ts#L336)) is defined **in terms of other
-primitives**:
+The JVP rule defines the derivative **in terms of other primitives**:
 
 ```typescript
 [Primitive.Cholesky]([a], [da]) {
@@ -1241,73 +758,104 @@ The gradient is computed by:
 1. **JVP tracing** → produces a Jaxpr containing `cholesky`, `triangular_solve`, matmul, etc.
 2. **Transpose** → walks the JVP Jaxpr and transposes each primitive
 
-The result (`grad(sum(cholesky))`) produces a **fully expanded Jaxpr** with ~30 operations:
-
-- `cholesky` (forward pass, kept for residuals)
-- `triangular_solve` (called twice in the backward pass)
-- `flip`, `transpose`, `mul`, `add`, `where`, `reduce`, etc.
-
-**Key insight:** The derivative of `cholesky` requires `triangular_solve`. Both are Routines that
-dispatch to native WASM. The gradient computation doesn't avoid the Routine — it just expresses the
-math in terms of these primitives.
+The result (`grad(sum(cholesky))`) produces a **fully expanded Jaxpr** with ~30 operations. The
+derivative of `cholesky` requires `triangular_solve` — both are Routines that dispatch to native
+WASM. The gradient computation expresses the math in terms of these primitives.
 
 ---
 
-## Where to start reading
+## Known Limitations & Future Work
 
-- Entry & exports: `src/index.ts`
-- Memory model: README.md § "Reference counting", `test/refcount.test.ts`
-- Backends: `src/backend/webgpu/`, `src/backend/wasm/`
-- Demos: `website/src/routes/repl/`, `website/src/routes/mobileclip/`
-- Deno WebGPU tests: `test/deno/webgpu.test.ts` — headless hardware GPU testing
-- Scan tests: `test/lax-scan.test.ts`, `test/deno/` (compiled-body integration tests)
-  - Includes: basic, pytree, reverse, jvp, vjp/grad, vmap, jit+vmap compositions, view inputs
-    (sliced/transposed/reshaped xs)
+### Current limitations
+
+| Limitation                  | Workaround                | Backend |
+| --------------------------- | ------------------------- | ------- |
+| WebGPU compiled-body broken | Uses fallback (JS loop)   | WebGPU  |
+| `numCarry ≠ numY` on WebGPU | Falls back to JS loop     | WebGPU  |
+| `grad(scan)` memory O(N)    | None (stores all carries) | All     |
+
+### Future work
+
+| Priority | Feature                              | Notes                                              |
+| -------- | ------------------------------------ | -------------------------------------------------- |
+| High     | Sqrt(N) checkpointing for grad(scan) | Reduce memory from O(N) to O(√N) with 2× recompute |
+| Medium   | Fix WebGPU compiled-body binding     | `wrapRoutineForScan` arg mapping is incorrect      |
+| Low      | `lax.scatter` / `dynamic_slice`      | Would enable Jaxpr-based routines                  |
+
+### Fix Compiled-Body Binding Detection
+
+The `wrapRoutineForScan` function in `scan-wrapper.ts` incorrectly assumes routine shader bindings
+correspond to scan body args (consts, carry, xs). In practice:
+
+- Scan body has args: `[carry, x]`
+- Routine is called with: `[x]` only
+- Routine shader bindings: 1 input (x), 1 output (L)
+
+The wrapper tries to find xs bindings starting at index `numConsts + numCarry` but the routine only
+has 1 input at index 0. Fix would require tracking the mapping from body args to routine args
+through the JIT compilation.
 
 ---
 
-## Documentation files
+## Test Coverage Summary
 
-The project has several documentation files that should be kept in sync with code changes:
+### Test files
 
-### User-facing documentation
+| File                                         | Purpose                            |
+| -------------------------------------------- | ---------------------------------- |
+| `test/lax-scan.test.ts`                      | Main scan test suite (~2000 lines) |
+| `test/jit-scan-dlm.test.ts`                  | Kalman filter integration tests    |
+| `test/deno/webgpu.test.ts`                   | Headless WebGPU tests via Deno     |
+| `test/deno/batched-scan.test.ts`             | Batched scan integration           |
+| `test/deno/batched-scan-integration.test.ts` | Multi-kernel WebGPU scan           |
 
-| File                         | Purpose                                          | When to update                                                |
-| ---------------------------- | ------------------------------------------------ | ------------------------------------------------------------- |
-| `README.md`                  | Main project intro, feature comparison, tutorial | New major features, API changes, getting started improvements |
-| `FEATURES.md`                | JAX/NumPy API compatibility table (~700 lines)   | When adding/changing supported functions, new ops             |
-| `packages/loaders/README.md` | @jax-js/loaders package docs                     | New loader features, API changes                              |
-| `packages/onnx/README.md`    | @jax-js/onnx package docs                        | New ONNX ops, usage changes                                   |
-| `packages/optax/README.md`   | @jax-js/optax package docs                       | New optimizers, API changes                                   |
+### Memory leak detection (Deno)
 
-### Developer documentation
+```ts
+import { withLeakCheck, getSlotCount, assertNoLeaks } from "./harness.ts";
 
-| File                              | Purpose                                     | When to update                                 |
-| --------------------------------- | ------------------------------------------- | ---------------------------------------------- |
-| `.github/copilot-instructions.md` | AI agent onboarding, architecture, patterns | New subsystems, patterns, conventions, gotchas |
+Deno.test({
+  name: "my test",
+  fn: withLeakCheck(async () => {
+    const result = await someComputation();
+    await result.data();
+    jitF.dispose();
+  }),
+});
+```
 
-### Generated documentation
+### Scan path tracking
 
-- **API Reference** (`pnpm run docs`): TypeDoc generates API docs from TSDoc comments in source code
-- Output goes to `docs/` directory (gitignored)
-- Published to https://jax-js.com/docs/
-- Config: `typedoc.ts`
+```ts
+import { setScanPathCallback, type ScanPath } from "../../dist/index.js";
 
-### Documentation update guidelines
+function trackScanPaths() {
+  const paths: { path: ScanPath; backend: string }[] = [];
+  setScanPathCallback((path, backend) => paths.push({ path, backend }));
+  return {
+    paths,
+    cleanup: () => setScanPathCallback(null),
+    expectPath: (expected: ScanPath) => {
+      if (!paths.some((p) => p.path === expected)) {
+        throw new Error(`Expected ${expected}, got: ${paths.map((p) => p.path)}`);
+      }
+    },
+  };
+}
+```
 
-1. **New public API**: Add TSDoc comments in source → auto-generates API docs
-2. **New JAX/NumPy function**: Update `FEATURES.md` compatibility table (🟢/🟡/🟠/🔴 status)
-3. **New package feature**: Update the relevant `packages/*/README.md`
-4. **New architecture/pattern**: Update `.github/copilot-instructions.md`
-5. **Major feature**: Update `README.md` feature table and possibly add tutorial section
-6. **Breaking change**: Update all affected docs + add migration notes to README
+**Why this matters:** Tests named "compiled-loop scan" may silently fall back to JS loop. Use
+`requirePath: "fused"` to ensure tests fail if fusion regresses.
 
-### FEATURES.md legend
+### Test coverage by category
 
-The compatibility table uses these status markers:
+| Category                      | Backend | Path     | Purpose                  |
+| ----------------------------- | ------- | -------- | ------------------------ |
+| `scan basic`                  | CPU     | fallback | Core correctness         |
+| `compiled-loop scan`          | WASM    | fused    | Verify fusion works      |
+| `compiled-loop > reduction`   | WASM    | fallback | Known limitation         |
+| `compiled-body scan > matmul` | WASM    | fallback | Routine bodies           |
+| `KNOWN LIMITATIONS`           | WebGPU  | fallback | Verify graceful fallback |
 
-- 🟢 = supported (~45%)
-- 🟡 = supported with API limitations (~2%)
-- 🟠 = not supported, easy to add <1 day (~35%)
-- 🔴 = not supported (~18%)
-- ⚪️ = not applicable, will not support (see notes)
+Tests under "KNOWN LIMITATIONS" PASS when the limitation exists. If you fix a limitation, the test
+will FAIL with instructions to update this documentation.
