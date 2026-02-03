@@ -59,6 +59,13 @@ export interface GeneralScanStep {
   outputInternalIdx: number;
   /** For multi-output routines: indices of all internal buffers written. */
   outputInternalIndices?: number[];
+  /** For routine steps: info needed to call the routine. */
+  routineCallInfo?: {
+    /** Index into routineInfos array (which routine to call). */
+    routineInfoIdx: number;
+    /** Static params to pass (e.g., matrix dimension n). */
+    staticParams: number[];
+  };
 }
 
 /** Describes the source for a Y output. */
@@ -72,6 +79,16 @@ export interface YOutputSource {
 }
 
 /** Parameters for general native scan execution (handles numCarry !== numY). */
+/** Info about a routine used in a scan body, for WASM import. */
+export interface ScanRoutineInfo {
+  /** The routine enum value (e.g., Routines.Cholesky). */
+  routine: Routines;
+  /** The WASM export name to call (e.g., "cholesky_f32"). */
+  exportName: string;
+  /** Number of i32 parameters the routine takes. */
+  numParams: number;
+}
+
 export interface NativeScanGeneralParams {
   /** Number of scan iterations (length of xs along axis 0). */
   length: number;
@@ -107,6 +124,8 @@ export interface NativeScanGeneralParams {
   auxBufferSize?: number;
   /** Element size for routines (4 for f32, 8 for f64). */
   elementSize?: 4 | 8;
+  /** Routines used in the scan body that need to be imported. */
+  routineInfos?: ScanRoutineInfo[];
 }
 
 /** Source for a carry output in general native scan. */
@@ -552,9 +571,24 @@ export class WasmBackend implements Backend {
       // Get or create WASM instance
       let instance = this.#instanceCache.get(exe.data.module);
       if (!instance) {
-        instance = new WebAssembly.Instance(exe.data.module, {
+        // Build imports: env.memory + any routine functions
+        const imports: WebAssembly.Imports = {
           env: { memory: this.#memory },
-        });
+        };
+
+        // Add routine function imports if needed
+        if (params.routineInfos && params.routineInfos.length > 0) {
+          const routineImports: Record<string, WebAssembly.ExportValue> = {};
+          for (const info of params.routineInfos) {
+            const routineInstance = this.#getRoutineInstance(info.routine);
+            routineImports[info.exportName] = routineInstance.exports[
+              info.exportName
+            ] as WebAssembly.ExportValue;
+          }
+          imports.routines = routineImports;
+        }
+
+        instance = new WebAssembly.Instance(exe.data.module, imports);
         this.#instanceCache.set(exe.data.module, instance);
       }
       const func = instance.exports.scan as (...args: number[]) => void;
@@ -786,6 +820,7 @@ function codegenNativeScanGeneral(
     carryOutSources,
     yOutputSources,
     reverse,
+    routineInfos,
   } = params;
 
   const numInternal = internalSizes.length;
@@ -800,11 +835,27 @@ function codegenNativeScanGeneral(
       numInternal,
       numSteps: steps.length,
       reverse,
+      routineInfos: routineInfos?.map((r) => r.exportName),
     });
   }
 
   const cg = new CodeGenerator();
   cg.memory.import("env", "memory");
+
+  // Import routine functions from the "routines" module
+  // These will be provided at instantiation time from the pre-compiled AS modules
+  const routineFuncIndices: number[] = [];
+  if (routineInfos) {
+    for (const info of routineInfos) {
+      const funcIdx = cg.importFunction(
+        "routines",
+        info.exportName,
+        rep(info.numParams, cg.i32),
+        [],
+      );
+      routineFuncIndices.push(funcIdx);
+    }
+  }
 
   // Collect all helper functions needed by kernels
   const allOps = new Set<AluOp>();
@@ -820,14 +871,21 @@ function codegenNativeScanGeneral(
 
   const funcs = importWasmHelperFuncs(cg, allOps);
 
-  // Note: Routine steps are no longer supported in native scan. All routines are
-  // now pre-compiled AS modules loaded via getRoutineModuleSync() and cannot be
-  // embedded inline. tryPrepareNativeScanGeneral() rejects scans with routines.
-
   // Function arguments:
   // [...consts (numConsts), ...carryIn (numCarry), ...xs (numX),
-  //  ...carryOut (numCarry), ...ysStacked (numY), ...internals (numInternal)]
-  const numArgs = numConsts + numCarry + numX + numCarry + numY + numInternal;
+  //  ...carryOut (numCarry), ...ysStacked (numY), ...internals (numInternal), aux?]
+  const needsAux = (params.auxBufferSize ?? 0) > 0;
+  const numArgs =
+    numConsts +
+    numCarry +
+    numX +
+    numCarry +
+    numY +
+    numInternal +
+    (needsAux ? 1 : 0);
+  const auxArgIdx = needsAux
+    ? numConsts + numCarry + numX + numCarry + numY + numInternal
+    : -1;
 
   const scanFunc = cg.function(rep(numArgs, cg.i32), [], () => {
     // Local variables
@@ -899,110 +957,239 @@ function codegenNativeScanGeneral(
         cg.local.set(dataIdx);
       }
 
-      // Step 2a: Execute each step (all Kernel steps), writing to internal buffers
-      // Note: Routine steps are no longer supported in native scan (see comment above).
+      // Step 2a: Execute each step (Kernel or Routine), writing to internal buffers
       for (let stepIdx = 0; stepIdx < steps.length; stepIdx++) {
         const step = steps[stepIdx];
         const internalIdx = step.outputInternalIdx;
 
-        // All steps must be Kernels (Routines are rejected by tryPrepareNativeScanGeneral)
-        const kernel = step.source as Kernel;
-        const tune = tuneNullopt(kernel);
-        const re = kernel.reduction;
+        if (step.source instanceof Routine) {
+          // Routine step: call the imported routine function
+          const callInfo = step.routineCallInfo!;
+          const funcIdx = routineFuncIndices[callInfo.routineInfoIdx];
+          const routineType = routineInfos![callInfo.routineInfoIdx].routine;
 
-        // Inner loop over kernel output elements
-        cg.i32.const(0);
-        cg.local.set(gidx);
-        cg.loop(cg.void);
-        {
-          cg.block(cg.void);
-          cg.local.get(gidx);
-          cg.i32.const(kernel.size);
-          cg.i32.ge_u();
-          cg.br_if(0);
-
-          // Compute output address: internals[internalIdx] + gidx * elementSize
-          cg.local.get(internalsBase + internalIdx);
-          cg.local.get(gidx);
-          cg.i32.const(byteWidth(kernel.dtype));
-          cg.i32.mul();
-          cg.i32.add();
-
-          // Context for translateExpWithGeneralScanContext
-          const scanCtx: GeneralScanContext = {
-            gidx,
-            iter,
-            dataIdx,
-            ridx: -1,
-            constsBase,
-            constSizes,
-            numConsts,
-            xsBase,
-            xsStrides,
-            carryBase: carryOutBase, // Read from carryOut (updated each iter)
-            carrySizes,
-            numCarry,
-            internalsBase,
-            internalSizes,
-            numInternal,
-            numInputs: numConsts + numCarry + numX,
+          // Helper to push a slot pointer onto the stack
+          const pushSlotPtr = (slotIdx: number) => {
+            if (slotIdx < numConsts) {
+              cg.local.get(constsBase + slotIdx);
+            } else if (slotIdx < numConsts + numCarry) {
+              cg.local.get(carryOutBase + (slotIdx - numConsts));
+            } else if (slotIdx < numConsts + numCarry + numX) {
+              // xs input: base + dataIdx * stride
+              const xIdx = slotIdx - numConsts - numCarry;
+              cg.local.get(xsBase + xIdx);
+              cg.local.get(dataIdx);
+              cg.i32.const(xsStrides[xIdx]);
+              cg.i32.mul();
+              cg.i32.add();
+            } else {
+              // Internal buffer
+              const intIdx = slotIdx - numConsts - numCarry - numX;
+              cg.local.get(internalsBase + intIdx);
+            }
           };
 
-          if (re) {
-            // Reduction: define accumulator and inner ridx loop
-            const acc = cg.local.declare(dty(cg, null, kernel.exp.dtype));
-            dty(cg, null, kernel.exp.dtype).const(re.identity);
-            cg.local.set(acc);
+          if (routineType === Routines.Cholesky) {
+            // cholesky_f32(inPtr, outPtr, n)
+            pushSlotPtr(step.inputSlots[0]); // inPtr
+            cg.local.get(internalsBase + internalIdx); // outPtr
+            for (const param of callInfo.staticParams) {
+              cg.i32.const(param); // n
+            }
+          } else if (routineType === Routines.Sort) {
+            // sort_f32(dataPtr, auxPtr, n) - in-place, needs aux buffer
+            // First, copy input to output (internal buffer), then sort in place
+            // For now, push: internal buffer as dataPtr, aux buffer, n
+            // The input needs to be copied to internal buffer first
 
-            const ridx = cg.local.declare(cg.i32);
+            // Copy input to internal buffer first
+            const inputSlotIdx = step.inputSlots[0];
+            const sortSize = callInfo.staticParams[0]; // n (number of elements)
+            const elemSize = params.elementSize ?? 4;
+            const copySize = sortSize * elemSize;
+
+            // Copy loop: internal[i] = input[i]
             cg.i32.const(0);
-            cg.local.set(ridx);
-            scanCtx.ridx = ridx;
-
+            cg.local.set(copyIdx);
             cg.loop(cg.void);
             {
               cg.block(cg.void);
-              cg.local.get(ridx);
-              cg.i32.const(re.size);
+              cg.local.get(copyIdx);
+              cg.i32.const(copySize);
               cg.i32.ge_u();
               cg.br_if(0);
 
-              translateExpWithGeneralScanContext(cg, funcs, tune.exp, scanCtx);
+              // internal[copyIdx] = input[copyIdx]
+              cg.local.get(internalsBase + internalIdx);
+              cg.local.get(copyIdx);
+              cg.i32.add();
 
-              // acc = reduction.evaluate(acc, exp)
-              codegenReductionAccumulate(cg, re, acc);
+              // Get input pointer and add offset
+              pushSlotPtr(inputSlotIdx);
+              cg.local.get(copyIdx);
+              cg.i32.add();
+              cg.i32.load8_u(0);
 
-              cg.local.get(ridx);
+              cg.i32.store8(0);
+
+              cg.local.get(copyIdx);
               cg.i32.const(1);
               cg.i32.add();
-              cg.local.set(ridx);
-
+              cg.local.set(copyIdx);
               cg.br(1);
               cg.end();
             }
             cg.end();
 
-            // Apply epilogue
-            translateExpWithGeneralScanContext(cg, funcs, tune.epilogue!, {
-              ...scanCtx,
-              acc,
-            });
+            // Now call sort with internal buffer as dataPtr
+            cg.local.get(internalsBase + internalIdx); // dataPtr (in-place)
+            cg.local.get(auxArgIdx); // auxPtr
+            cg.i32.const(sortSize); // n
+          } else if (routineType === Routines.TriangularSolve) {
+            // triangular_solve_batched_f32(aPtr, bPtr, xPtr, n, batchRows, numBatches, unitDiag, lower)
+            pushSlotPtr(step.inputSlots[0]); // aPtr
+            pushSlotPtr(step.inputSlots[1]); // bPtr
+            cg.local.get(internalsBase + internalIdx); // xPtr (output)
+            for (const param of callInfo.staticParams) {
+              cg.i32.const(param); // n, batchRows, numBatches, unitDiag, lower
+            }
+          } else if (routineType === Routines.LU) {
+            // lu_f32(aPtr, luPtr, pivPtr, permPtr, m, n)
+            const outIndices = step.outputInternalIndices!;
+            pushSlotPtr(step.inputSlots[0]); // aPtr
+            cg.local.get(internalsBase + outIndices[0]); // luPtr (first output)
+            cg.local.get(internalsBase + outIndices[1]); // pivPtr (second output)
+            cg.local.get(internalsBase + outIndices[2]); // permPtr (third output)
+            for (const param of callInfo.staticParams) {
+              cg.i32.const(param); // m, n
+            }
+          } else if (routineType === Routines.Argsort) {
+            // argsort_f32(dataPtr, outPtr, idxPtr, auxPtr, n)
+            const outIndices = step.outputInternalIndices!;
+            const sortSize = callInfo.staticParams[0]; // n
+            pushSlotPtr(step.inputSlots[0]); // dataPtr (input)
+            cg.local.get(internalsBase + outIndices[0]); // outPtr (sorted values)
+            cg.local.get(internalsBase + outIndices[1]); // idxPtr (indices)
+            cg.local.get(auxArgIdx); // auxPtr
+            cg.i32.const(sortSize); // n
           } else {
-            translateExpWithGeneralScanContext(cg, funcs, tune.exp, scanCtx);
+            // Generic fallback (shouldn't happen for supported routines)
+            pushSlotPtr(step.inputSlots[0]);
+            cg.local.get(internalsBase + internalIdx);
+            for (const param of callInfo.staticParams) {
+              cg.i32.const(param);
+            }
           }
 
-          // Store result to internal buffer (address already on stack)
-          dty(cg, null, kernel.dtype).store(Math.log2(byteWidth(kernel.dtype)));
+          // Call the routine
+          cg.call(funcIdx);
+        } else {
+          // Kernel step: existing codegen
+          const kernel = step.source;
+          const tune = tuneNullopt(kernel);
+          const re = kernel.reduction;
 
-          // gidx++
-          cg.local.get(gidx);
-          cg.i32.const(1);
-          cg.i32.add();
+          // Inner loop over kernel output elements
+          cg.i32.const(0);
           cg.local.set(gidx);
-          cg.br(1);
+          cg.loop(cg.void);
+          {
+            cg.block(cg.void);
+            cg.local.get(gidx);
+            cg.i32.const(kernel.size);
+            cg.i32.ge_u();
+            cg.br_if(0);
+
+            // Compute output address: internals[internalIdx] + gidx * elementSize
+            cg.local.get(internalsBase + internalIdx);
+            cg.local.get(gidx);
+            cg.i32.const(byteWidth(kernel.dtype));
+            cg.i32.mul();
+            cg.i32.add();
+
+            // Context for translateExpWithGeneralScanContext
+            const scanCtx: GeneralScanContext = {
+              gidx,
+              iter,
+              dataIdx,
+              ridx: -1,
+              constsBase,
+              constSizes,
+              numConsts,
+              xsBase,
+              xsStrides,
+              carryBase: carryOutBase, // Read from carryOut (updated each iter)
+              carrySizes,
+              numCarry,
+              internalsBase,
+              internalSizes,
+              numInternal,
+              numInputs: numConsts + numCarry + numX,
+            };
+
+            if (re) {
+              // Reduction: define accumulator and inner ridx loop
+              const acc = cg.local.declare(dty(cg, null, kernel.exp.dtype));
+              dty(cg, null, kernel.exp.dtype).const(re.identity);
+              cg.local.set(acc);
+
+              const ridx = cg.local.declare(cg.i32);
+              cg.i32.const(0);
+              cg.local.set(ridx);
+              scanCtx.ridx = ridx;
+
+              cg.loop(cg.void);
+              {
+                cg.block(cg.void);
+                cg.local.get(ridx);
+                cg.i32.const(re.size);
+                cg.i32.ge_u();
+                cg.br_if(0);
+
+                translateExpWithGeneralScanContext(
+                  cg,
+                  funcs,
+                  tune.exp,
+                  scanCtx,
+                );
+
+                // acc = reduction.evaluate(acc, exp)
+                codegenReductionAccumulate(cg, re, acc);
+
+                cg.local.get(ridx);
+                cg.i32.const(1);
+                cg.i32.add();
+                cg.local.set(ridx);
+
+                cg.br(1);
+                cg.end();
+              }
+              cg.end();
+
+              // Apply epilogue
+              translateExpWithGeneralScanContext(cg, funcs, tune.epilogue!, {
+                ...scanCtx,
+                acc,
+              });
+            } else {
+              translateExpWithGeneralScanContext(cg, funcs, tune.exp, scanCtx);
+            }
+
+            // Store result to internal buffer (address already on stack)
+            dty(cg, null, kernel.dtype).store(
+              Math.log2(byteWidth(kernel.dtype)),
+            );
+
+            // gidx++
+            cg.local.get(gidx);
+            cg.i32.const(1);
+            cg.i32.add();
+            cg.local.set(gidx);
+            cg.br(1);
+            cg.end();
+          }
           cg.end();
         }
-        cg.end();
       }
 
       // Step 2b: Copy Y outputs to ysStacked at iteration offset

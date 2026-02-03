@@ -553,9 +553,9 @@ suite.each(devices)("lax.scan device:%s", (device) => {
     });
   });
 
-  describe("routine in scan body (fallback path)", () => {
-    // Tests for scan with routine ops in body (uses fallback JS loop since
-    // routines are pre-compiled AS modules that can't be embedded inline)
+  describe("routine in scan body (native scan path)", () => {
+    // Tests for scan with routine ops in body (Cholesky, Sort)
+    // These routines are called via WASM imports from the native scan loop
 
     test.skipIf(!devicesAvailable.includes("wasm"))(
       "cholesky in body",
@@ -588,9 +588,11 @@ suite.each(devices)("lax.scan device:%s", (device) => {
           return [carry, L];
         };
 
-        // JIT should use native routine scan
+        // JIT should use native routine scan (fused path)
         const jitScan = jit((matrices: np.Array) => {
-          return lax.scan(step, initCarry.ref, matrices);
+          return lax.scan(step, initCarry.ref, matrices, {
+            requirePath: "fused",
+          });
         });
 
         const [finalCarry, outputs] = jitScan(xs.ref);
@@ -645,7 +647,10 @@ suite.each(devices)("lax.scan device:%s", (device) => {
         };
 
         const jitScanRev = jit((matrices: np.Array) => {
-          return lax.scan(step, initCarry.ref, matrices, { reverse: true });
+          return lax.scan(step, initCarry.ref, matrices, {
+            reverse: true,
+            requirePath: "fused",
+          });
         });
 
         const [finalCarry, outputs] = jitScanRev(xs.ref);
@@ -700,8 +705,10 @@ suite.each(devices)("lax.scan device:%s", (device) => {
         };
 
         const jitScan = jit((matrices: np.Array) => {
-          // Note: routines use fallback path (pre-compiled AS modules)
-          return lax.scan(step, initCarry.ref, matrices);
+          // Uses native scan with both Kernel (multiply) and Routine (cholesky)
+          return lax.scan(step, initCarry.ref, matrices, {
+            requirePath: "fused",
+          });
         });
 
         const [finalCarry, outputs] = jitScan(xs.ref);
@@ -751,8 +758,10 @@ suite.each(devices)("lax.scan device:%s", (device) => {
         };
 
         const jitScan = jit((matrices: np.Array) => {
-          // Note: routines use fallback path (pre-compiled AS modules)
-          return lax.scan(step, initCarry.ref, matrices);
+          // Uses native scan with Sort routine (requires aux buffer)
+          return lax.scan(step, initCarry.ref, matrices, {
+            requirePath: "fused",
+          });
         });
 
         const [finalCarry, outputs] = jitScan(xs.ref);
@@ -778,6 +787,185 @@ suite.each(devices)("lax.scan device:%s", (device) => {
         expect(outputData[9]).toBeCloseTo(5);
         expect(outputData[10]).toBeCloseTo(5);
         expect(outputData[11]).toBeCloseTo(8);
+
+        jitScan.dispose();
+        xs.dispose();
+        initCarry.dispose();
+      },
+    );
+
+    test.skipIf(!devicesAvailable.includes("wasm"))(
+      "triangular_solve in body",
+      async () => {
+        // Test scan with TriangularSolve routine
+        // Solves A @ X = B for X where A is upper-triangular
+        // Using leftSide: true for left-side solve (A @ X = B)
+        defaultDevice("wasm");
+
+        // Upper-triangular matrices A (3 iterations of 2x2)
+        const A = np.array(
+          [
+            [
+              [2, 1],
+              [0, 3],
+            ], // Upper-triangular
+            [
+              [1, 2],
+              [0, 4],
+            ],
+            [
+              [3, 1],
+              [0, 2],
+            ],
+          ],
+          { dtype: np.float32 },
+        );
+
+        // B vectors [3, 2, 1] - note: leftSide: true requires [n, 1] shaped B
+        const B = np.array(
+          [
+            [[5], [6]], // B[0]: solve A[0] @ X = B[0]
+            [[3], [8]], // B[1]
+            [[7], [4]], // B[2]
+          ],
+          { dtype: np.float32 },
+        );
+
+        const initCarry = np.zeros([1], { dtype: np.float32 });
+
+        const step = (carry: np.Array, x: np.Array[]): [np.Array, np.Array] => {
+          const [a, b] = x;
+          // triangular_solve with leftSide: true solves A @ X = B
+          const X = lax.linalg.triangularSolve(a, b, {
+            lower: false,
+            leftSide: true,
+          });
+          return [carry, X];
+        };
+
+        const jitScan = jit((inputs: np.Array[]) => {
+          return lax.scan(step, initCarry.ref, inputs, {
+            requirePath: "fused",
+          });
+        });
+
+        const [finalCarry, outputs] = jitScan([A.ref, B.ref]);
+        finalCarry.dispose();
+
+        const outputData = await outputs.data();
+
+        // Verify solutions by checking A @ X = B
+        // For A[0] = [[2,1],[0,3]], B[0] = [[5],[6]]
+        // Back-substitution: X[1] = 6/3 = 2, X[0] = (5 - 1*2)/2 = 1.5
+        expect(outputData[0]).toBeCloseTo(1.5, 4); // X[0,0]
+        expect(outputData[1]).toBeCloseTo(2.0, 4); // X[0,1]
+
+        jitScan.dispose();
+        A.dispose();
+        B.dispose();
+        initCarry.dispose();
+      },
+    );
+
+    test.skipIf(!devicesAvailable.includes("wasm"))("LU in body", async () => {
+      // Test scan with LU decomposition routine
+      // LU returns: (lu, pivots, permutation)
+      defaultDevice("wasm");
+
+      // Square matrices for LU decomposition
+      const xs = np.array(
+        [
+          [
+            [4, 3],
+            [6, 3],
+          ],
+          [
+            [1, 2],
+            [3, 4],
+          ],
+        ],
+        { dtype: np.float32 },
+      );
+
+      const initCarry = np.zeros([1], { dtype: np.float32 });
+
+      const step = (carry: np.Array, x: np.Array): [np.Array, np.Array[]] => {
+        const [lu, pivots, perm] = lax.linalg.lu(x);
+        // Return LU matrix as output (piv and perm would need separate outputs)
+        return [carry, [lu, pivots, perm]];
+      };
+
+      const jitScan = jit((matrices: np.Array) => {
+        return lax.scan(step, initCarry.ref, matrices, {
+          requirePath: "fused",
+        });
+      });
+
+      const [finalCarry, outputs] = jitScan(xs.ref);
+      finalCarry.dispose();
+
+      // outputs is a pytree with [lu, pivots, perm] for each iteration
+      const [luOut, _pivotsOut, _permOut] = outputs as unknown as np.Array[];
+      const luData = await luOut.data();
+
+      // Check that LU decomposition is valid
+      // For matrix [[4,3],[6,3]], expect pivoting to swap rows
+      // After pivoting: [[6,3],[4,3]] -> L=[[1,0],[2/3,1]], U=[[6,3],[0,1]]
+      expect(luData[0]).toBeCloseTo(6, 4); // U[0,0]
+      expect(luData[1]).toBeCloseTo(3, 4); // U[0,1]
+      // L[1,0] stored in lu[1,0], U[1,1] stored in lu[1,1]
+
+      jitScan.dispose();
+      xs.dispose();
+      initCarry.dispose();
+    });
+
+    test.skipIf(!devicesAvailable.includes("wasm"))(
+      "argsort in body",
+      async () => {
+        // Test scan with Argsort routine
+        // np.argsort only returns indices, so this test verifies argsort works in scan
+        defaultDevice("wasm");
+
+        const xs = np.array(
+          [
+            [4, 1, 3, 2],
+            [9, 5, 7, 6],
+          ],
+          { dtype: np.float32 },
+        );
+
+        // Init carry should be int32 (indices type) with zeros
+        const initCarry = np.zeros([4]);
+
+        const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+          // np.argsort returns only indices
+          const indices = np.argsort(x);
+          return [indices, indices.ref];
+        };
+
+        const jitScan = jit((arrays: np.Array) => {
+          return lax.scan(step, initCarry.ref, arrays, {
+            requirePath: "fused",
+          });
+        });
+
+        const [finalCarry, outputs] = jitScan(xs.ref);
+        finalCarry.dispose();
+
+        const indicesData = await outputs.data();
+
+        // [4, 1, 3, 2] -> indices [1, 3, 2, 0]
+        expect(indicesData[0]).toBe(1);
+        expect(indicesData[1]).toBe(3);
+        expect(indicesData[2]).toBe(2);
+        expect(indicesData[3]).toBe(0);
+
+        // [9, 5, 7, 6] -> indices [1, 3, 2, 0]
+        expect(indicesData[4]).toBe(1);
+        expect(indicesData[5]).toBe(3);
+        expect(indicesData[6]).toBe(2);
+        expect(indicesData[7]).toBe(0);
 
         jitScan.dispose();
         xs.dispose();

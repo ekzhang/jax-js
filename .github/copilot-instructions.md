@@ -502,11 +502,13 @@ embedded directly into the WASM module.
 | `compiled-loop scan` > `with constants` | [✅ Pass](test/lax-scan.test.ts) |                              |
 | Compiled-loop `reverse=true`            | ✅ Pass                          | all variants support reverse |
 | `compiled-body scan`                    | [✅ Pass](test/lax-scan.test.ts) |                              |
-| `routine in scan body`                  | [✅ Pass](test/lax-scan.test.ts) | uses fallback JS loop        |
-| `grad` through `scan` with routines     | [✅ Pass](test/lax-scan.test.ts) | works via fallback path      |
+| `routine in scan body`                  | [✅ Pass](test/lax-scan.test.ts) | uses native scan via imports |
+| `grad` through `scan` with routines     | [✅ Pass](test/lax-scan.test.ts) | works via native path        |
 
-**Note:** Routines (Cholesky, Sort, etc.) in scan bodies use the fallback JS loop path since they
-are now pre-compiled AssemblyScript modules that cannot be embedded inline in native scan.
+**Routine support:** All routines (Cholesky, Sort, TriangularSolve, LU, Argsort) in scan bodies use
+native scan path via WASM imports. The scan module imports routine functions from pre-compiled
+AssemblyScript modules, enabling full native performance (~1.5M iter/sec) without duplicating
+routine implementation.
 
 **Performance benchmarks:**
 
@@ -754,7 +756,7 @@ compiled into a single WASM module.
 
 - Supported routines: Cholesky, Sort
 - Files: `tryPrepareNativeScanGeneral()` in `jit.ts`, `codegenNativeScanGeneral()` in `wasm.ts`
-- Routine functions (`wasm_cholesky`, `wasm_merge_sort`) are embedded in the generated WASM module
+- Routine functions are imported from pre-compiled AssemblyScript modules via WASM imports
 
 **WebGPU compiled-loop (single kernel):**
 
@@ -869,10 +871,8 @@ All WASM scan variants are now handled by a single unified implementation:
 - Bodies with data dependencies between steps
 - Bodies where numCarry !== numY (e.g., 2 carry values, 5 outputs)
 - Passthrough patterns (carry values returned unchanged as Y outputs)
-
-**Note:** Routine steps (Cholesky, Sort, etc.) are NOT supported in native scan. They use
-pre-compiled AssemblyScript WASM modules that cannot be embedded inline. Scans with routine bodies
-fall back to the JS loop.
+- All routine steps (Cholesky, Sort, TriangularSolve, LU, Argsort) via WASM imports to pre-compiled
+  AssemblyScript modules
 
 **Codegen (`codegenNativeScanGeneral`):**
 
@@ -897,7 +897,7 @@ fall back to the JS loop.
 
 - Analyzes body program to extract steps, internal buffers, output mappings
 - Handles Kernel steps (elementwise with optional reductions)
-- Returns `null` if any routines are encountered (falls back to JS loop)
+- Handles all Routine steps via WASM imports
 
 ### Reverse Scan Support
 
@@ -1068,19 +1068,22 @@ The wrapper tries to find xs bindings starting at index `numConsts + numCarry` b
 has 1 input at index 0. Fix would require tracking the mapping from body args to routine args
 through the JIT compilation.
 
-### Native Scan Routine Limitation
+### Native Scan Routine Support via WASM Imports
 
-Routines (Cholesky, Sort, TriangularSolve, LU, Argsort) cannot be embedded in native scan loops
-because they are now pre-compiled AssemblyScript WASM modules loaded via `getRoutineModuleSync()`.
-These modules can't be inlined into the generated scan WASM code.
+All routines are now supported in native scan loops via WASM module imports. The scan module imports
+routine functions from pre-compiled AssemblyScript modules using `cg.importFunction()`.
 
-**Impact:** Scans with routine bodies fall back to the JS loop (`ScanPath: "fallback"`). This is
-slower than native scan but still correct.
+**Supported routines:** Cholesky, Sort, TriangularSolve, LU, Argsort
 
-**Future options:**
+**How it works:**
 
-1. Keep routines as standalone modules (current approach, simpler maintenance)
-2. Inline AS source at build time into scan codegen (complex, uncertain benefit)
+1. At scan codegen time, `cg.importFunction("routines", exportName, params)` imports routine
+   functions
+2. In the scan loop, the imported function is called with input/output pointers
+3. At instantiation, `dispatchNativeScanGeneral()` provides routine functions as WASM imports
+
+**Performance:** Native scan with routine imports achieves ~1.5M iter/sec, compared to ~308 iter/sec
+with JS loop fallback.
 
 ### Alternative: Expressing routines with lax.scan
 

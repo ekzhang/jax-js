@@ -1681,17 +1681,28 @@ function tryPrepareNativeScanGeneral(
     return null;
   }
 
-  // Check which routines are used and if they're supported
+  // Check which routines are used and build routine info for WASM imports
   const usedRoutines = new Set<Routines>();
+  const supportedRoutines = new Set([
+    Routines.Cholesky,
+    Routines.Sort,
+    Routines.TriangularSolve,
+    Routines.LU,
+    Routines.Argsort,
+  ]);
+
   for (const step of executeSteps) {
     if (step.source instanceof Routine) {
-      // Native scan no longer supports routines (they use pre-compiled AS modules)
-      // Fall back to JS loop for any routine in scan body
-      if (DEBUG >= 1)
-        console.log(
-          `[general-scan] skipped, routines use pre-compiled AS modules: ${step.source.name}`,
-        );
-      return null;
+      const routineName = step.source.name as Routines;
+      if (!supportedRoutines.has(routineName)) {
+        // Unsupported routine - fall back to JS loop
+        if (DEBUG >= 1)
+          console.log(
+            `[general-scan] skipped, unsupported routine in scan body: ${Routines[routineName]}`,
+          );
+        return null;
+      }
+      usedRoutines.add(routineName);
     }
   }
 
@@ -1707,10 +1718,6 @@ function tryPrepareNativeScanGeneral(
 
   // Number of jaxpr inputs
   const numInputs = numConsts + numCarry + numX;
-
-  // Build internal buffer mapping: each execute step writes to an internal buffer
-  // The internal buffer index = step index
-  const numInternal = executeSteps.length;
 
   // Get avals for sizes and strides
   const constAvals = bodyJaxpr.inBinders.slice(0, numConsts).map((v) => v.aval);
@@ -1728,30 +1735,37 @@ function tryPrepareNativeScanGeneral(
   const ysStrides = yAvals.map((a) => a.size * byteWidth(a.dtype));
 
   // Build a mapping from JitId (output slot) to internal buffer index
+  // Multi-output routines need multiple internal buffers
   const slotToInternal = new Map<JitId, number>();
+  const stepToInternalBase = new Map<number, number>(); // step index -> first internal buffer index
+  const internalSizes: number[] = [];
+
   for (let i = 0; i < executeSteps.length; i++) {
     const step = executeSteps[i];
-    for (const outSlot of step.outputs) {
-      slotToInternal.set(outSlot, i);
-    }
-  }
+    const source = step.source;
+    stepToInternalBase.set(i, internalSizes.length);
 
-  // Build internal sizes from each step's output
-  const internalSizes: number[] = [];
-  for (let i = 0; i < executeSteps.length; i++) {
-    const source = executeSteps[i].source;
     if (source instanceof Kernel) {
+      // Kernel: single output
+      const internalIdx = internalSizes.length;
+      slotToInternal.set(step.outputs[0], internalIdx);
       internalSizes.push(source.size * byteWidth(source.dtype));
     } else {
-      // Routine: use first output shape
+      // Routine: may have multiple outputs
       const routine = source as Routine;
-      const outShape = routine.type.outputShapes[0];
-      const outDtype = routine.type.outputDtypes[0];
-      internalSizes.push(prod(outShape) * byteWidth(outDtype));
+      for (let outIdx = 0; outIdx < step.outputs.length; outIdx++) {
+        const internalIdx = internalSizes.length;
+        slotToInternal.set(step.outputs[outIdx], internalIdx);
+        const outShape = routine.type.outputShapes[outIdx];
+        const outDtype = routine.type.outputDtypes[outIdx];
+        internalSizes.push(prod(outShape) * byteWidth(outDtype));
+      }
     }
   }
 
   // Calculate aux buffer size for routines that need it
+  // Sort needs aux buffer of sortDim * elementSize
+  // Argsort needs aux buffer of sortDim * 4 (for i32 indices)
   let auxBufferSize = 0;
   let elementSize: 4 | 8 = 4;
   for (const step of executeSteps) {
@@ -1764,6 +1778,11 @@ function tryPrepareNativeScanGeneral(
         const inputShape = routine.type.inputShapes[0];
         const sortDim = inputShape[inputShape.length - 1];
         auxBufferSize = Math.max(auxBufferSize, sortDim * elementSize);
+      } else if (routine.name === Routines.Argsort) {
+        // Argsort needs aux buffer of size sortDim * 4 (i32 indices)
+        const inputShape = routine.type.inputShapes[0];
+        const sortDim = inputShape[inputShape.length - 1];
+        auxBufferSize = Math.max(auxBufferSize, sortDim * 4);
       }
     }
   }
@@ -1779,7 +1798,66 @@ function tryPrepareNativeScanGeneral(
     inputSlots: number[];
     outputInternalIdx: number;
     outputInternalIndices?: number[];
+    routineCallInfo?: {
+      routineInfoIdx: number;
+      staticParams: number[];
+    };
   };
+
+  // Build routineInfos array for WASM imports
+  type ScanRoutineInfo = {
+    routine: Routines;
+    exportName: string;
+    numParams: number;
+  };
+  const routineInfos: ScanRoutineInfo[] = [];
+  const routineToInfoIdx = new Map<Routines, number>();
+
+  for (const r of usedRoutines) {
+    const idx = routineInfos.length;
+    routineToInfoIdx.set(r, idx);
+
+    // Determine export name and param count based on routine type
+    // For scan, we use non-batched versions since we process one element at a time
+    const dtype = executeSteps.find(
+      (s) => s.source instanceof Routine && (s.source as Routine).name === r,
+    )?.source;
+    const isF64 =
+      dtype instanceof Routine && dtype.type.inputDtypes[0] === DType.Float64;
+    const suffix = isF64 ? "f64" : "f32";
+
+    if (r === Routines.Cholesky) {
+      routineInfos.push({
+        routine: r,
+        exportName: `cholesky_${suffix}`,
+        numParams: 3, // (inPtr, outPtr, n)
+      });
+    } else if (r === Routines.Sort) {
+      routineInfos.push({
+        routine: r,
+        exportName: `sort_${suffix}`,
+        numParams: 3, // (dataPtr, auxPtr, n)
+      });
+    } else if (r === Routines.TriangularSolve) {
+      routineInfos.push({
+        routine: r,
+        exportName: `triangular_solve_batched_${suffix}`,
+        numParams: 8, // (aPtr, bPtr, xPtr, n, batchRows, numBatches, unitDiagonal, lower)
+      });
+    } else if (r === Routines.LU) {
+      routineInfos.push({
+        routine: r,
+        exportName: `lu_${suffix}`,
+        numParams: 6, // (aPtr, luPtr, pivPtr, permPtr, m, n)
+      });
+    } else if (r === Routines.Argsort) {
+      routineInfos.push({
+        routine: r,
+        exportName: `argsort_${suffix}`,
+        numParams: 5, // (dataPtr, outPtr, idxPtr, auxPtr, n)
+      });
+    }
+  }
 
   const steps: LocalGeneralScanStep[] = [];
   for (let i = 0; i < executeSteps.length; i++) {
@@ -1815,23 +1893,76 @@ function tryPrepareNativeScanGeneral(
       // Also reindex the reduction's epilogue if present
       const reindexedReduction = source.reduction?.reindexGids(reindexMap);
       const reindexedKernel = new Kernel(
-        numInputs + numInternal, // nargs: can read from jaxpr inputs + all internals
+        numInputs + internalSizes.length, // nargs: can read from jaxpr inputs + all internals
         source.size,
         reindexedExp,
         reindexedReduction,
       );
 
+      const internalBase = stepToInternalBase.get(i)!;
       steps.push({
         source: reindexedKernel,
         inputSlots,
-        outputInternalIdx: i,
+        outputInternalIdx: internalBase,
       });
     } else {
-      // Routine: no reindexing needed, just pass through
+      // Routine: build routineCallInfo with static params
+      const routine = source as Routine;
+      const routineName = routine.name as Routines;
+      const routineInfoIdx = routineToInfoIdx.get(routineName)!;
+
+      // Get internal buffer indices for all outputs
+      const internalBase = stepToInternalBase.get(i)!;
+      const numOutputs = routine.type.outputShapes.length;
+      const outputInternalIndices: number[] = [];
+      for (let outIdx = 0; outIdx < numOutputs; outIdx++) {
+        outputInternalIndices.push(internalBase + outIdx);
+      }
+
+      // Build static params based on routine type
+      let staticParams: number[] = [];
+      if (routineName === Routines.Cholesky) {
+        // cholesky_f32(inPtr, outPtr, n) - n is the matrix dimension
+        const inputShape = routine.type.inputShapes[0];
+        const n = inputShape[inputShape.length - 1]; // last dimension is matrix size
+        staticParams = [n];
+      } else if (routineName === Routines.Sort) {
+        // sort_f32(dataPtr, auxPtr, n) - n is array length
+        const inputShape = routine.type.inputShapes[0];
+        const n = inputShape[inputShape.length - 1];
+        staticParams = [n];
+      } else if (routineName === Routines.TriangularSolve) {
+        // triangular_solve_batched_f32(aPtr, bPtr, xPtr, n, batchRows, numBatches, unitDiag, lower)
+        const aShape = routine.type.inputShapes[0];
+        const bShape = routine.type.inputShapes[1];
+        const n = aShape[aShape.length - 1];
+        const batchRows = bShape[bShape.length - 2];
+        const numBatches = 1; // In scan, we process one batch at a time
+        const unitDiagonal = routine.params?.unitDiagonal ? 1 : 0;
+        const lower = routine.params?.lower ? 1 : 0;
+        staticParams = [n, batchRows, numBatches, unitDiagonal, lower];
+      } else if (routineName === Routines.LU) {
+        // lu_f32(aPtr, luPtr, pivPtr, permPtr, m, n)
+        const inputShape = routine.type.inputShapes[0];
+        const m = inputShape[inputShape.length - 2];
+        const n = inputShape[inputShape.length - 1];
+        staticParams = [m, n];
+      } else if (routineName === Routines.Argsort) {
+        // argsort_f32(dataPtr, outPtr, idxPtr, auxPtr, n)
+        const inputShape = routine.type.inputShapes[0];
+        const n = inputShape[inputShape.length - 1];
+        staticParams = [n];
+      }
+
       steps.push({
         source,
         inputSlots,
-        outputInternalIdx: i,
+        outputInternalIdx: internalBase,
+        outputInternalIndices,
+        routineCallInfo: {
+          routineInfoIdx,
+          staticParams,
+        },
       });
     }
   }
@@ -1922,6 +2053,7 @@ function tryPrepareNativeScanGeneral(
     reverse,
     auxBufferSize,
     elementSize,
+    routineInfos: routineInfos.length > 0 ? routineInfos : undefined,
   };
 
   try {
