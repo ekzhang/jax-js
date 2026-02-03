@@ -809,65 +809,53 @@ During transpose:
 
 ## WASM Compiled-Loop Scan Details
 
-### Single-Kernel Compiled-Loop
+### Unified General Scan Implementation
 
-Eligible when body compiles to exactly one Kernel with `numCarry === numY`.
+All WASM scan variants are now handled by a single unified implementation: `codegenNativeScanGeneral`.
 
-**Codegen (`codegenNativeScan`):**
+**Handles all cases:**
 
-1. Allocate WASM locals: iteration counter, element index
-2. Generate outer loop (i = 0..length):
-   - Inner loop (elem = 0..size): evaluate kernel expression, write to carry
-   - Copy carry → stacked ys at offset
-3. Return WebAssembly.Module
-
-**Key types:**
-
-- `NativeScanParams`: length, carrySizes, xsStrides, bodyKernel
-- `translateExpWithScanContext()`: scan-aware expression codegen
-
-### Multi-Kernel Compiled-Loop
-
-When body has multiple independent Kernels (e.g., Kalman filter with 2 matmuls).
-
-**Eligibility:**
-
-- All steps are Kernels (not Routines)
-- Each kernel writes exactly one carry output
-- Number of kernels = numCarry
-- `numCarry === numY`
-
-**Codegen (`codegenNativeScanMulti`):**
-
-- Outer loop evaluates all kernels in sequence per iteration
-- Each kernel has its own inner loop over output elements
-
-### General Compiled-Loop
-
-When `numCarry ≠ numY` (e.g., Kalman filter: 2 carry values, 5 outputs).
-
-**Handles:**
-
-- Different carry and Y counts
-- Data dependencies between steps (reads from internal buffers)
-- Passthrough Y outputs (carry values passed through unchanged)
+- Single kernel bodies (like cumsum)
+- Multiple independent kernels (like Kalman filter with 2 matmuls)
+- Bodies with data dependencies between steps
+- Bodies where numCarry !== numY (e.g., 2 carry values, 5 outputs)
+- Routine steps (Cholesky, Sort) embedded in the scan loop
+- Passthrough patterns (carry values returned unchanged as Y outputs)
 
 **Codegen (`codegenNativeScanGeneral`):**
 
-- Allocates internal temporary buffers for intermediate results
-- Tracks Y output sources: passthrough (from carry) or internal buffer
-- Frees internal buffers after WASM call
+1. Allocate WASM locals: iteration counter, data index, element indices
+2. Allocate internal temporary buffers for intermediate results
+3. Copy initCarry to carryOut (working buffer)
+4. Generate outer loop (iter = 0..length):
+   - Compute dataIdx (reverse-aware): `dataIdx = reverse ? (length-1-iter) : iter`
+   - For each step (Kernel or Routine):
+     - If Kernel: inner loop evaluating expression, optionally with reduction
+     - If Routine: call embedded routine function (e.g., `wasm_cholesky`)
+   - Copy Y outputs from internal buffers or passthrough from carry
+   - Copy carry outputs from internal buffers or passthrough
+5. Free internal buffers, return WebAssembly.Module
 
-**Critical: Reduction epilogue reindexing** Must reindex both `kernel.exp` AND `kernel.reduction`
-when extracting kernels. Operations like `y - matmul(F, x)` have epilogues reading from multiple
-inputs.
+**Key types:**
+
+- `NativeScanGeneralParams`: length, carrySizes, xsStrides, internalSizes, steps, carryOutSources, yOutputSources
+- `GeneralScanStep`: source (Kernel | Routine), inputSlots, outputInternalIdx
+- `translateExpWithScanContext()`: scan-aware expression codegen
+
+**JIT preparation (`tryPrepareNativeScanGeneral`):**
+
+- Analyzes body program to extract steps, internal buffers, output mappings
+- Handles Kernel steps (elementwise with optional reductions)
+- Handles Routine steps (Cholesky, Sort embedded in WASM module)
+- Returns `null` if unsupported routines are encountered (falls back to JS loop)
 
 ### Reverse Scan Support
 
-All WASM compiled-loop variants support `reverse=true`:
+The unified implementation supports `reverse=true`:
 
-- Added `dataIdx` local: `dataIdx = reverse ? (length-1-iter) : iter`
-- Use `dataIdx` for xs/ys offset computation
+- Uses `dataIdx` local: `dataIdx = reverse ? (length-1-iter) : iter`
+- Uses `dataIdx` for xs/ys offset computation
+- `iter` always counts forward (0..length) for loop control
 - Keep `iter` for loop counter (always forward)
 
 ---
