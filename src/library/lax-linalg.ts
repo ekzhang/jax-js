@@ -103,14 +103,18 @@ export function triangularSolve(
   a = fudgeArray(a);
   b = fudgeArray(b);
   if (!leftSide) {
-    // Transpose everything so it becomes a left-side solve.
-    // Note that the `TriangularSolve` primitive automatically transposes the
-    // b and x (output) values.
+    // Convert right-side solve (X @ A = B) to left-side solve (A.T @ X.T = B.T).
+    // This effectively transposes A, flipping lower↔upper.
     transposeA = !transposeA;
   } else {
     b = moveaxis(b, -2, -1);
   }
-  if (transposeA) a = moveaxis(a, -2, -1);
+  // When we transpose A, lower triangular becomes upper and vice versa.
+  // The primitive expects the matrix layout to match the `lower` flag.
+  if (transposeA) {
+    a = moveaxis(a, -2, -1);
+    lower = !lower;
+  }
   let x = core.triangularSolve(a, b, { lower, unitDiagonal }) as Array;
   if (leftSide) x = moveaxis(x, -2, -1);
   return x;

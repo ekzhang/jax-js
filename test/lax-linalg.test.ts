@@ -174,18 +174,142 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
   });
 
   suite("jax.lax.linalg.triangularSolve()", () => {
-    test("solves lower-triangular system", () => {
+    test("solves lower-triangular system (leftSide: true, lower: true)", () => {
       // Solve L @ x = b
       const L = np.array([
         [2, 0],
         [1, 3],
       ]);
       const b = np.array([4, 7]).reshape([2, 1]);
-      const x = lax.linalg.triangularSolve(L, b, {
+      const x = lax.linalg.triangularSolve(L.ref, b.ref, {
         leftSide: true,
         lower: true,
       });
-      expect(x).toBeAllclose([[2], [5 / 3]]);
+      expect(x.ref).toBeAllclose([[2], [5 / 3]]);
+      // Verify: L @ x = b
+      expect(np.matmul(L, x)).toBeAllclose(b);
+    });
+
+    test("solves upper-triangular system (leftSide: true, lower: false)", () => {
+      // Solve U @ x = b where U is upper-triangular
+      const U = np.array([
+        [2, 1],
+        [0, 3],
+      ]);
+      const b = np.array([5, 6]).reshape([2, 1]);
+      const x = lax.linalg.triangularSolve(U.ref, b.ref, {
+        leftSide: true,
+        lower: false,
+      });
+      // Back-substitution: x[1] = 6/3 = 2, x[0] = (5 - 1*2)/2 = 1.5
+      expect(x.ref).toBeAllclose([[1.5], [2]]);
+      // Verify: U @ x = b
+      expect(np.matmul(U, x)).toBeAllclose(b);
+    });
+
+    test("solves right-side system (leftSide: false, lower: false)", () => {
+      // Solve x @ U = b where U is upper-triangular
+      const U = np.array([
+        [2, 1],
+        [0, 3],
+      ]);
+      const b = np.array([[4, 5]]);
+      const x = lax.linalg.triangularSolve(U.ref, b.ref, {
+        leftSide: false,
+        lower: false,
+      });
+      // Verify: x @ U = b
+      expect(np.matmul(x, U)).toBeAllclose(b);
+    });
+
+    test("solves right-side system (leftSide: false, lower: true)", () => {
+      // Solve x @ L = b where L is lower-triangular
+      const L = np.array([
+        [2, 0],
+        [1, 3],
+      ]);
+      const b = np.array([[4, 7]]);
+      const x = lax.linalg.triangularSolve(L.ref, b.ref, {
+        leftSide: false,
+        lower: true,
+      });
+      // Verify: x @ L = b
+      expect(np.matmul(x, L)).toBeAllclose(b);
+    });
+
+    test("works with unitDiagonal: true (lower)", () => {
+      // L has implicit 1s on diagonal
+      const L = np.array([
+        [999, 0], // diagonal ignored
+        [2, 999],
+      ]);
+      const b = np.array([3, 7]).reshape([2, 1]);
+      const x = lax.linalg.triangularSolve(L, b, {
+        leftSide: true,
+        lower: true,
+        unitDiagonal: true,
+      });
+      // With unit diagonal: L = [[1, 0], [2, 1]]
+      // Forward-sub: x[0] = 3/1 = 3, x[1] = (7 - 2*3)/1 = 1
+      expect(x).toBeAllclose([[3], [1]]);
+    });
+
+    test("works with unitDiagonal: true (upper)", () => {
+      // U has implicit 1s on diagonal
+      const U = np.array([
+        [999, 2], // diagonal ignored
+        [0, 999],
+      ]);
+      const b = np.array([5, 3]).reshape([2, 1]);
+      const x = lax.linalg.triangularSolve(U, b, {
+        leftSide: true,
+        lower: false,
+        unitDiagonal: true,
+      });
+      // With unit diagonal: U = [[1, 2], [0, 1]]
+      // Back-sub: x[1] = 3/1 = 3, x[0] = (5 - 2*3)/1 = -1
+      expect(x).toBeAllclose([[-1], [3]]);
+    });
+
+    test("works with transposeA: true", () => {
+      // Solve L.T @ x = b (upper-triangular solve via transposed lower)
+      const L = np.array([
+        [2, 0],
+        [1, 3],
+      ]);
+      // L.T = [[2, 1], [0, 3]]
+      const b = np.array([5, 6]).reshape([2, 1]);
+      const x = lax.linalg.triangularSolve(L.ref, b.ref, {
+        leftSide: true,
+        lower: true,
+        transposeA: true,
+      });
+      // Verify: L.T @ x = b
+      expect(np.matmul(L.transpose(), x)).toBeAllclose(b);
+    });
+
+    test("works with batched matrices", () => {
+      // Two 2x2 upper-triangular matrices
+      const U = np.array([
+        [
+          [2, 1],
+          [0, 3],
+        ],
+        [
+          [1, 2],
+          [0, 4],
+        ],
+      ]);
+      const b = np.array([
+        [[5], [6]],
+        [[3], [8]],
+      ]);
+      const x = lax.linalg.triangularSolve(U.ref, b.ref, {
+        leftSide: true,
+        lower: false,
+      });
+      // Verify each batch: U[i] @ x[i] = b[i]
+      expect(np.matmul(U, x)).toBeAllclose(b);
     });
 
     test("works with jvp on b", () => {
