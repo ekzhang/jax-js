@@ -11,6 +11,11 @@ import {
 } from "../alu";
 import { Backend, Executable, Slot } from "../backend";
 import type { NativeScanGeneralParams } from "../backend/wasm";
+import type {
+  NativeScanMultiParams,
+  NativeScanMultiStep,
+  NativeScanParams,
+} from "../backend/webgpu";
 import { PPrint } from "../pprint";
 import { Routine, Routines } from "../routine";
 import { Pair, ShapeTracker, unravelAlu } from "../shape";
@@ -1629,6 +1634,218 @@ function tryPrepareBatchedScan(
 }
 
 /**
+ * Try to prepare a native scan for WebGPU with kernel-only body.
+ * Uses the existing WebGPU native scan infrastructure.
+ *
+ * Supports:
+ * - Single kernel with single carry/output → prepareNativeScan
+ * - Multi-kernel or multi-carry/output → prepareNativeScanMulti
+ */
+function tryPrepareWebGPUNativeScan(
+  backend: Backend,
+  bodyProgram: JitProgram,
+  bodyJaxpr: Jaxpr,
+  executeSteps: Extract<JitStep, { type: "execute" }>[],
+  length: number,
+  numCarry: number,
+  numConsts: number,
+  numX: number,
+  numY: number,
+  reverse: boolean,
+): { executable: Executable; internalSizes: number[] } | null {
+  if (DEBUG >= 2)
+    console.log(
+      `[webgpu-scan] trying with numCarry=${numCarry}, numY=${numY}, steps=${executeSteps.length}`,
+    );
+
+  // Get avals for sizes and strides
+  const constAvals = bodyJaxpr.inBinders.slice(0, numConsts).map((v) => v.aval);
+  const carryAvals = bodyJaxpr.inBinders
+    .slice(numConsts, numConsts + numCarry)
+    .map((v) => v.aval);
+  const xAvals = bodyJaxpr.inBinders
+    .slice(numConsts + numCarry, numConsts + numCarry + numX)
+    .map((v) => v.aval);
+  const yAvals = bodyJaxpr.outs.slice(numCarry).map((v) => v.aval);
+
+  const constSizes = constAvals.map((a) => a.size * byteWidth(a.dtype));
+  const carrySizes = carryAvals.map((a) => a.size * byteWidth(a.dtype));
+  const xsStrides = xAvals.map((a) => a.size * byteWidth(a.dtype));
+  const ysStrides = yAvals.map((a) => a.size * byteWidth(a.dtype));
+
+  // Number of jaxpr inputs for reindexing
+  const numInputs = numConsts + numCarry + numX;
+
+  // Single kernel path: use prepareNativeScan (simpler, more optimized)
+  if (executeSteps.length === 1 && numCarry === 1 && numY === 1) {
+    const step = executeSteps[0];
+    const kernel = step.source as Kernel;
+
+    // Build reindex map: step.inputs[i] is the JitId that the kernel's gid i reads from
+    // We need to map kernel gids to scan buffer layout indices
+    const reindexMap: number[] = [];
+    for (const inputId of step.inputs) {
+      if (inputId < numInputs) {
+        // It's a jaxpr input (const, carry, or xs) - use directly
+        reindexMap.push(inputId);
+      } else {
+        // Shouldn't happen for single-kernel path (no internal buffers)
+        if (DEBUG >= 2)
+          console.log("[webgpu-scan] single kernel has internal buffer ref");
+        return null;
+      }
+    }
+
+    // Reindex kernel to use scan buffer layout
+    const reindexedExp = kernel.exp.reindexGids(reindexMap);
+    const reindexedReduction = kernel.reduction?.reindexGids(reindexMap);
+    const reindexedKernel = new Kernel(
+      numInputs, // nargs matches scan layout
+      kernel.size,
+      reindexedExp,
+      reindexedReduction,
+    );
+
+    const params: NativeScanParams = {
+      length,
+      numConsts,
+      constSizes,
+      carrySizes,
+      xsStrides,
+      ysStrides,
+      bodyKernel: reindexedKernel,
+      numCarry,
+      reverse,
+    };
+
+    if (!backend.prepareNativeScan) {
+      if (DEBUG >= 2)
+        console.log("[webgpu-scan] backend has no prepareNativeScan");
+      return null;
+    }
+
+    try {
+      const exe = backend.prepareNativeScan(params);
+      if (exe) {
+        if (DEBUG >= 1)
+          console.log(
+            `[webgpu-scan] SUCCESS! Using WebGPU native scan (single kernel)`,
+          );
+        return { executable: exe, internalSizes: [] };
+      }
+    } catch (e) {
+      if (DEBUG >= 2) console.warn("[webgpu-scan] prepareNativeScan failed:", e);
+    }
+    return null;
+  }
+
+  // Multi-kernel path: use prepareNativeScanMulti
+  // Requirements: numCarry === numY (each carry has matching output)
+  if (numCarry !== numY) {
+    if (DEBUG >= 2)
+      console.log(
+        `[webgpu-scan] multi-kernel requires numCarry === numY, got ${numCarry} !== ${numY}`,
+      );
+    return null;
+  }
+
+  // Build steps for multi-kernel scan
+  // Each step needs: kernel, inputs mapping, outputCarryIdx, outputSize
+
+  // Map output slots to their source info
+  const slotToInternal = new Map<JitId, number>();
+  for (let i = 0; i < executeSteps.length; i++) {
+    slotToInternal.set(executeSteps[i].outputs[0], i);
+  }
+
+  const multiSteps: NativeScanMultiStep[] = [];
+  for (let i = 0; i < executeSteps.length; i++) {
+    const step = executeSteps[i];
+    const kernel = step.source as Kernel;
+
+    // Build input mapping: indices into [consts, carry, xs] or internal buffers
+    const inputs: number[] = [];
+    for (const inputId of step.inputs) {
+      if (inputId < numInputs) {
+        inputs.push(inputId);
+      } else {
+        const internalIdx = slotToInternal.get(inputId);
+        if (internalIdx !== undefined) {
+          inputs.push(numInputs + internalIdx);
+        } else {
+          if (DEBUG >= 2)
+            console.log(
+              `[webgpu-scan] multi-kernel: input ${inputId} not mapped`,
+            );
+          return null;
+        }
+      }
+    }
+
+    // Reindex kernel to use scan buffer layout
+    const reindexedExp = kernel.exp.reindexGids(inputs);
+    const reindexedReduction = kernel.reduction?.reindexGids(inputs);
+    const reindexedKernel = new Kernel(
+      numInputs + executeSteps.length, // can read from jaxpr inputs + internals
+      kernel.size,
+      reindexedExp,
+      reindexedReduction,
+    );
+
+    // Determine which carry this step writes to
+    // For MVP, we assume step i writes to carry i (simple 1:1 mapping)
+    // This works for simple cases like cumsum, Kalman filter
+    const outputCarryIdx = i < numCarry ? i : 0;
+
+    multiSteps.push({
+      kernel: reindexedKernel,
+      inputs,
+      outputCarryIdx,
+      outputSize: kernel.size,
+    });
+  }
+
+  const params: NativeScanMultiParams = {
+    length,
+    numConsts,
+    constSizes,
+    numCarry,
+    carrySizes,
+    numX,
+    xsStrides,
+    numY,
+    ysStrides,
+    steps: multiSteps,
+    reverse,
+  };
+
+  // Use prepareNativeScanMulti
+  // Note: WebGPU backend has this as prepareNativeScanMulti, not on Backend interface
+  // We need to access it via the concrete backend type
+  const webgpuBackend = backend as any;
+  if (!webgpuBackend.prepareNativeScanMulti) {
+    if (DEBUG >= 2)
+      console.log("[webgpu-scan] backend has no prepareNativeScanMulti");
+    return null;
+  }
+
+  try {
+    const exe = webgpuBackend.prepareNativeScanMulti(params);
+    if (exe) {
+      if (DEBUG >= 1)
+        console.log(
+          `[webgpu-scan] SUCCESS! Using WebGPU native scan (${multiSteps.length} kernels)`,
+        );
+      return { executable: exe, internalSizes: [] };
+    }
+  } catch (e) {
+    if (DEBUG >= 2)
+      console.warn("[webgpu-scan] prepareNativeScanMulti failed:", e);
+  }
+  return null;
+}
+
+/**
  * Try to prepare a native scan for WASM/WebGPU backends.
  * This is the unified implementation that handles all scan body types:
  * - Single kernel bodies (like cumsum)
@@ -1650,22 +1867,8 @@ function tryPrepareNativeScanGeneral(
 ): {
   executable: Executable;
   internalSizes: number[];
-  params: NativeScanGeneralParams;
+  params?: NativeScanGeneralParams;
 } | null {
-  // Only WASM backend for now
-  if (backend.type !== "wasm") {
-    if (DEBUG >= 1)
-      console.log(
-        `[general-scan] skipped, backend=${backend.type} (need wasm)`,
-      );
-    return null;
-  }
-
-  if (DEBUG >= 2)
-    console.log(
-      `[general-scan] trying with backend=${backend.type}, numCarry=${numCarry}, numY=${numY}`,
-    );
-
   // Get all execute steps
   const executeSteps = bodyProgram.steps.filter(
     (s) => s.type === "execute",
@@ -1674,6 +1877,40 @@ function tryPrepareNativeScanGeneral(
     if (DEBUG >= 1) console.log("[general-scan] skipped, no execute steps");
     return null;
   }
+
+  // Check if all steps are Kernels (no Routines)
+  const allKernels = executeSteps.every((s) => s.source instanceof Kernel);
+
+  // ========== WebGPU kernel-only path ==========
+  // For WebGPU with kernel-only bodies, use the existing native scan infrastructure
+  if (backend.type === "webgpu" && allKernels) {
+    return tryPrepareWebGPUNativeScan(
+      backend,
+      bodyProgram,
+      bodyJaxpr,
+      executeSteps,
+      length,
+      numCarry,
+      numConsts,
+      numX,
+      numY,
+      reverse,
+    );
+  }
+
+  // ========== WASM path (supports kernels + routines) ==========
+  if (backend.type !== "wasm") {
+    if (DEBUG >= 1)
+      console.log(
+        `[general-scan] skipped, backend=${backend.type} (need wasm for routines)`,
+      );
+    return null;
+  }
+
+  if (DEBUG >= 2)
+    console.log(
+      `[general-scan] trying with backend=${backend.type}, numCarry=${numCarry}, numY=${numY}`,
+    );
 
   // Check which routines are used and build routine info for WASM imports
   const usedRoutines = new Set<Routines>();
