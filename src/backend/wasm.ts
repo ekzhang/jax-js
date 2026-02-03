@@ -744,6 +744,81 @@ export class WasmBackend implements Backend {
   }
 }
 
+// ============================================================================
+// Shared WASM codegen helpers
+// ============================================================================
+
+/**
+ * Import all required math helper functions based on the ops used.
+ * Accepts either a Set<AluOp> or Map<AluOp, Set<DType>> (from distinctOps()).
+ * Returns a record mapping op names to WASM function indices.
+ */
+function importWasmHelperFuncs(
+  cg: CodeGenerator,
+  ops: Set<AluOp> | Map<AluOp, Set<DType>>,
+): Record<string, number> {
+  const funcs: Record<string, number> = {};
+  const hasOp = (op: AluOp) => (ops instanceof Map ? ops.has(op) : ops.has(op));
+  if (hasOp(AluOp.Sin)) funcs.sin = wasm_sin(cg);
+  if (hasOp(AluOp.Cos)) funcs.cos = wasm_cos(cg);
+  if (hasOp(AluOp.Asin)) funcs.asin = wasm_asin(cg);
+  if (hasOp(AluOp.Atan)) funcs.atan = wasm_atan(cg);
+  if (hasOp(AluOp.Exp) || hasOp(AluOp.Erf) || hasOp(AluOp.Erfc))
+    funcs.exp = wasm_exp(cg);
+  if (hasOp(AluOp.Log)) funcs.log = wasm_log(cg);
+  if (hasOp(AluOp.Erf)) funcs.erf = wasm_erf(cg, funcs.exp);
+  if (hasOp(AluOp.Erfc)) funcs.erfc = wasm_erfc(cg, funcs.exp);
+  if (hasOp(AluOp.Threefry2x32)) funcs.threefry2x32 = wasm_threefry2x32(cg);
+  return funcs;
+}
+
+/**
+ * Generate reduction accumulator update code.
+ * Assumes the expression result is on the stack.
+ * Leaves the accumulated value in the acc local.
+ */
+function codegenReductionAccumulate(
+  cg: CodeGenerator,
+  re: { op: AluOp; dtype: DType; size: number; identity: number },
+  acc: number,
+): void {
+  if (re.op === AluOp.Add) {
+    cg.local.get(acc);
+    if (re.dtype === DType.Bool) cg.i32.or();
+    else dty(cg, re.op, re.dtype).add();
+  } else if (re.op === AluOp.Mul) {
+    cg.local.get(acc);
+    if (re.dtype === DType.Bool) cg.i32.and();
+    else dty(cg, re.op, re.dtype).mul();
+  } else if (re.op === AluOp.Min || re.op === AluOp.Max) {
+    if (isFloatDtype(re.dtype)) {
+      cg.local.get(acc);
+      if (re.op === AluOp.Min) dtyF(cg, re.op, re.dtype).min();
+      else dtyF(cg, re.op, re.dtype).max();
+    } else if ([DType.Int32, DType.Uint32, DType.Bool].includes(re.dtype)) {
+      // WASM has no i32.min/max, so emulate with select
+      const local = cg.local.declare(cg.i32);
+      cg.local.tee(local);
+      cg.local.get(acc);
+      cg.local.get(local);
+      cg.local.get(acc);
+      if (re.op === AluOp.Min) {
+        if (re.dtype === DType.Int32) cg.i32.lt_s();
+        else cg.i32.lt_u();
+      } else {
+        if (re.dtype === DType.Int32) cg.i32.gt_s();
+        else cg.i32.gt_u();
+      }
+      cg.select();
+    } else {
+      throw new Error(`invalid reduction min/max over ${re.dtype}`);
+    }
+  } else {
+    throw new Error(`invalid wasm reduction op: ${re.op}`);
+  }
+  cg.local.set(acc);
+}
+
 function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
   const tune = tuneNullopt(kernel);
   const re = kernel.reduction;
@@ -759,22 +834,7 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
     tune.exp.distinctOps(),
     tune.epilogue?.distinctOps(),
   );
-  const funcs: Record<string, number> = {};
-  if (distinctOps.has(AluOp.Sin)) funcs.sin = wasm_sin(cg);
-  if (distinctOps.has(AluOp.Cos)) funcs.cos = wasm_cos(cg);
-  if (distinctOps.has(AluOp.Asin)) funcs.asin = wasm_asin(cg);
-  if (distinctOps.has(AluOp.Atan)) funcs.atan = wasm_atan(cg);
-  if (
-    distinctOps.has(AluOp.Exp) ||
-    distinctOps.has(AluOp.Erf) ||
-    distinctOps.has(AluOp.Erfc)
-  )
-    funcs.exp = wasm_exp(cg);
-  if (distinctOps.has(AluOp.Log)) funcs.log = wasm_log(cg);
-  if (distinctOps.has(AluOp.Erf)) funcs.erf = wasm_erf(cg, funcs.exp);
-  if (distinctOps.has(AluOp.Erfc)) funcs.erfc = wasm_erfc(cg, funcs.exp);
-  if (distinctOps.has(AluOp.Threefry2x32))
-    funcs.threefry2x32 = wasm_threefry2x32(cg);
+  const funcs = importWasmHelperFuncs(cg, distinctOps);
 
   const kernelFunc = cg.function(rep(kernel.nargs + 1, cg.i32), [], () => {
     const gidx = cg.local.declare(cg.i32);
@@ -816,40 +876,7 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
           translateExp(cg, funcs, tune.exp, { gidx, ridx });
 
           // acc = reduction.evaluate(acc, exp)
-          if (re.op === AluOp.Add) {
-            cg.local.get(acc);
-            if (re.dtype === DType.Bool) cg.i32.or();
-            else dty(cg, re.op, re.dtype).add();
-          } else if (re.op === AluOp.Mul) {
-            cg.local.get(acc);
-            if (re.dtype === DType.Bool) cg.i32.and();
-            else dty(cg, re.op, re.dtype).mul();
-          } else if (re.op === AluOp.Min || re.op === AluOp.Max) {
-            if (isFloatDtype(re.dtype)) {
-              cg.local.get(acc);
-              if (re.op === AluOp.Min) dtyF(cg, re.op, re.dtype).min();
-              else dtyF(cg, re.op, re.dtype).max();
-            } else if (
-              [DType.Int32, DType.Uint32, DType.Bool].includes(re.dtype)
-            ) {
-              // Wasm has no i32.min/max, so emulate with select.
-              const local = cg.local.declare(cg.i32);
-              cg.local.tee(local);
-              cg.local.get(acc);
-              cg.local.get(local);
-              cg.local.get(acc);
-              if (re.op === AluOp.Min) {
-                if (re.dtype === DType.Int32) cg.i32.lt_s();
-                else cg.i32.lt_u();
-              } else {
-                if (re.dtype === DType.Int32) cg.i32.gt_s();
-                else cg.i32.gt_u();
-              }
-              cg.select();
-            } else
-              throw new Error(`invalid reduction min/max over ${re.dtype}`);
-          } else throw new Error(`invalid wasm reduction op: ${re.op}`);
-          cg.local.set(acc);
+          codegenReductionAccumulate(cg, re, acc);
 
           // ridx++
           cg.local.get(ridx);
@@ -950,22 +977,7 @@ function codegenNativeScan(params: NativeScanParams): Uint8Array<ArrayBuffer> {
     tune.exp.distinctOps(),
     tune.epilogue?.distinctOps(),
   );
-  const funcs: Record<string, number> = {};
-  if (distinctOps.has(AluOp.Sin)) funcs.sin = wasm_sin(cg);
-  if (distinctOps.has(AluOp.Cos)) funcs.cos = wasm_cos(cg);
-  if (distinctOps.has(AluOp.Asin)) funcs.asin = wasm_asin(cg);
-  if (distinctOps.has(AluOp.Atan)) funcs.atan = wasm_atan(cg);
-  if (
-    distinctOps.has(AluOp.Exp) ||
-    distinctOps.has(AluOp.Erf) ||
-    distinctOps.has(AluOp.Erfc)
-  )
-    funcs.exp = wasm_exp(cg);
-  if (distinctOps.has(AluOp.Log)) funcs.log = wasm_log(cg);
-  if (distinctOps.has(AluOp.Erf)) funcs.erf = wasm_erf(cg, funcs.exp);
-  if (distinctOps.has(AluOp.Erfc)) funcs.erfc = wasm_erfc(cg, funcs.exp);
-  if (distinctOps.has(AluOp.Threefry2x32))
-    funcs.threefry2x32 = wasm_threefry2x32(cg);
+  const funcs = importWasmHelperFuncs(cg, distinctOps);
 
   // Function arguments:
   // [...consts (numConsts), ...initCarry (numCarry), ...xs (numX), ...carryOut (numCarry), ...ysStacked (numY)]
@@ -1125,43 +1137,7 @@ function codegenNativeScan(params: NativeScanParams): Uint8Array<ArrayBuffer> {
             translateExpWithScanContext(cg, funcs, tune.exp, scanCtx);
 
             // acc = reduction.evaluate(acc, exp)
-            if (re.op === AluOp.Add) {
-              cg.local.get(acc);
-              if (re.dtype === DType.Bool) cg.i32.or();
-              else dty(cg, re.op, re.dtype).add();
-            } else if (re.op === AluOp.Mul) {
-              cg.local.get(acc);
-              if (re.dtype === DType.Bool) cg.i32.and();
-              else dty(cg, re.op, re.dtype).mul();
-            } else if (re.op === AluOp.Min || re.op === AluOp.Max) {
-              if (isFloatDtype(re.dtype)) {
-                cg.local.get(acc);
-                if (re.op === AluOp.Min) dtyF(cg, re.op, re.dtype).min();
-                else dtyF(cg, re.op, re.dtype).max();
-              } else if (
-                [DType.Int32, DType.Uint32, DType.Bool].includes(re.dtype)
-              ) {
-                // Wasm has no i32.min/max, so emulate with select
-                const local = cg.local.declare(cg.i32);
-                cg.local.tee(local);
-                cg.local.get(acc);
-                cg.local.get(local);
-                cg.local.get(acc);
-                if (re.op === AluOp.Min) {
-                  if (re.dtype === DType.Int32) cg.i32.lt_s();
-                  else cg.i32.lt_u();
-                } else {
-                  if (re.dtype === DType.Int32) cg.i32.gt_s();
-                  else cg.i32.gt_u();
-                }
-                cg.select();
-              } else {
-                throw new Error(`invalid reduction min/max over ${re.dtype}`);
-              }
-            } else {
-              throw new Error(`invalid wasm reduction op: ${re.op}`);
-            }
-            cg.local.set(acc);
+            codegenReductionAccumulate(cg, re, acc);
 
             // ridx++
             cg.local.get(ridx);
@@ -1217,42 +1193,7 @@ function codegenNativeScan(params: NativeScanParams): Uint8Array<ArrayBuffer> {
 
             translateExpWithScanContext(cg, funcs, tune.exp, scanCtx2);
 
-            if (re.op === AluOp.Add) {
-              cg.local.get(acc2);
-              if (re.dtype === DType.Bool) cg.i32.or();
-              else dty(cg, re.op, re.dtype).add();
-            } else if (re.op === AluOp.Mul) {
-              cg.local.get(acc2);
-              if (re.dtype === DType.Bool) cg.i32.and();
-              else dty(cg, re.op, re.dtype).mul();
-            } else if (re.op === AluOp.Min || re.op === AluOp.Max) {
-              if (isFloatDtype(re.dtype)) {
-                cg.local.get(acc2);
-                if (re.op === AluOp.Min) dtyF(cg, re.op, re.dtype).min();
-                else dtyF(cg, re.op, re.dtype).max();
-              } else if (
-                [DType.Int32, DType.Uint32, DType.Bool].includes(re.dtype)
-              ) {
-                const local = cg.local.declare(cg.i32);
-                cg.local.tee(local);
-                cg.local.get(acc2);
-                cg.local.get(local);
-                cg.local.get(acc2);
-                if (re.op === AluOp.Min) {
-                  if (re.dtype === DType.Int32) cg.i32.lt_s();
-                  else cg.i32.lt_u();
-                } else {
-                  if (re.dtype === DType.Int32) cg.i32.gt_s();
-                  else cg.i32.gt_u();
-                }
-                cg.select();
-              } else {
-                throw new Error(`invalid reduction min/max over ${re.dtype}`);
-              }
-            } else {
-              throw new Error(`invalid wasm reduction op: ${re.op}`);
-            }
-            cg.local.set(acc2);
+            codegenReductionAccumulate(cg, re, acc2);
 
             cg.local.get(ridx2);
             cg.i32.const(1);
@@ -1349,18 +1290,7 @@ function codegenNativeScanMulti(
     }
   }
 
-  const funcs: Record<string, number> = {};
-  if (allOps.has(AluOp.Sin)) funcs.sin = wasm_sin(cg);
-  if (allOps.has(AluOp.Cos)) funcs.cos = wasm_cos(cg);
-  if (allOps.has(AluOp.Asin)) funcs.asin = wasm_asin(cg);
-  if (allOps.has(AluOp.Atan)) funcs.atan = wasm_atan(cg);
-  if (allOps.has(AluOp.Exp) || allOps.has(AluOp.Erf) || allOps.has(AluOp.Erfc))
-    funcs.exp = wasm_exp(cg);
-  if (allOps.has(AluOp.Log)) funcs.log = wasm_log(cg);
-  if (allOps.has(AluOp.Erf)) funcs.erf = wasm_erf(cg, funcs.exp);
-  if (allOps.has(AluOp.Erfc)) funcs.erfc = wasm_erfc(cg, funcs.exp);
-  if (allOps.has(AluOp.Threefry2x32))
-    funcs.threefry2x32 = wasm_threefry2x32(cg);
+  const funcs = importWasmHelperFuncs(cg, allOps);
 
   // Function arguments:
   // [...consts (numConsts), ...initCarry (numCarry), ...xs (numX), ...carryOut (numCarry), ...ysStacked (numY)]
@@ -1502,40 +1432,7 @@ function codegenNativeScanMulti(
               translateExpWithScanContext(cg, funcs, tune.exp, scanCtx);
 
               // acc = reduction.evaluate(acc, exp)
-              if (re.op === AluOp.Add) {
-                cg.local.get(acc);
-                if (re.dtype === DType.Bool) cg.i32.or();
-                else dty(cg, re.op, re.dtype).add();
-              } else if (re.op === AluOp.Mul) {
-                cg.local.get(acc);
-                if (re.dtype === DType.Bool) cg.i32.and();
-                else dty(cg, re.op, re.dtype).mul();
-              } else if (re.op === AluOp.Min || re.op === AluOp.Max) {
-                if (isFloatDtype(re.dtype)) {
-                  cg.local.get(acc);
-                  if (re.op === AluOp.Min) dtyF(cg, re.op, re.dtype).min();
-                  else dtyF(cg, re.op, re.dtype).max();
-                } else if (
-                  [DType.Int32, DType.Uint32, DType.Bool].includes(re.dtype)
-                ) {
-                  const local = cg.local.declare(cg.i32);
-                  cg.local.tee(local);
-                  cg.local.get(acc);
-                  cg.local.get(local);
-                  cg.local.get(acc);
-                  if (re.op === AluOp.Min) {
-                    if (re.dtype === DType.Int32) cg.i32.lt_s();
-                    else cg.i32.lt_u();
-                  } else {
-                    if (re.dtype === DType.Int32) cg.i32.gt_s();
-                    else cg.i32.gt_u();
-                  }
-                  cg.select();
-                }
-              } else {
-                throw new Error(`invalid wasm reduction op: ${re.op}`);
-              }
-              cg.local.set(acc);
+              codegenReductionAccumulate(cg, re, acc);
 
               cg.local.get(ridx);
               cg.i32.const(1);
@@ -1587,38 +1484,7 @@ function codegenNativeScanMulti(
 
               translateExpWithScanContext(cg, funcs, tune.exp, scanCtx2);
 
-              if (re.op === AluOp.Add) {
-                cg.local.get(acc2);
-                if (re.dtype === DType.Bool) cg.i32.or();
-                else dty(cg, re.op, re.dtype).add();
-              } else if (re.op === AluOp.Mul) {
-                cg.local.get(acc2);
-                if (re.dtype === DType.Bool) cg.i32.and();
-                else dty(cg, re.op, re.dtype).mul();
-              } else if (re.op === AluOp.Min || re.op === AluOp.Max) {
-                if (isFloatDtype(re.dtype)) {
-                  cg.local.get(acc2);
-                  if (re.op === AluOp.Min) dtyF(cg, re.op, re.dtype).min();
-                  else dtyF(cg, re.op, re.dtype).max();
-                } else if (
-                  [DType.Int32, DType.Uint32, DType.Bool].includes(re.dtype)
-                ) {
-                  const local = cg.local.declare(cg.i32);
-                  cg.local.tee(local);
-                  cg.local.get(acc2);
-                  cg.local.get(local);
-                  cg.local.get(acc2);
-                  if (re.op === AluOp.Min) {
-                    if (re.dtype === DType.Int32) cg.i32.lt_s();
-                    else cg.i32.lt_u();
-                  } else {
-                    if (re.dtype === DType.Int32) cg.i32.gt_s();
-                    else cg.i32.gt_u();
-                  }
-                  cg.select();
-                }
-              }
-              cg.local.set(acc2);
+              codegenReductionAccumulate(cg, re, acc2);
 
               cg.local.get(ridx2);
               cg.i32.const(1);
@@ -1729,18 +1595,7 @@ function codegenNativeScanGeneral(
     }
   }
 
-  const funcs: Record<string, number> = {};
-  if (allOps.has(AluOp.Sin)) funcs.sin = wasm_sin(cg);
-  if (allOps.has(AluOp.Cos)) funcs.cos = wasm_cos(cg);
-  if (allOps.has(AluOp.Asin)) funcs.asin = wasm_asin(cg);
-  if (allOps.has(AluOp.Atan)) funcs.atan = wasm_atan(cg);
-  if (allOps.has(AluOp.Exp) || allOps.has(AluOp.Erf) || allOps.has(AluOp.Erfc))
-    funcs.exp = wasm_exp(cg);
-  if (allOps.has(AluOp.Log)) funcs.log = wasm_log(cg);
-  if (allOps.has(AluOp.Erf)) funcs.erf = wasm_erf(cg, funcs.exp);
-  if (allOps.has(AluOp.Erfc)) funcs.erfc = wasm_erfc(cg, funcs.exp);
-  if (allOps.has(AluOp.Threefry2x32))
-    funcs.threefry2x32 = wasm_threefry2x32(cg);
+  const funcs = importWasmHelperFuncs(cg, allOps);
 
   // Add routine functions for any routine steps
   const routineFuncs: Map<Routines, number> = new Map();
@@ -2019,40 +1874,7 @@ function codegenNativeScanGeneral(
                 );
 
                 // acc = reduction.evaluate(acc, exp)
-                if (re.op === AluOp.Add) {
-                  cg.local.get(acc);
-                  if (re.dtype === DType.Bool) cg.i32.or();
-                  else dty(cg, re.op, re.dtype).add();
-                } else if (re.op === AluOp.Mul) {
-                  cg.local.get(acc);
-                  if (re.dtype === DType.Bool) cg.i32.and();
-                  else dty(cg, re.op, re.dtype).mul();
-                } else if (re.op === AluOp.Min || re.op === AluOp.Max) {
-                  if (isFloatDtype(re.dtype)) {
-                    cg.local.get(acc);
-                    if (re.op === AluOp.Min) dtyF(cg, re.op, re.dtype).min();
-                    else dtyF(cg, re.op, re.dtype).max();
-                  } else if (
-                    [DType.Int32, DType.Uint32, DType.Bool].includes(re.dtype)
-                  ) {
-                    const local = cg.local.declare(cg.i32);
-                    cg.local.tee(local);
-                    cg.local.get(acc);
-                    cg.local.get(local);
-                    cg.local.get(acc);
-                    if (re.op === AluOp.Min) {
-                      if (re.dtype === DType.Int32) cg.i32.lt_s();
-                      else cg.i32.lt_u();
-                    } else {
-                      if (re.dtype === DType.Int32) cg.i32.gt_s();
-                      else cg.i32.gt_u();
-                    }
-                    cg.select();
-                  }
-                } else {
-                  throw new Error(`invalid wasm reduction op: ${re.op}`);
-                }
-                cg.local.set(acc);
+                codegenReductionAccumulate(cg, re, acc);
 
                 cg.local.get(ridx);
                 cg.i32.const(1);
