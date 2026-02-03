@@ -1748,7 +1748,8 @@ function tryPrepareWebGPUNativeScan(
         return { executable: exe, internalSizes: [] };
       }
     } catch (e) {
-      if (DEBUG >= 2) console.warn("[webgpu-scan] prepareNativeScan failed:", e);
+      if (DEBUG >= 2)
+        console.warn("[webgpu-scan] prepareNativeScan failed:", e);
     }
     return null;
   }

@@ -399,11 +399,11 @@ WebGPU falls back to JS loop. WASM's general scan handles this case.
 
 ### Why compiled-loop vs compiled-body?
 
-| Approach          | How it works                                  | When used                                  |
-| ----------------- | --------------------------------------------- | ------------------------------------------ |
+| Approach          | How it works                                  | When used                                        |
+| ----------------- | --------------------------------------------- | ------------------------------------------------ |
 | **Compiled-loop** | Entire scan loop in native code (WASM/shader) | Elementwise kernels (WASM+WebGPU), WASM routines |
-| **Compiled-body** | Pre-encode dispatches, JS drives iteration    | WebGPU routines (falls back, binding issue)|
-| **Fallback**      | JS loop calling body program per iteration    | WebGPU routines, unsupported patterns      |
+| **Compiled-body** | Pre-encode dispatches, JS drives iteration    | WebGPU routines (falls back, binding issue)      |
+| **Fallback**      | JS loop calling body program per iteration    | WebGPU routines, unsupported patterns            |
 
 **Rationale:** Compiled-loop is preferred because:
 
@@ -570,7 +570,8 @@ iterations. Both `native-scan` and `batched-scan` implement the "fused" scan pat
 
 The `tryPrepareNativeScan()` dispatcher routes to backend-specific implementations:
 
-- **WebGPU kernel-only** → `tryPrepareWebGPUNativeScan()` → uses `prepareNativeScan()` or `prepareNativeScanMulti()`
+- **WebGPU kernel-only** → `tryPrepareWebGPUNativeScan()` → uses `prepareNativeScan()` or
+  `prepareNativeScanMulti()`
 - **WASM (kernels + routines)** → `tryPrepareWasmNativeScan()` → uses `prepareNativeScanGeneral()`
 
 ### Compiled-loop eligibility
@@ -735,17 +736,17 @@ Each batch element runs an independent scan:
 
 ### Adding a new routine (checklist)
 
-| Step | File                        | What to add                                                 |
-| ---- | --------------------------- | ----------------------------------------------------------- |
-| 1    | `src/routines/<name>.ts`    | AssemblyScript implementation                               |
-| 2    | `src/routine.ts`            | Add to `Routines` enum                                      |
-| 3    | `src/frontend/core.ts`      | Add to `routinePrimitives` map                              |
-| 4    | `src/backend/wasm.ts`       | Add to `routineModuleNames`, add dispatch case              |
-| 5    | `src/frontend/jit.ts`       | Add to `supportedRoutines` in `tryPrepareWasmNativeScan()`  |
-| 6    | `src/backend/wasm.ts`       | Add codegen case in `codegenNativeScanGeneral()`            |
-| opt  | `src/routine.ts`            | Add CPU fallback in `runCpuRoutine()`                         |
-| opt  | `src/frontend/jvp.ts`       | Add JVP rule if autodiff needed                               |
-| opt  | `src/frontend/linearize.ts` | Add transpose rule if grad needed                             |
+| Step | File                        | What to add                                                |
+| ---- | --------------------------- | ---------------------------------------------------------- |
+| 1    | `src/routines/<name>.ts`    | AssemblyScript implementation                              |
+| 2    | `src/routine.ts`            | Add to `Routines` enum                                     |
+| 3    | `src/frontend/core.ts`      | Add to `routinePrimitives` map                             |
+| 4    | `src/backend/wasm.ts`       | Add to `routineModuleNames`, add dispatch case             |
+| 5    | `src/frontend/jit.ts`       | Add to `supportedRoutines` in `tryPrepareWasmNativeScan()` |
+| 6    | `src/backend/wasm.ts`       | Add codegen case in `codegenNativeScanGeneral()`           |
+| opt  | `src/routine.ts`            | Add CPU fallback in `runCpuRoutine()`                      |
+| opt  | `src/frontend/jvp.ts`       | Add JVP rule if autodiff needed                            |
+| opt  | `src/frontend/linearize.ts` | Add transpose rule if grad needed                          |
 
 ### AssemblyScript patterns
 
@@ -841,6 +842,39 @@ through the JIT compilation.
 | `test/deno/webgpu.test.ts`                   | Headless WebGPU tests via Deno     |
 | `test/deno/batched-scan.test.ts`             | Batched scan integration           |
 | `test/deno/batched-scan-integration.test.ts` | Multi-kernel WebGPU scan           |
+
+### Deno WebGPU test guidelines
+
+**Critical: Avoid creating multiple `GPUDevice` instances**
+
+- **Always reuse jax-js's WebGPU device** instead of calling `navigator.gpu.requestAdapter()` +
+  `adapter.requestDevice()`.
+- Creating a second `GPUDevice` can destabilize Deno's WebGPU runtime and cause flakiness, memory
+  leaks, or segfaults across test files.
+- Use the `getJaxJsWebGPUDevice()` helper pattern (see `test/deno/batched-scan.test.ts`) to access
+  the backend's device.
+- **Never call `device.destroy()`** on the shared backend device — let the backend manage its
+  lifecycle.
+
+**Import from `dist/` not `src/`**
+
+- Deno tests MUST import from `../../dist/index.js` to share backend instances across test modules.
+- Mixed `src/` vs `dist/` imports create separate module graphs with separate backend instances,
+  causing leak detection failures.
+
+**Buffer cleanup**
+
+- Track all created `GPUBuffer`s in an array: `const createdBuffers: GPUBuffer[] = []`.
+- Destroy them in `finally` blocks: `for (const b of createdBuffers) b.destroy()`.
+- Call `await device.queue.onSubmittedWorkDone()` before destroying buffers to ensure GPU work is
+  complete.
+
+**Module parallelism**
+
+- Deno test runner supports parallel module execution via `--parallel` flag or `DENO_JOBS`
+  environment variable.
+- Current `test:deno` script uses `DENO_JOBS=1` to run test files sequentially, reducing GPU-related
+  flakiness.
 
 ### Memory leak detection (Deno)
 

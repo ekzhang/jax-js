@@ -19,6 +19,30 @@ import {
 
 const hasWebGPU = typeof navigator !== "undefined" && "gpu" in navigator;
 
+async function getJaxJsWebGPUDevice(): Promise<GPUDevice | null> {
+  // Lazily import to avoid initializing WebGPU at module load.
+  const { init, defaultDevice, getBackend } = await import(
+    "../../dist/index.js"
+  );
+
+  // If a WebGPU backend is already active, reuse it without re-initializing.
+  try {
+    const backend = getBackend() as any;
+    const existing = backend?.device as GPUDevice | undefined;
+    if (existing) return existing;
+  } catch {
+    // getBackend may throw if init() hasn't been called yet.
+  }
+
+  const devices = await init();
+  if (!devices.includes("webgpu")) return null;
+  defaultDevice("webgpu");
+
+  const backend = getBackend() as any;
+  const device = backend?.device as GPUDevice | undefined;
+  return device ?? null;
+}
+
 // ============================================================================
 // jax-js integration tests - run FIRST to use shared backend before creating
 // separate GPU devices (which can exhaust GPU memory when created/destroyed)
@@ -363,27 +387,15 @@ Deno.test({
   name: "batched scan - end-to-end dispatch with uniform offsets",
   ignore: !hasWebGPU,
   fn: async () => {
-    // Get GPU device directly - no jax-js initialization
-    const adapter = await navigator.gpu.requestAdapter();
-    if (!adapter) {
-      console.log("No GPU adapter, skipping");
+    // IMPORTANT: Reuse jax-js's WebGPU device. Creating a second GPUDevice can
+    // destabilize Deno WebGPU and cause flakiness/segfaults across test files.
+    const device = await getJaxJsWebGPUDevice();
+    if (!device) {
+      console.log("WebGPU not available in jax-js, skipping");
       return;
     }
-    let device: GPUDevice;
-    try {
-      device = await adapter.requestDevice();
-    } catch (e: unknown) {
-      if (
-        e instanceof Error &&
-        (e.message.includes("memory") || e.message.includes("invalid"))
-      ) {
-        console.log(
-          "GPU device creation failed, skipping (jax-js device may be holding memory)",
-        );
-        return;
-      }
-      throw e;
-    }
+
+    const createdBuffers: GPUBuffer[] = [];
 
     // Wrap entire test in try/catch to gracefully handle GPU resource exhaustion
     try {
@@ -480,6 +492,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           GPUBufferUsage.COPY_DST |
           GPUBufferUsage.COPY_SRC,
       });
+      createdBuffers.push(carryPing);
       const carryPong = device.createBuffer({
         size: carrySize,
         usage:
@@ -487,6 +500,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           GPUBufferUsage.COPY_DST |
           GPUBufferUsage.COPY_SRC,
       });
+      createdBuffers.push(carryPong);
 
       // xs buffer (stacked inputs)
       const xsBuffer = device.createBuffer({
@@ -494,6 +508,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         mappedAtCreation: true,
       });
+      createdBuffers.push(xsBuffer);
       const xsData = new Float32Array(xsBuffer.getMappedRange());
       // xs[0] = [1,1,1...], xs[1] = [2,2,2...], xs[2] = [3,3,3...]
       for (let iter = 0; iter < length; iter++) {
@@ -508,6 +523,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         size: ysSize,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
       });
+      createdBuffers.push(ysBuffer);
 
       // Initialize carry to zeros
       const initCarryData = new Float32Array(n * n);
@@ -521,6 +537,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         mappedAtCreation: true,
       });
+      createdBuffers.push(offsetBuffer);
       const offsetData = new Uint8Array(offsetBuffer.getMappedRange());
       const offsetView = new DataView(offsetData.buffer);
       for (let iter = 0; iter < length; iter++) {
@@ -582,6 +599,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         size: carrySize,
         usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
       });
+      createdBuffers.push(stagingBuffer);
       commandEncoder.copyBufferToBuffer(
         finalCarryBuffer,
         0,
@@ -595,6 +613,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         size: ysSize,
         usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
       });
+      createdBuffers.push(ysStagingBuffer);
       commandEncoder.copyBufferToBuffer(
         ysBuffer,
         0,
@@ -618,6 +637,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       );
       ysStagingBuffer.unmap();
 
+      // Make sure all GPU work is fully complete before destroying buffers.
+      // This reduces flakiness in Deno's WebGPU runtime when resources are
+      // created/destroyed frequently across multiple test files.
+      await device.queue.onSubmittedWorkDone();
+
       console.log("Final carry:", Array.from(finalCarryResult));
       console.log("ys[0]:", Array.from(ysResult.slice(0, 16)));
       console.log("ys[1]:", Array.from(ysResult.slice(16, 32)));
@@ -638,29 +662,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       console.log(
         "✓ End-to-end batched scan dispatch with uniform offsets works correctly!",
       );
-
-      // Cleanup
-      carryPing.destroy();
-      carryPong.destroy();
-      xsBuffer.destroy();
-      ysBuffer.destroy();
-      offsetBuffer.destroy();
-      stagingBuffer.destroy();
-      ysStagingBuffer.destroy();
     } catch (e: unknown) {
       if (
         e instanceof Error &&
         (e.message.includes("memory") || e.message.includes("invalid"))
       ) {
-        console.log(
-          "GPU resource error, skipping (jax-js device may be holding memory):",
-          e.message,
-        );
+        console.log("GPU resource error, skipping:", e.message);
         return;
       }
       throw e;
     } finally {
-      device.destroy();
+      // Don't destroy the shared jax-js device.
+      for (const b of createdBuffers) b.destroy();
     }
   },
 });
@@ -669,23 +682,10 @@ Deno.test({
   name: "batched scan - compile wrapped shader on GPU",
   ignore: !hasWebGPU,
   fn: async () => {
-    // Get GPU device directly
-    const adapter = await navigator.gpu.requestAdapter();
-    if (!adapter) {
-      console.log("No GPU adapter, skipping");
+    const device = await getJaxJsWebGPUDevice();
+    if (!device) {
+      console.log("WebGPU not available in jax-js, skipping");
       return;
-    }
-    let device: GPUDevice;
-    try {
-      device = await adapter.requestDevice();
-    } catch (e: unknown) {
-      if (e instanceof Error && e.message.includes("memory")) {
-        console.log(
-          "Not enough GPU memory for separate device, skipping (jax-js device may be holding memory)",
-        );
-        return;
-      }
-      throw e;
     }
 
     // Create a simple shader and wrap it
@@ -745,8 +745,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     console.log(
       "✓ Pipeline has expected bind group layouts (group 0: storage, group 1: uniform)",
     );
-
-    // Cleanup GPU device
-    device.destroy();
   },
 });

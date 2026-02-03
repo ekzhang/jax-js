@@ -21,22 +21,26 @@ import {
   assertAlmostEquals,
 } from "https://deno.land/std@0.208.0/assert/mod.ts";
 
-// Import jax-js
-const jax = await import("../../src/index.ts");
-const { init, defaultDevice, numpy: np, lax, setDebug } = jax;
+// Import jax-js from dist to share backend with other tests
+import {
+  init,
+  defaultDevice,
+  numpy as np,
+  lax,
+  setDebug,
+} from "../../dist/index.js";
+
+// Import leak detection harness
+import { withLeakCheck } from "./harness.ts";
 
 // Enable debug logging to see which scan path is taken
-setDebug(2);
+// Disable debug logging to reduce noise (enable for debugging)
+// setDebug(2);
 
-Deno.test(
-  "sort-in-scan works on WebGPU (falls back to JS loop due to Sort using uniforms)",
-  async () => {
-    // Check WebGPU availability
-    if (!navigator.gpu) {
-      console.log("WebGPU not available, skipping");
-      return;
-    }
-
+Deno.test({
+  name: "sort-in-scan works on WebGPU (falls back to JS loop due to Sort using uniforms)",
+  ignore: !navigator.gpu,
+  fn: withLeakCheck(async () => {
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) {
       console.log("No WebGPU adapter, skipping");
@@ -108,56 +112,63 @@ Deno.test(
     assertAlmostEquals(outputsData[1], 1.0, 0.01);
     assertAlmostEquals(outputsData[2], 3.0, 0.01);
     assertAlmostEquals(outputsData[3], 4.0, 0.01);
-  },
-);
+  }),
+});
 
-Deno.test("matmul-in-scan falls back to JS loop (not a Routine)", async () => {
-  // This test verifies that matmul uses JS loop fallback since Dot is NOT a Routine
-  // (it's lowered to Mul→Reduce kernel)
+Deno.test({
+  name: "matmul-in-scan falls back to JS loop (not a Routine)",
+  ignore: !navigator.gpu,
+  fn: withLeakCheck(async () => {
+    // This test verifies that matmul uses JS loop fallback since Dot is NOT a Routine
+    // (it's lowered to Mul→Reduce kernel)
 
-  const availableDevices = await init();
-  if (!availableDevices.includes("webgpu")) {
-    console.log("WebGPU not available, skipping");
-    return;
-  }
+    const availableDevices = await init();
+    if (!availableDevices.includes("webgpu")) {
+      console.log("WebGPU not available, skipping");
+      return;
+    }
 
-  defaultDevice("webgpu");
+    defaultDevice("webgpu");
 
-  const step = (
-    carry: typeof np.Array.prototype,
-    x: typeof np.Array.prototype,
-  ): [typeof np.Array.prototype, typeof np.Array.prototype] => {
-    const newCarry = np.matmul(carry, x);
-    return [newCarry.ref, newCarry];
-  };
+    const step = (
+      carry: typeof np.Array.prototype,
+      x: typeof np.Array.prototype,
+    ): [typeof np.Array.prototype, typeof np.Array.prototype] => {
+      const newCarry = np.matmul(carry, x);
+      return [newCarry.ref, newCarry];
+    };
 
-  // 2x2 matrices: identity * sequence of matrices
-  const initCarry = np.eye(2);
-  const xs = np.array(
-    [
+    // 2x2 matrices: identity * sequence of matrices
+    const initCarry = np.eye(2);
+    const xs = np.array(
       [
-        [2, 0],
-        [0, 2],
-      ], // scale by 2
-      [
-        [1, 1],
-        [0, 1],
-      ], // shear
-    ],
-    "float32",
-  );
+        [
+          [2, 0],
+          [0, 2],
+        ], // scale by 2
+        [
+          [1, 1],
+          [0, 1],
+        ], // shear
+      ],
+      "float32",
+    );
 
-  console.log("Starting lax.scan with matmul body (should use JS loop)...");
-  const [finalCarry, outputs] = await lax.scan(step, initCarry, xs);
-  console.log("Scan completed");
+    console.log("Starting lax.scan with matmul body (should use JS loop)...");
+    const [finalCarry, outputs] = await lax.scan(step, initCarry, xs);
+    console.log("Scan completed");
 
-  // I * [[2,0],[0,2]] = [[2,0],[0,2]]
-  // [[2,0],[0,2]] * [[1,1],[0,1]] = [[2,2],[0,2]]
-  const finalData = await finalCarry.data();
-  console.log("Final carry data:", finalData);
+    // I * [[2,0],[0,2]] = [[2,0],[0,2]]
+    // [[2,0],[0,2]] * [[1,1],[0,1]] = [[2,2],[0,2]]
+    const finalData = await finalCarry.data();
+    console.log("Final carry data:", finalData);
 
-  assertAlmostEquals(finalData[0], 2.0, 0.01);
-  assertAlmostEquals(finalData[1], 2.0, 0.01);
-  assertAlmostEquals(finalData[2], 0.0, 0.01);
-  assertAlmostEquals(finalData[3], 2.0, 0.01);
+    assertAlmostEquals(finalData[0], 2.0, 0.01);
+    assertAlmostEquals(finalData[1], 2.0, 0.01);
+    assertAlmostEquals(finalData[2], 0.0, 0.01);
+    assertAlmostEquals(finalData[3], 2.0, 0.01);
+
+    // Consume outputs to avoid memory leak
+    await outputs.data();
+  }),
 });
