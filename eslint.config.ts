@@ -13,6 +13,9 @@ export default defineConfig([
     "tmp/",
     "test/deno/",
     "scripts/*.mjs",
+    // AssemblyScript files use TypeScript-like syntax but with different semantics
+    // (usize, i32, load<T>, store<T>, etc.) that ESLint's TS parser doesn't understand.
+    // These files are compiled to WASM, not executed as JS/TS.
     "src/routines/*.ts",
     "!src/routines/*.test.ts",
   ]),

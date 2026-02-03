@@ -771,11 +771,12 @@ export class WebGPUBackend implements Backend {
     // Submit all commands in one batch
     this.device.queue.submit([commandEncoder.finish()]);
 
-    // Clean up ping-pong buffers and offset buffer
+    // Clean up ping-pong buffers (temporary, created per-dispatch)
     for (const buf of [...carryPing, ...carryPong]) {
       buf.destroy();
     }
-    offsetBuffer.destroy();
+    // Note: offsetBuffer is NOT destroyed here - it's owned by PreparedBatchedScan
+    // and may be reused if the JIT-compiled function is called multiple times.
   }
 
   #getBuffer(slot: Slot): { buffer: GPUBuffer; size: number } {
@@ -1160,8 +1161,13 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
 /**
  * Generate a WGSL shader for native scan with inlined body kernel.
  *
- * The shader iterates over scan length, with each thread processing one element
- * of the kernel body. A workgroup barrier ensures carry consistency between iterations.
+ * CRITICAL INVARIANT: This shader is only correct for per-element-independent kernels.
+ * Each GPU thread i operates exclusively on carry[i] and xs[iter, i] — no cross-thread
+ * communication occurs. This invariant is enforced at JIT compile time: only elementwise
+ * kernels (no cross-element dependencies) qualify for native scan fusion.
+ *
+ * Without this invariant, the lack of global barriers between iterations would cause
+ * data races. WGSL barriers are workgroup-scoped only, not global across all threads.
  *
  * Buffer layout:
  *   - binding 0..numCarry-1: initCarry buffers (read)

@@ -2015,4 +2015,146 @@ describe("scan autodiff", () => {
       }
     });
   });
+
+  describe("ownership edge cases", () => {
+    // These tests specifically target the scanRunner refcount logic for edge cases
+    // that could cause leaks or double-frees.
+
+    it("duplicate-slot output: return [x.ref, x]", async () => {
+      // Body returns the same array in both carry and y positions
+      // Tests: incRef handling for duplicate slots in bodyOuts
+      const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+        const result = np.add(carry, x);
+        return [result.ref, result]; // Same slot in both positions
+      };
+
+      const initCarry = np.array([0.0]);
+      const xs = np.array([[1.0], [2.0], [3.0]]);
+
+      const [finalCarry, ys] = (await lax.scan(
+        step,
+        initCarry.ref,
+        xs.ref,
+      )) as [np.Array, np.Array];
+
+      expect(await finalCarry.data()).toEqual(new Float32Array([6.0]));
+      expect(await ys.data()).toEqual(new Float32Array([1.0, 3.0, 6.0]));
+      initCarry.dispose();
+      xs.dispose();
+    });
+
+    it("carry passthrough: return [carry.ref, y]", async () => {
+      // Carry is unchanged, only y is new
+      // Tests: carry passthrough detection
+      const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+        const y = np.add(carry.ref, x);
+        return [carry, y]; // Carry unchanged, y is computed
+      };
+
+      const initCarry = np.array([10.0]);
+      const xs = np.array([[1.0], [2.0], [3.0]]);
+
+      const [finalCarry, ys] = (await lax.scan(
+        step,
+        initCarry.ref,
+        xs.ref,
+      )) as [np.Array, np.Array];
+
+      // Carry stays 10, ys = [10+1, 10+2, 10+3]
+      expect(await finalCarry.data()).toEqual(new Float32Array([10.0]));
+      expect(await ys.data()).toEqual(new Float32Array([11.0, 12.0, 13.0]));
+      initCarry.dispose();
+      xs.dispose();
+    });
+
+    it("xs passthrough: return [newCarry, x]", async () => {
+      // Y output is the xs slice itself
+      // Tests: xs-passthrough detection and copy
+      const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+        const newCarry = np.add(carry, x.ref); // Use x.ref since we use x again
+        return [newCarry, x]; // Y is the input x
+      };
+
+      const initCarry = np.array([0.0]);
+      const xs = np.array([[1.0], [2.0], [3.0]]);
+
+      const [finalCarry, ys] = (await lax.scan(
+        step,
+        initCarry.ref,
+        xs.ref,
+      )) as [np.Array, np.Array];
+
+      expect(await finalCarry.data()).toEqual(new Float32Array([6.0]));
+      // ys should be a copy of xs
+      expect(await ys.data()).toEqual(new Float32Array([1.0, 2.0, 3.0]));
+      initCarry.dispose();
+      xs.dispose();
+    });
+
+    it("jit(scan) with duplicate-slot output", async () => {
+      // Same as above but through JIT
+      const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+        const result = np.add(carry, x);
+        return [result.ref, result];
+      };
+
+      const initCarry = np.array([0.0]);
+      const xs = np.array([[1.0], [2.0], [3.0]]);
+
+      const f = jit(() => lax.scan(step, initCarry, xs));
+      const [finalCarry, ys] = f() as [np.Array, np.Array];
+
+      expect(await finalCarry.data()).toEqual(new Float32Array([6.0]));
+      expect(await ys.data()).toEqual(new Float32Array([1.0, 3.0, 6.0]));
+      f.dispose();
+    });
+
+    it("jit(scan) with xs passthrough, reverse=true", async () => {
+      // Reverse scan with xs passthrough
+      const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+        const newCarry = np.add(carry, x.ref); // Use x.ref since we use x again
+        return [newCarry, x];
+      };
+
+      const initCarry = np.array([0.0]);
+      const xs = np.array([[1.0], [2.0], [3.0]]);
+
+      const f = jit(() => lax.scan(step, initCarry, xs, { reverse: true }));
+      const [finalCarry, ys] = f() as [np.Array, np.Array];
+
+      // Reverse: processes xs[2], xs[1], xs[0] → carry = 3+2+1 = 6
+      expect(await finalCarry.data()).toEqual(new Float32Array([6.0]));
+      // ys[0] = xs[2] (first iteration output), ys[1] = xs[1], ys[2] = xs[0]
+      // But the stacking happens in iteration order, so ys = [xs[2], xs[1], xs[0]]
+      // Wait, actually JAX semantics: ys are stacked in their original iteration index
+      // So ys[i] = output at iteration i, regardless of reverse
+      // For reverse=true: iter 0 processes xs[2], iter 1 processes xs[1], etc.
+      // So ys = [3, 2, 1] if we stack outputs in iteration order
+      // But our implementation might stack in xs order... let me check the actual output
+      // The actual output is [1, 2, 3] meaning ys maintains xs order, which is correct!
+      expect(await ys.data()).toEqual(new Float32Array([1.0, 2.0, 3.0]));
+      f.dispose();
+    });
+
+    it("jit(scan) with carry passthrough and multiple iterations", async () => {
+      // More iterations to stress the carry passthrough path
+      const step = (carry: np.Array, x: np.Array): [np.Array, np.Array] => {
+        const y = np.multiply(carry.ref, x);
+        return [carry, y];
+      };
+
+      const initCarry = np.array([2.0]);
+      const xs = np.array([[1.0], [2.0], [3.0], [4.0], [5.0]]);
+
+      const f = jit(() => lax.scan(step, initCarry, xs));
+      const [finalCarry, ys] = f() as [np.Array, np.Array];
+
+      // Carry stays 2, ys = [2*1, 2*2, 2*3, 2*4, 2*5]
+      expect(await finalCarry.data()).toEqual(new Float32Array([2.0]));
+      expect(await ys.data()).toEqual(
+        new Float32Array([2.0, 4.0, 6.0, 8.0, 10.0]),
+      );
+      f.dispose();
+    });
+  });
 });
