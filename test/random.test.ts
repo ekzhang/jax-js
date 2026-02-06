@@ -137,7 +137,7 @@ suite.each(devices)("device:%s", (device) => {
         const probs = [0.1, 0.2, 0.3, 0.4];
         const logits = np.log(np.array(probs));
         const samples: number[] = random
-          .categorical(key, logits, -1, [count])
+          .categorical(key, logits, { shape: [count] })
           .js();
 
         // Count occurrences of each category
@@ -173,7 +173,7 @@ suite.each(devices)("device:%s", (device) => {
           [0.0, 0.0, 10.0], // strongly prefer category 2
         ]);
         const count = 100;
-        const samples = random.categorical(key, logits, -1, [count, 2]);
+        const samples = random.categorical(key, logits, { shape: [count, 2] });
 
         expect(samples.shape).toEqual([count, 2]);
 
@@ -185,6 +185,64 @@ suite.each(devices)("device:%s", (device) => {
         }
       });
 
+      test("non-default axis", () => {
+        const key = random.key(123);
+        // Shape [3, 2]: 3 categories, 2 batches (axis=0 is categories)
+        const logits = np.array([
+          [10.0, 0.0], // category 0: strongly prefer for batch 0
+          [0.0, 10.0], // category 1: strongly prefer for batch 1
+          [0.0, 0.0], // category 2: low probability
+        ]);
+        const samples = random.categorical(key, logits, {
+          axis: 0,
+          shape: [100, 2],
+        });
+        expect(samples.shape).toEqual([100, 2]);
+
+        const js: number[][] = samples.js();
+        for (let i = 0; i < 100; i++) {
+          expect(js[i][0]).toEqual(0); // batch 0 picks category 0
+          expect(js[i][1]).toEqual(1); // batch 1 picks category 1
+        }
+      });
+
+      test("shape mismatch throws error", () => {
+        const key = random.key(999);
+        const logits = np.array([
+          [1.0, 2.0, 3.0],
+          [4.0, 5.0, 6.0],
+        ]); // shape [2, 3]
+
+        expect(() => {
+          random.categorical(key, logits, { shape: [10, 5] }); // suffix [5] != batchShape [2]
+        }).toThrow(/Incompatible array broadcast shapes|not broadcast-compatible/i);
+      });
+
+      test("shape doesn't dominate batch shape throws error", () => {
+        const key = random.key(998);
+        const logits = np.ones([4, 5]); // batchShape = [4] (axis=-1)
+
+        // [1] broadcasts with [4] → [4], but [4] != [1], so our error fires
+        expect(() => {
+          random.categorical(key, logits, { shape: [1] });
+        }).toThrow(/not broadcast-compatible/);
+      });
+
+      test("multi-dimensional shape prefix", () => {
+        const key = random.key(888);
+        const logits = np.array([1.0, 2.0, 3.0, 4.0, 5.0]); // 5 categories
+        const samples = random.categorical(key, logits, { shape: [2, 3] }); // 6 samples reshaped to [2,3]
+
+        expect(samples.shape).toEqual([2, 3]);
+        const js: number[][] = samples.js();
+        for (const row of js) {
+          for (const val of row) {
+            expect(val).toBeGreaterThanOrEqual(0);
+            expect(val).toBeLessThan(5);
+          }
+        }
+      });
+
       // Argsort not supported on webgl
       if (device !== "webgl") {
         test("without replacement returns unique samples", () => {
@@ -193,7 +251,7 @@ suite.each(devices)("device:%s", (device) => {
           const logits = np.array([1.0, 2.0, 3.0, 4.0, 5.0]);
 
           // Sample 3 without replacement
-          const samples = random.categorical(key, logits, -1, [3], false);
+          const samples = random.categorical(key, logits, { shape: [3], replace: false });
           expect(samples.shape).toEqual([3]);
 
           // All samples should be unique (no replacement)
@@ -214,10 +272,80 @@ suite.each(devices)("device:%s", (device) => {
 
           // Trying to sample 5 without replacement should fail
           expect(() => {
-            random.categorical(key, logits, -1, [5], false);
+            random.categorical(key, logits, { shape: [5], replace: false });
           }).toThrow(/cannot exceed/);
         });
+
+        test("batched without replacement", () => {
+          const key = random.key(777);
+          // 2 batches of 5 categories each
+          const logits = np.array([
+            [1.0, 2.0, 3.0, 4.0, 5.0],
+            [5.0, 4.0, 3.0, 2.0, 1.0],
+          ]);
+          const samples = random.categorical(key, logits, {
+            shape: [3, 2],
+            replace: false,
+          });
+
+          expect(samples.shape).toEqual([3, 2]);
+          const js: number[][] = samples.js();
+
+          // Each column (batch) should have unique values
+          const batch0 = js.map((row) => row[0]);
+          const batch1 = js.map((row) => row[1]);
+          expect(new Set(batch0).size).toEqual(3);
+          expect(new Set(batch1).size).toEqual(3);
+        });
+
+        test("k=numCategories samples all categories", () => {
+          const key = random.key(105);
+          const logits = np.array([1.0, 2.0, 3.0, 4.0, 5.0]);
+          const samples = random.categorical(key, logits, {
+            shape: [5],
+            replace: false,
+          });
+
+          expect(samples.shape).toEqual([5]);
+          const js: number[] = samples.js();
+          expect(js.toSorted((a, b) => a - b)).toEqual([0, 1, 2, 3, 4]);
+        });
+
+        test("multi-dimensional shape prefix without replacement", () => {
+          const key = random.key(106);
+          const logits = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]); // 6 categories
+          const samples = random.categorical(key, logits, {
+            shape: [2, 3],
+            replace: false,
+          });
+
+          expect(samples.shape).toEqual([2, 3]);
+          const flat: number[] = samples.ravel().js();
+          expect(flat.toSorted((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5]);
+        });
       }
+
+      test("3D logits and negative axis", () => {
+        const logits = np.ones([2, 5, 3]); // 5 categories at axis=1
+
+        // Default shape removes axis
+        const s1 = random.categorical(random.key(100), logits.ref, { axis: 1 });
+        expect(s1.shape).toEqual([2, 3]);
+
+        // With shape prefix
+        const s2 = random.categorical(random.key(101), logits.ref, {
+          axis: 1,
+          shape: [10, 2, 3],
+        });
+        expect(s2.shape).toEqual([10, 2, 3]);
+
+        // Negative axis (-2 means axis=1)
+        const s3 = random.categorical(random.key(102), logits.ref, {
+          axis: -2,
+          shape: [4, 2, 3],
+        });
+        expect(s3.shape).toEqual([4, 2, 3]);
+      });
     });
 
     test("cauchy distribution", () => {
