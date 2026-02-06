@@ -215,7 +215,9 @@ suite.each(devices)("device:%s", (device) => {
 
         expect(() => {
           random.categorical(key, logits, { shape: [10, 5] }); // suffix [5] != batchShape [2]
-        }).toThrow(/Incompatible array broadcast shapes|not broadcast-compatible/i);
+        }).toThrow(
+          /Incompatible array broadcast shapes|not broadcast-compatible/i,
+        );
       });
 
       test("shape doesn't dominate batch shape throws error", () => {
@@ -251,7 +253,10 @@ suite.each(devices)("device:%s", (device) => {
           const logits = np.array([1.0, 2.0, 3.0, 4.0, 5.0]);
 
           // Sample 3 without replacement
-          const samples = random.categorical(key, logits, { shape: [3], replace: false });
+          const samples = random.categorical(key, logits, {
+            shape: [3],
+            replace: false,
+          });
           expect(samples.shape).toEqual([3]);
 
           // All samples should be unique (no replacement)

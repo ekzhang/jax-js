@@ -23,7 +23,7 @@ import {
   sign,
   sqrt,
   stack,
-  tan
+  tan,
 } from "./numpy";
 import { cholesky } from "./numpy-linalg";
 
@@ -166,7 +166,11 @@ export const categorical = jit(
   function categorical(
     key: Array,
     logits: ArrayLike,
-    { axis = -1, shape, replace = true }: {
+    {
+      axis = -1,
+      shape,
+      replace = true,
+    }: {
       axis?: number;
       shape?: number[];
       replace?: boolean;
@@ -196,7 +200,7 @@ export const categorical = jit(
     } else {
       // Gumbel top-k trick: add noise once, use topK to get k samples
       const k = shapePrefix.reduce((a, b) => a * b, 1);
-      
+
       if (k > numCategories) {
         throw new Error(
           `Number of samples without replacement (${k}) cannot exceed ` +
