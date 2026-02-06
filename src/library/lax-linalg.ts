@@ -110,7 +110,10 @@ export function triangularSolve(
   } else {
     b = moveaxis(b, -2, -1);
   }
-  if (transposeA) a = moveaxis(a, -2, -1);
+  if (transposeA) {
+    a = moveaxis(a, -2, -1);
+    lower = !lower;
+  }
   let x = core.triangularSolve(a, b, { lower, unitDiagonal }) as Array;
   if (leftSide) x = moveaxis(x, -2, -1);
   return x;

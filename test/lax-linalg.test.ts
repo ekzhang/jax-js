@@ -246,5 +246,34 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
       }
       expect(db).toBeAllclose(expected, { rtol: 1e-2, atol: 1e-3 });
     });
+
+    test("behavior with transposed A", () => {
+      // See: https://github.com/ekzhang/jax-js/issues/73
+      const L = np.array([
+        [1, 1000000],
+        [1, 1],
+      ]);
+      const b = np.array([[1], [1]]);
+      const x = lax.linalg.triangularSolve(L, b, {
+        leftSide: true,
+        lower: true,
+        transposeA: true,
+      });
+      expect(x).toBeAllclose([[0], [1]]);
+    });
+
+    test("right-hand side triangular solve", () => {
+      // Solve x @ U = b
+      const U = np.array([
+        [2, 1],
+        [0, 3],
+      ]);
+      const b = np.array([[4, 7]]);
+      const x = lax.linalg.triangularSolve(U, b, {
+        leftSide: false,
+        lower: false,
+      });
+      expect(x).toBeAllclose([[2, 5 / 3]]);
+    });
   });
 });
