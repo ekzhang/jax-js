@@ -1,7 +1,14 @@
 // Port of the `jax.random` module.
 
+import { fudgeArray } from "../frontend/array";
+import * as core from "../frontend/core";
+import { bitcast, randomBits } from "../frontend/core";
+import { jit } from "../frontend/jaxpr";
+import { checkAxis, deepEqual, generalBroadcast } from "../utils";
 import {
   absolute,
+  argmax,
+  argsort,
   array,
   Array,
   ArrayLike,
@@ -11,6 +18,7 @@ import {
   einsum,
   log,
   log1p,
+  moveaxis,
   negative,
   sign,
   sqrt,
@@ -18,10 +26,6 @@ import {
   tan,
 } from "./numpy";
 import { cholesky } from "./numpy-linalg";
-import { fudgeArray } from "../frontend/array";
-import * as core from "../frontend/core";
-import { bitcast, randomBits } from "../frontend/core";
-import { jit } from "../frontend/jaxpr";
 
 function validateKeyShape(key: Array, scalar = false): number[] {
   if (key.ndim === 0) {
@@ -136,6 +140,81 @@ export function bernoulli(
   p = fudgeArray(p);
   return uniform(key, shape).less(p);
 }
+
+/**
+ * @function
+ * Sample random values from categorical distributions.
+ *
+ * Uses the Gumbel max trick for sampling with replacement, or the Gumbel top-k
+ * trick for sampling without replacement.
+ *
+ * Note: Sampling without replacement currently uses argsort and slices the last
+ * k elements. This should be replaced with a more efficient topK implementation.
+ *
+ * - `key` - PRNG key
+ * - `logits` - Unnormalized log probabilities of the categorical distribution(s).
+ *   `softmax(logits, axis)` gives the corresponding probabilities.
+ * - `axis` - Axis along which logits belong to the same categorical distribution.
+ * - `shape` - Result batch shape. Must be broadcast-compatible with
+ *   `logits.shape` with `axis` removed. Default is `logits.shape` with `axis` removed.
+ * - `replace` - If true (default), sample with replacement. If false, sample
+ *   without replacement (each category can only be selected once per batch).
+ * @returns A random array with int dtype and shape given by `shape` if provided,
+ *   otherwise `logits.shape` with `axis` removed.
+ */
+export const categorical = jit(
+  function categorical(
+    key: Array,
+    logits: ArrayLike,
+    {
+      axis = -1,
+      shape,
+      replace = true,
+    }: {
+      axis?: number;
+      shape?: number[];
+      replace?: boolean;
+    } = {},
+  ): Array {
+    logits = fudgeArray(logits);
+    axis = checkAxis(axis, logits.ndim);
+    const numCategories = logits.shape[axis];
+    const batchShape = logits.shape.toSpliced(axis, 1);
+
+    if (shape === undefined) {
+      shape = batchShape;
+    } else {
+      if (!deepEqual(generalBroadcast(shape, batchShape), shape)) {
+        throw new Error(
+          `Shape ${shape} is not broadcast-compatible with batch shape ${batchShape}.`,
+        );
+      }
+    }
+
+    const shapePrefix = shape.slice(0, shape.length - batchShape.length);
+
+    if (replace) {
+      // Gumbel-max trick: generate noise for full output shape + categories
+      const noise = gumbel(key, [...shapePrefix, ...logits.shape]);
+      return argmax(noise.add(logits), axis + shapePrefix.length);
+    } else {
+      // Gumbel top-k trick: add noise once, use topK to get k samples
+      const k = shapePrefix.reduce((a, b) => a * b, 1);
+
+      if (k > numCategories) {
+        throw new Error(
+          `Number of samples without replacement (${k}) cannot exceed ` +
+            `number of categories (${numCategories}).`,
+        );
+      }
+
+      const noise = gumbel(key, logits.shape);
+      const movedLogits = moveaxis(noise.add(logits), axis, 0);
+      return argsort(movedLogits, 0).slice([-k]).reshape(shape);
+    }
+  },
+  { staticArgnums: [2] },
+);
 
 /**
  * @function
