@@ -5,7 +5,8 @@
 
 const JsArray = globalThis.Array;
 
-import { Array, ArrayLike } from "../frontend/array";
+import { DType } from "../alu";
+import { Array, ArrayLike, fudgeArray, zerosLike } from "../frontend/array";
 import * as core from "../frontend/core";
 import { bind1, Primitive } from "../frontend/core";
 import { moveaxis, vmap } from "../frontend/vmap";
@@ -407,4 +408,44 @@ export function erfc(x: ArrayLike): Array {
  */
 export function stopGradient(x: ArrayLike): Array {
   return core.stopGradient(x) as Array;
+}
+
+/**
+ * Returns top `k` values and their indices along the specified axis of operand.
+ *
+ * This is a _stable_ algorithm: If two elements are equal, the lower-index
+ * element appears first.
+ *
+ * @returns A tuple of `(values, indices)`, where `values` and `indices` have
+ * the same shape as `x`, except along `axis` where they have size `k`.
+ */
+export function topK(
+  x: ArrayLike,
+  k: number,
+  axis: number = -1,
+): [Array, Array] {
+  x = fudgeArray(x);
+  axis = checkAxis(axis, x.ndim);
+  const size = x.shape[axis];
+
+  if (k < 0 || k > size)
+    throw new Error(`topK: k must be in the range [0, ${size}], got ${k}`);
+  if (k === 0) {
+    const outShape = x.shape.slice();
+    outShape[axis] = 0;
+    const y = zerosLike(x.ref, { shape: outShape });
+    const yi = zerosLike(x, { dtype: DType.Int32, shape: outShape });
+    return [y, yi];
+  }
+
+  // We want to sort it in descending order, therefore we reverse before and
+  // after argsort. This ensures that ties are resolved by smaller index.
+  x = core.flip(x, [axis]) as Array;
+  x = moveaxis(x, axis, -1) as Array;
+  const [y, yi] = core.argsort(x);
+  const extract = (a: core.Tracer) => {
+    a = a.slice(...rep(a.ndim - 1, [] as []), [-k]);
+    return core.flip(moveaxis(a, -1, axis), [axis]) as Array;
+  };
+  return [extract(y), extract(yi.neg().add(size - 1))];
 }

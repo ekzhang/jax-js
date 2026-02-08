@@ -21,6 +21,7 @@ export default defineConfig({
       enabled: false,
       provider: "v8",
     },
+    passWithNoTests: true,
     setupFiles: ["test/setup.ts"],
   },
 });

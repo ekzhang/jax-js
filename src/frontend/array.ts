@@ -138,6 +138,13 @@ export class PendingExecute {
 /** @inline */
 export type DTypeAndDevice = { dtype?: DType; device?: Device };
 
+/** @inline */
+export type DTypeShapeAndDevice = {
+  dtype?: DType;
+  shape?: number[];
+  device?: Device;
+};
+
 type ArrayConstructorArgs = {
   source: AluExp | Slot;
   st: ShapeTracker;
@@ -1340,18 +1347,18 @@ export function fullInternal(
   });
 }
 
-export function zerosLike(val: TracerValue, dtype?: DType): Array {
-  return fullLike(val, 0, dtype);
+export function zerosLike(val: TracerValue, opts?: DTypeShapeAndDevice): Array {
+  return fullLike(val, 0, opts);
 }
 
-export function onesLike(val: TracerValue, dtype?: DType): Array {
-  return fullLike(val, 1, dtype);
+export function onesLike(val: TracerValue, opts?: DTypeShapeAndDevice): Array {
+  return fullLike(val, 1, opts);
 }
 
 export function fullLike(
   val: TracerValue,
   fillValue: number | boolean | Array,
-  dtype?: DType,
+  { dtype, shape, device }: DTypeShapeAndDevice = {},
 ): Array {
   const aval = getAval(val);
   if (val instanceof Tracer) val.dispose();
@@ -1360,24 +1367,22 @@ export function fullLike(
     // expanding the array.
     throw new Error("numpy.fullLike() with array argument not implemented yet");
   }
-  const sa = new ShapedArray(aval.shape, dtype ?? aval.dtype, aval.weakType);
-  return fullInternal(sa, fillValue);
+  const sa = new ShapedArray(
+    shape ?? aval.shape,
+    dtype ?? aval.dtype,
+    aval.weakType && dtype === undefined,
+  );
+  return fullInternal(sa, fillValue, device);
 }
 
 /** Return a new array of given shape and type, filled with zeros. */
-export function zeros(
-  shape: number[],
-  { dtype, device }: DTypeAndDevice = {},
-): Array {
-  return full(shape, 0, { dtype, device });
+export function zeros(shape: number[], opts?: DTypeAndDevice): Array {
+  return full(shape, 0, opts);
 }
 
 /** Return a new array of given shape and type, filled with ones. */
-export function ones(
-  shape: number[],
-  { dtype, device }: DTypeAndDevice = {},
-): Array {
-  return full(shape, 1, { dtype, device });
+export function ones(shape: number[], opts?: DTypeAndDevice): Array {
+  return full(shape, 1, opts);
 }
 
 /** Return a new array of given shape and type, filled with `fill_value`. */

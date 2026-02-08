@@ -970,13 +970,17 @@ export abstract class Tracer {
    */
   argsort(axis: number = -1): this {
     axis = checkAxis(axis, this.ndim);
-    if (axis === this.ndim - 1) return argsort(this)[1] as this;
+    if (axis === this.ndim - 1) {
+      const [y, yi] = argsort(this);
+      y.dispose();
+      return yi as this;
+    }
     const perm = range(this.ndim);
     perm.splice(axis, 1);
     perm.push(axis);
-    return argsort(this.transpose(perm))[1].transpose(
-      invertPermutation(perm),
-    ) as this;
+    const [y, yi] = argsort(this.transpose(perm));
+    y.dispose();
+    return yi.transpose(invertPermutation(perm)) as this;
   }
 
   /**
