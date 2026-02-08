@@ -4,14 +4,14 @@ export function treeZerosLike(
   tr: JsTree<np.Array>,
   dtype?: DType,
 ): JsTree<np.Array> {
-  return tree.map((x: np.Array) => np.zerosLike(x, dtype), tr);
+  return tree.map((x: np.Array) => np.zerosLike(x, { dtype }), tr);
 }
 
 export function treeOnesLike(
   tr: JsTree<np.Array>,
   dtype?: DType,
 ): JsTree<np.Array> {
-  return tree.map((x: np.Array) => np.onesLike(x, dtype), tr);
+  return tree.map((x: np.Array) => np.onesLike(x, { dtype }), tr);
 }
 
 function ipow(a: np.Array, order: number) {

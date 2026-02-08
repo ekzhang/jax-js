@@ -6,6 +6,7 @@ import {
   Array,
   array,
   type ArrayLike,
+  DTypeShapeAndDevice,
   eye,
   fudgeArray,
   full,
@@ -205,7 +206,7 @@ export const shape = core.getShape as (x: ArrayLike) => number[];
  */
 export const zerosLike = zerosLikeTracer as (
   a: ArrayLike,
-  dtype?: DType,
+  opts?: DTypeShapeAndDevice,
 ) => Array;
 
 /**
@@ -214,7 +215,7 @@ export const zerosLike = zerosLikeTracer as (
  */
 export const onesLike = onesLikeTracer as (
   a: ArrayLike,
-  dtype?: DType,
+  opts?: DTypeShapeAndDevice,
 ) => Array;
 
 /**
@@ -224,7 +225,7 @@ export const onesLike = onesLikeTracer as (
 export const fullLike = fullLikeTracer as (
   a: ArrayLike,
   fillValue: number | boolean | Array,
-  dtype?: DType,
+  opts?: DTypeShapeAndDevice,
 ) => Array;
 
 /**
