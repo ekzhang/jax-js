@@ -305,7 +305,11 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
       dim.applyUnroll(dim.reduce, s);
     } else {
       // Partially unroll the reduce axis.
-      for (const splits of [8, 4]) {
+      //
+      // Note: Unrolling by 8 previously made this faster in January 2026, but
+      // in later versions of Chrome on macOS, it seems to have regressed 40%.
+      // Seems like 4 is a more stable choice at the moment.
+      for (const splits of [4, 2]) {
         if (s % splits === 0) {
           dim.applyUnroll(dim.unroll - 1, splits);
           break;
