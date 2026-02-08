@@ -5,10 +5,10 @@ import * as core from "../frontend/core";
 import { bitcast, randomBits } from "../frontend/core";
 import { jit } from "../frontend/jaxpr";
 import { checkAxis, deepEqual, generalBroadcast } from "../utils";
+import { topK } from "./lax";
 import {
   absolute,
   argmax,
-  argsort,
   array,
   Array,
   ArrayLike,
@@ -18,7 +18,6 @@ import {
   einsum,
   log,
   log1p,
-  moveaxis,
   negative,
   sign,
   sqrt,
@@ -209,8 +208,9 @@ export const categorical = jit(
       }
 
       const noise = gumbel(key, logits.shape);
-      const movedLogits = moveaxis(noise.add(logits), axis, 0);
-      return argsort(movedLogits, 0).slice([-k]).reshape(shape);
+      const [values, indices] = topK(noise.add(logits), k, axis);
+      values.dispose();
+      return indices.reshape(shape);
     }
   },
   { staticArgnums: [2] },
