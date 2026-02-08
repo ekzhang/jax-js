@@ -30,10 +30,15 @@ export class Routine {
 
 /** One of the valid `Routine` that can be dispatched to backend. */
 export enum Routines {
-  /** Stable sorting algorithm along the last axis. */
+  /**
+   * Sort along the last axis.
+   *
+   * This may be _unstable_ but it often doesn't matter, sorting numbers is
+   * bitwise unique up to signed zeros and NaNs.
+   */
   Sort = "Sort",
 
-  /** Returns `int32` indices of the stably sorted array. */
+  /** Stable sorting, returns `int32` indices and values of the sorted array. */
   Argsort = "Argsort",
 
   /**
@@ -128,7 +133,14 @@ function runArgsort(type: RoutineType, [x]: DataArray[], [y, yi]: DataArray[]) {
     const out = y.subarray(offset, offset + n);
     const outi = yi.subarray(offset, offset + n);
     for (let i = 0; i < n; i++) outi[i] = i;
-    outi.sort((a, b) => ar[a] - ar[b]);
+    outi.sort((a, b) => {
+      // Special cases: NaNs sort to end, and Infinities are equal.
+      const x = ar[a];
+      const y = ar[b];
+      if (isNaN(x)) return isNaN(y) ? 0 : 1;
+      if (isNaN(y)) return -1;
+      return x === y ? 0 : x < y ? -1 : 1;
+    });
     for (let i = 0; i < n; i++) out[i] = ar[outi[i]];
   }
 }

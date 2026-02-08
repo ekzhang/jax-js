@@ -86,8 +86,8 @@ export enum Primitive {
   Pad = "pad",
 
   // Routines (custom lowering)
-  Sort = "sort", // sort(x, axis=-1)
-  Argsort = "argsort", // argsort(x, axis=-1)
+  Sort = "sort", // sort(x, axis=-1), unstable
+  Argsort = "argsort", // argsort(x, axis=-1), stable
   TriangularSolve = "triangular_solve", // A is upper triangular, A @ X.T = B.T
   Cholesky = "cholesky", // A is positive-definite, A = L @ L^T
   LU = "lu", // LU decomposition with partial pivoting
@@ -962,8 +962,9 @@ export abstract class Tracer {
   }
 
   /**
-   * Return the indices that would sort an array. This may not be a stable
-   * sorting algorithm; it need not preserve order of indices in ties.
+   * Return the indices that would sort an array. Unlike `sort`, this is
+   * guaranteed to be a stable sorting algorithm; it always returns the smaller
+   * index first in event of ties.
    *
    * See `jax.numpy.argsort` for full docs.
    */

@@ -863,8 +863,9 @@ export function sort(a: ArrayLike, axis: number = -1): Array {
 }
 
 /**
- * Return indices that would sort an array. This may be an unstable sorting
- * algorithm; it need not preserve order of indices in ties.
+ * Return indices that would sort an array. Unlike `sort`, this is guaranteed to
+ * be a stable sorting algorithm; it always returns the smaller index first in
+ * event of ties.
  *
  * Returns an array of `int32` indices.
  *

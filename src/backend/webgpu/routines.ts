@@ -42,6 +42,10 @@ function bitonicSortUniform(pass: BitonicSortPass): Uint8Array<ArrayBuffer> {
  *   `2^(step+1)` with multiple workgroups. This doesn't use shared memory.
  *
  * The total number of passes is roughly `log2(n / workgroupSize)^2 / 2`.
+ *
+ * If `outputIndices` is true, the shader also tracks the original indices of
+ * the sorted elements (argsort) and outputs them to a separate buffer. This
+ * also makes the sorting algorithm stable.
  */
 function bitonicSortShader(
   device: GPUDevice,
@@ -99,18 +103,25 @@ ${
 fn compare_and_swap(i: u32, j: u32) {
   let val_i = shared_vals[i];
   let val_j = shared_vals[j];
-  if (compare(val_j, val_i)) {
-    shared_vals[i] = val_j;
-    shared_vals[j] = val_i;
 ${
   outputIndices
     ? `
+  if (
+    compare(val_j, val_i) ||
+    (!compare(val_i, val_j) && shared_idx[j] < shared_idx[i])
+  ) {
+    shared_vals[i] = val_j;
+    shared_vals[j] = val_i;
     let tmp_idx = shared_idx[i];
     shared_idx[i] = shared_idx[j];
-    shared_idx[j] = tmp_idx;`
-    : ""
+    shared_idx[j] = tmp_idx;
+  }`
+    : `
+  if (compare(val_j, val_i)) {
+    shared_vals[i] = val_j;
+    shared_vals[j] = val_i;
+  }`
 }
-  }
 }
 
 @compute @workgroup_size(${workgroupSize})
@@ -195,16 +206,20 @@ ${
     if (j < ${n}u) {
       let val_i = output[base + i];
       let val_j = output[base + j];
-      if (compare(val_j, val_i)) {
-        output[base + i] = val_j;
-        output[base + j] = val_i;
 ${
   outputIndices
     ? `
-        let tmp_idx = output_idx[base + i];
-        output_idx[base + i] = output_idx[base + j];
-        output_idx[base + j] = tmp_idx;`
-    : ""
+      let idx_i = output_idx[base + i];
+      let idx_j = output_idx[base + j];
+      if (compare(val_j, val_i) || (!compare(val_i, val_j) && idx_j < idx_i)) {
+        output[base + i] = val_j;
+        output[base + j] = val_i;
+        output_idx[base + i] = idx_j;
+        output_idx[base + j] = idx_i;`
+    : `
+      if (compare(val_j, val_i)) {
+        output[base + i] = val_j;
+        output[base + j] = val_i;`
 }
       }
     }

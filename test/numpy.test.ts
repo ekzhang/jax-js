@@ -2238,6 +2238,24 @@ suite.each(devices)("device:%s", (device) => {
         ]);
       });
 
+      test("is a stable sorting algorithm", () => {
+        const x = np.array([
+          3,
+          1,
+          1,
+          NaN,
+          Infinity,
+          2,
+          NaN,
+          1,
+          0,
+          -0,
+          Infinity,
+        ]);
+        const idx = np.argsort(x);
+        expect(idx.js()).toEqual([8, 9, 1, 2, 7, 5, 0, 4, 10, 3, 6]);
+      });
+
       test("produces zero gradient", () => {
         const x = np.array([3, 1, 2]);
         const f = (x: np.Array) => np.argsort(x).astype(np.float32).sum();
