@@ -230,7 +230,7 @@ export const gelu = jit(
           ).add(1),
         );
     } else {
-      return x.ref.mul(0.5).mul(erfc(negative(x.ref.mul(Math.SQRT1_2))));
+      return x.ref.mul(0.5).mul(erfc(negative(x.mul(Math.SQRT1_2))));
     }
   },
   { staticArgnums: [1] },

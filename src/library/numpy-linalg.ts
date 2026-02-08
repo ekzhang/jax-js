@@ -93,7 +93,7 @@ export function lstsq(a: ArrayLike, b: ArrayLike): Array {
       lower: true,
       transposeA: true,
     }); // (A @ A.T)^-1 @ B
-    return np.matmul(at, llb.ref); // A.T @ (A @ A.T)^-1 @ B
+    return np.matmul(at, llb); // A.T @ (A @ A.T)^-1 @ B
   } else {
     // Overdetermined system: (A.T @ A)^-1 @ A.T @ B
     const ata = np.matmul(at.ref, a); // A.T @ A, shape (N, N)
@@ -201,7 +201,7 @@ export function solve(a: ArrayLike, b: ArrayLike): Array {
     lower: true,
     unitDiagonal: true,
   });
-  let x = triangularSolve(lu, LPb.ref, { leftSide: true, lower: false });
+  let x = triangularSolve(lu, LPb, { leftSide: true, lower: false });
   if (bIs1d) {
     x = np.squeeze(x, -1);
   }

@@ -1333,7 +1333,7 @@ export { absolute as abs };
 /** Return an element-wise indication of sign of the input. */
 export function sign(x: ArrayLike): Array {
   x = fudgeArray(x);
-  return where(notEqual(x.ref, 0), where(less(x.ref, 0), -1, 1), 0);
+  return where(notEqual(x.ref, 0), where(less(x, 0), -1, 1), 0);
 }
 
 /** @function Return element-wise positive values of the input (no-op). */
