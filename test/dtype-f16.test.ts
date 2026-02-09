@@ -67,4 +67,18 @@ suite.each(devices)("device:%s", (device) => {
     expect(y.dtype).toBe(np.float16);
     expect(y).toBeAllclose([-0.1587, 0.0, 0.8413], { rtol: 1e-3 });
   });
+
+  test("f16 reductions are performed in f32", () => {
+    // dot() / matmul() should be performed in f32 by default
+    let x = np.array([100, 1, 1, 1, 1, 1, 1, 1, 1], { dtype: np.float16 });
+    let y = np.dot(x.ref, x);
+    expect(y.dtype).toBe(np.float16);
+    expect(y.dataSync()).toEqual(new Float16Array([10008]));
+
+    // sum() should also be performed in f32
+    x = np.array([16000, 1, 1, 1, 1, 1, 1, 1, 1], { dtype: np.float16 });
+    y = np.sum(x);
+    expect(y.dtype).toBe(np.float16);
+    expect(y.dataSync()).toEqual(new Float16Array([16008]));
+  });
 });

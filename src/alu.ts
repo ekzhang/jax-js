@@ -1484,6 +1484,16 @@ export class Reduction implements FpHashable {
       throw new TypeError(`Unsupported reduction: ${op}`);
     }
     this.epilogue = epilogue.simplify();
+
+    // If reducing in low-precision float with sum, do it in float32 instead.
+    // The tuning step will reconcile the mismatch between `kernel.exp` and
+    // `kernel.reduction.dtype` by inserting a cast.
+    if (this.dtype === DType.Float16 && this.op === AluOp.Add) {
+      this.epilogue = this.epilogue.substitute({
+        acc: AluExp.cast(this.dtype, AluVar.acc(DType.Float32)),
+      });
+      this.dtype = DType.Float32;
+    }
   }
 
   hash(state: FpHash): void {

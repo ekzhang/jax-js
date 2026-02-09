@@ -191,12 +191,16 @@ class TuneDims {
 
 /** Tuning step that does not apply any optimization. */
 export function tuneNullopt(kernel: Kernel): TuneResult {
+  let exp = kernel.exp;
   const vars: Record<string, AluExp> = {};
   vars.gidx = AluExp.special(DType.Int32, "gidx", kernel.size);
-  if (kernel.reduction)
+  if (kernel.reduction) {
     vars.ridx = AluExp.special(DType.Int32, "ridx", kernel.reduction.size);
+    if (exp.dtype !== kernel.reduction.dtype)
+      exp = AluExp.cast(kernel.reduction.dtype, exp);
+  }
   return {
-    exp: kernel.exp.substitute(vars).rewriteGlobalViews().simplify(),
+    exp: exp.substitute(vars).rewriteGlobalViews().simplify(),
     epilogue: kernel.reduction?.epilogue
       .substitute({ gidx: vars.gidx })
       .rewriteGlobalViews()
@@ -211,9 +215,10 @@ export function tuneNullopt(kernel: Kernel): TuneResult {
 
 /** Tuning for WebGPU kernels. */
 export function tuneWebgpu(kernel: Kernel): TuneResult {
-  const { exp, reduction } = kernel;
+  const reduction = kernel.reduction;
   if (!reduction) return tuneNullopt(kernel);
 
+  const exp = AluExp.cast(reduction.dtype, kernel.exp);
   const globalIndexes = exp.collect((exp) => exp.op === AluOp.GlobalIndex);
   if (globalIndexes.length > 0) {
     if (DEBUG >= 4)
