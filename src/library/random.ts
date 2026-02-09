@@ -63,9 +63,9 @@ export function key(seed: ArrayLike): Array {
   }
   // To match JAX, put the 32-bit seed into a 64-bit key like `[0, seed]`.
   const key = stack([0, seed]);
-  // Ensure the key is realized, so it doesn't generate a bunch of kernels
+  // HACK: Ensure the key is realized, so it doesn't generate a bunch of kernels
   // specialized to different constant key values.
-  key._realizeSource();
+  if (key instanceof Array) key._realizeSource();
   return key;
 }
 
