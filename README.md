@@ -45,11 +45,7 @@ way to get started on a blank HTML page.
 
 ## Examples
 
-Cool things that the community has made with jax-js:
-
-- [**tanh.xyz**: Interactive ML visualizations](https://tanh.xyz/)
-
-And some more demos on the official website.
+Demos on the jax-js website:
 
 - [Training neural networks on MNIST](https://jax-js.com/mnist)
 - [Voice cloning: Kyutai Pocket TTS](https://jax-js.com/tts)
@@ -59,6 +55,10 @@ And some more demos on the official website.
 - [Matmul benchmark](https://jax-js.com/bench/matmul)
 - [Conv2d benchmark](https://jax-js.com/bench/conv2d)
 - [Mandelbrot set](https://jax-js.com/mandelbrot)
+
+And some cool things made by the community:
+
+- [**tanh.xyz**: Interactive ML visualizations](https://tanh.xyz/)
 
 ## Feature comparison
 
