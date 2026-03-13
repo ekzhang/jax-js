@@ -7,12 +7,8 @@ on:
 
 jobs:
   build-test:
-    name: Build, lint and test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    name: Build, lint and test
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -34,6 +30,38 @@ jobs:
       - run: pnpm exec playwright install chromium
 
       - run: pnpm test
+
+  platform-test:
+    name: Platform tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - run: pnpm exec playwright install
+
+      - name: Browser test - Chrome
+        run: pnpm test
+
+      - name: Browser test - Firefox
+        run: BROWSER=firefox pnpm test
+
+      - name: Browser test - Safari
+        run: BROWSER=webkit pnpm test
 
       - uses: denoland/setup-deno@v2
         with:
