@@ -22,9 +22,8 @@ export default defineConfig({
         launchOptions: {
           args: ["--headless=new", "--no-sandbox"], // Chromium
           firefoxUserPrefs: {
-            "dom.webgpu.enabled": true,
-            "gfx.webgpu.force-enabled": true,
-            "gfx.webgpu.ignore-blocklist": true, // Bypasses the blocklist
+            // GitHub Actions does not have WebGPU for Firefox, throws UnsupportedError.
+            "dom.webgpu.enabled": !process.env.GITHUB_ACTIONS,
           },
         },
       }),
