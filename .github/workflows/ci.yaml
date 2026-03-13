@@ -27,7 +27,7 @@ jobs:
 
       - run: pnpm lint --max-warnings 0
 
-      - run: pnpm exec playwright install chromium-headless-shell
+      - run: pnpm exec playwright install chromium
 
       - run: pnpm test
 

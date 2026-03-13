@@ -51,13 +51,13 @@
   "devDependencies": {
     "@eslint/js": "^9.31.0",
     "@types/debug": "^4.1.12",
-    "@vitest/browser-playwright": "^4.0.9",
-    "@vitest/coverage-v8": "4.0.9",
+    "@vitest/browser-playwright": "^4.1.0",
+    "@vitest/coverage-v8": "^4.1.0",
     "@webgpu/types": "^0.1.68",
     "eslint": "^9.31.0",
     "eslint-plugin-import": "^2.32.0",
     "globals": "^16.0.0",
-    "playwright": "~1.52.0",
+    "playwright": "~1.58.2",
     "prettier": "^3.6.2",
     "prettier-plugin-svelte": "^3.4.0",
     "tsdown": "^0.13.2",
@@ -66,9 +66,9 @@
     "typedoc-theme-fresh": "^0.2.3",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
-    "vitest": "^4.0.9"
+    "vitest": "^4.1.0"
   },
-  "packageManager": "pnpm@10.22.0",
+  "packageManager": "pnpm@10.32.1",
   "engines": {
     "pnpm": ">=10.0.0"
   },

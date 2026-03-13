@@ -291,4 +291,12 @@ suite.each(devices)("device:%s", (device) => {
       2147483647, -2147483648, 2147483647, -2147483648, 100000, -100000,
     ]);
   });
+
+  test("cast saturates from large f32 -> u32", () => {
+    const a = array([1e20, -1e20, 1e10, -1e10, 1e5, -1e5], {
+      dtype: DType.Float32,
+    });
+    const b = a.astype(DType.Uint32);
+    expect(b.js()).toEqual([4294967295, 0, 4294967295, 0, 100000, 0]);
+  });
 });

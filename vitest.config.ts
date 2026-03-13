@@ -8,11 +8,19 @@ export default defineConfig({
     },
   },
   test: {
+    isolate: false,
     browser: {
       enabled: true,
-      headless: true,
+      // Explicitly set to false, but enabled in "args" below. We don't want to
+      // use the `chromium-headless-shell` build because that is not compiled
+      // with WebGPU support.
+      headless: false,
       screenshotFailures: false,
-      provider: playwright(),
+      provider: playwright({
+        launchOptions: {
+          args: ["--headless=new", "--no-sandbox"],
+        },
+      }),
       // https://vitest.dev/config/browser/playwright.html
       instances: [{ browser: "chromium" }],
     },
