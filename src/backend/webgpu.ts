@@ -24,6 +24,7 @@ import {
   constToWgsl,
   dtypeToWgsl,
   headerWgsl,
+  maxValueWgsl,
   ShaderInfo,
 } from "./webgpu/codegen";
 import { SyncReader } from "./webgpu/reader";
@@ -456,9 +457,31 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
         else if (op === AluOp.Reciprocal) source = `(1.0 / ${a})`;
         else if (op === AluOp.Floor) source = `floor(${strip1(a)})`;
         else if (op === AluOp.Ceil) source = `ceil(${strip1(a)})`;
-        else if (op === AluOp.Cast)
-          source = `${dtypeToWgsl(dtype)}(${strip1(a)})`;
-        else if (op === AluOp.Bitcast)
+        else if (op === AluOp.Cast) {
+          const srcTy = dtypeToWgsl(src[0].dtype);
+          const dstTy = dtypeToWgsl(dtype);
+          if (
+            isFloatDtype(src[0].dtype) &&
+            !(isFloatDtype(dtype) || dtype === DType.Bool)
+          ) {
+            // Edge case: Float->Int conversion with saturating upper bound.
+            //
+            // Because of the [WGSL spec](https://www.w3.org/TR/WGSL/#floating-point-conversion),
+            // we need to work around strange type conversion behaviors for correctness when
+            // converting large floats to integers. Hopefully the compiler understands.
+            //
+            // - 1e20f converted to u32 is the largest float value representable in u32, 4294967040u
+            //   Note this is smaller than the maximum u32 value 4294967295u
+            // - 1e20f converted to i32 is the maximum i32 value, 2147483520i
+            //   Note this is smaller than the maximum i32 value 2147483647i
+            const maxVal = maxValueWgsl(dtype);
+            const x = isGensym(a) ? a : gensym();
+            if (x !== a) emit(`let ${x}: ${srcTy} = ${strip1(a)};`);
+            source = `select(${dstTy}(${x}), ${maxVal}, ${x} >= ${srcTy}(${maxVal}))`;
+          } else {
+            source = `${dstTy}(${strip1(a)})`;
+          }
+        } else if (op === AluOp.Bitcast)
           source = `bitcast<${dtypeToWgsl(dtype)}>(${strip1(a)})`;
       }
     } else if (op === AluOp.Where) {

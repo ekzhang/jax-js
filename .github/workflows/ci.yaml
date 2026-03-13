@@ -27,13 +27,17 @@ jobs:
 
       - run: pnpm lint --max-warnings 0
 
-      - run: pnpm exec playwright install chromium-headless-shell
+      - run: pnpm exec playwright install chromium
 
       - run: pnpm test
 
   platform-test:
-    name: Platform test
-    runs-on: ubuntu-latest
+    name: Platform tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+      fail-fast: false
     steps:
       - uses: actions/checkout@v4
 
@@ -44,13 +48,25 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: latest
-
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm build
+
+      - run: pnpm exec playwright install
+
+      - name: Browser test - Chrome
+        run: pnpm test
+
+      - name: Browser test - Firefox
+        run: BROWSER=firefox pnpm test
+
+      - name: Browser test - Safari
+        if: runner.os == 'macOS'
+        run: BROWSER=webkit pnpm test
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: latest
 
       - name: "Node.js platform tests"
         run: |
