@@ -23,6 +23,7 @@ export default defineConfig({
           args: ["--headless=new", "--no-sandbox"], // Chromium
           firefoxUserPrefs: {
             "dom.webgpu.enabled": true,
+            "gfx.webgpu.force-enabled": true,
             "gfx.webgpu.ignore-blocklist": true, // Bypasses the blocklist
           },
         },
