@@ -18,7 +18,12 @@ export default defineConfig({
       screenshotFailures: false,
       provider: playwright({
         launchOptions: {
-          args: ["--headless=new", "--no-sandbox"],
+          args: [
+            "--headless=new",
+            "--no-sandbox",
+            "--enable-unsafe-webgpu", // for Linux
+            "--enable-features=Vulkan", // for Linux
+          ],
         },
       }),
       // https://vitest.dev/config/browser/playwright.html
