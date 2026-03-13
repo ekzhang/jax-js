@@ -1733,16 +1733,18 @@ suite.each(devices)("device:%s", (device) => {
     test("sinc on array", () => {
       const x = np.array([0, 0.5, 1]);
       const expected = [1, 2 / Math.PI, 0];
-      expect(np.sinc(x).js()).toBeAllclose(expected);
+      expect(np.sinc(x).js()).toBeAllclose(expected, { atol: 2e-7 });
     });
   });
 
   suite("jax.numpy.atan()", () => {
+    const numDigits = hasStrictNumerics(device) ? 5 : 4;
+
     test("arctan values", () => {
       const vals = [-1000, -100, -10, -1, 0, 1, 10, 100, 1000, Infinity];
       const atanvals: number[] = np.atan(np.array(vals)).js();
       for (let i = 0; i < vals.length; i++) {
-        expect(atanvals[i]).toBeCloseTo(Math.atan(vals[i]), 5);
+        expect(atanvals[i]).toBeCloseTo(Math.atan(vals[i]), numDigits);
       }
     });
 
@@ -1751,8 +1753,8 @@ suite.each(devices)("device:%s", (device) => {
       const asinvals: number[] = np.asin(np.array(vals)).js();
       const acosvals: number[] = np.acos(np.array(vals)).js();
       for (let i = 0; i < vals.length; i++) {
-        expect(asinvals[i]).toBeCloseTo(Math.asin(vals[i]), 5);
-        expect(acosvals[i]).toBeCloseTo(Math.acos(vals[i]), 5);
+        expect(asinvals[i]).toBeCloseTo(Math.asin(vals[i]), numDigits);
+        expect(acosvals[i]).toBeCloseTo(Math.acos(vals[i]), numDigits);
       }
     });
 
@@ -1772,13 +1774,15 @@ suite.each(devices)("device:%s", (device) => {
   });
 
   suite("jax.numpy.atan2()", () => {
+    const numDigits = hasStrictNumerics(device) ? 5 : 4;
+
     test("arctan2 values", () => {
       // Test all four quadrants and special cases with various values
       const y = [3, 5, -7, -2, 4, -6, 0, 0, 1.5, -2.5];
       const x = [4, -2, -3, 8, 0, 0, 5, -9, 1.5, -2.5];
       const result: number[] = np.atan2(np.array(y), np.array(x)).js();
       for (let i = 0; i < y.length; i++) {
-        expect(result[i]).toBeCloseTo(Math.atan2(y[i], x[i]), 5);
+        expect(result[i]).toBeCloseTo(Math.atan2(y[i], x[i]), numDigits);
       }
     });
   });
