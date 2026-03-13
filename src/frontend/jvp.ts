@@ -328,6 +328,7 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     // So: A @ dX.T = dB.T - dA @ X.T
     // Therefore: dX.T = A^-1 @ (dB.T - dA @ X.T)
     const x = triangularSolve(a.ref, b, { unitDiagonal }); // (A^-1 @ B.T).T
+    da = unitDiagonal ? triu(da as any, 1) : triu(da as any); // get the relevant part of da
     const dax = batchMatmulT(da, x.ref); // dA @ X.T
     const rhsT = db.sub(mT(dax)); // (dB.T - dA @ X.T).T
     const dx = triangularSolve(a, rhsT, { unitDiagonal });

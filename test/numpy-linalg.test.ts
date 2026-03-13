@@ -63,6 +63,22 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
       expect(identity).toBeAllclose(np.eye(2));
     });
 
+    test("gradient of inv sum matches JAX", () => {
+      const a = np.array([
+        [2.0, 1.0],
+        [1.0, 3.0],
+      ]);
+      const f = (a: np.Array) => np.linalg.inv(a).sum();
+      const da = grad(f)(a);
+      expect(da).toBeAllclose(
+        [
+          [-0.16, -0.08],
+          [-0.08, -0.04],
+        ],
+        { atol: 1e-4 },
+      );
+    });
+
     test("computes inverse of batched matrices", () => {
       const a = random.uniform(random.key(0), [2, 3, 4, 4]);
       const aInv = np.linalg.inv(a.ref);
