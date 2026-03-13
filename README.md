@@ -43,6 +43,22 @@ way to get started on a blank HTML page.
 </script>
 ```
 
+### Platforms
+
+This table refers to latest versions of each browser. WebGPU has gained wide support in browsers as
+of late 2025.
+
+| Platform            | CPU (Wasm) | GPU (WebGPU)   | GPU (WebGL) |
+| ------------------- | ---------- | -------------- | ----------- |
+| Chrome / Edge       | ✅         | ✅             | ✅          |
+| Firefox             | ✅         | ✅ - macOS 26+ | ✅          |
+| Safari              | ✅         | ✅ - macOS 26+ | ✅          |
+| iOS                 | ✅         | ✅ - iOS 26+   | ✅          |
+| Chrome for Android  | ✅         | ✅             | ✅          |
+| Firefox for Android | ✅         | ❌             | ✅          |
+| Node.js             | ✅         | ❌             | ❌          |
+| Deno                | ✅         | ✅ - async     | ❌          |
+
 ## Examples
 
 Demos on the jax-js website:

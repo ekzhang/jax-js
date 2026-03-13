@@ -33,6 +33,15 @@ export class SyncReader {
   constructor(readonly device: GPUDevice) {}
 
   #init() {
+    // Some platforms, such as Deno do not support `OffscreenCanvas`. Add an
+    // error message to make this clear.
+    if (typeof OffscreenCanvas === "undefined") {
+      throw new Error(
+        "OffscreenCanvas is not available in this environment, so you cannot " +
+          "read data from WebGPU synchronously. Consider using the async API.",
+      );
+    }
+
     const makeCanvas = () =>
       new OffscreenCanvas(SyncReader.width, SyncReader.height);
     this.deviceStorage = SyncReader.alphaModes.map(makeCanvas);
