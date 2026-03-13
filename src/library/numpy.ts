@@ -895,23 +895,33 @@ export function take(
   return core.gather(a, [indices], [axis], axis) as Array;
 }
 
-/** Return if two arrays are element-wise equal within a tolerance. */
+/**
+ * Return if two arrays are element-wise equal within a tolerance.
+ *
+ * The formula used is `|actual - expected| <= atol + rtol * |expected|`, with
+ * NaN values comparing equal if `equalNaN` is true.
+ */
 export function allclose(
   actual: Parameters<typeof array>[0],
   expected: Parameters<typeof array>[0],
-  options?: { rtol?: number; atol?: number },
+  options?: { rtol?: number; atol?: number; equalNaN?: boolean },
 ): boolean {
-  const { rtol = 1e-5, atol = 1e-7 } = options ?? {};
+  const { rtol = 1e-5, atol = 1e-7, equalNaN = false } = options ?? {};
 
   const x = array(actual);
   const y = array(expected);
   if (!deepEqual(x.shape, y.shape)) {
     return false;
   }
+
   const xData = x.dataSync();
   const yData = y.dataSync();
   for (let i = 0; i < xData.length; i++) {
-    if (isNaN(xData[i]) !== isNaN(yData[i])) {
+    if (
+      equalNaN
+        ? isNaN(xData[i]) !== isNaN(yData[i])
+        : isNaN(xData[i]) || isNaN(yData[i])
+    ) {
       return false;
     }
     if (Math.abs(xData[i] - yData[i]) > atol + rtol * Math.abs(yData[i])) {

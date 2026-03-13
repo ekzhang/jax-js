@@ -70,13 +70,25 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
       ]);
       const f = (a: np.Array) => np.linalg.inv(a).sum();
       const da = grad(f)(a);
-      expect(da).toBeAllclose(
+      expect(da).toBeAllclose([
+        [-0.16, -0.08],
+        [-0.08, -0.04],
+      ]);
+    });
+
+    test("inv preserves input dtype", () => {
+      const dtype = device === "webgpu" ? np.float16 : np.float64;
+      const a = np.array(
         [
-          [-0.16, -0.08],
-          [-0.08, -0.04],
+          [2, 1],
+          [1, 3],
         ],
-        { atol: 1e-4 },
+        { dtype },
       );
+      const aInv = np.linalg.inv(a.ref);
+      expect(aInv.dtype).toBe(dtype);
+      const identity = np.matmul(a, aInv);
+      expect(identity).toBeAllclose(np.eye(2), { rtol: 0, atol: 1e-3 });
     });
 
     test("computes inverse of batched matrices", () => {
@@ -84,8 +96,25 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
       const aInv = np.linalg.inv(a.ref);
       const identity = np.matmul(a, aInv);
       expect(identity).toBeAllclose(np.broadcastTo(np.eye(4), [2, 3, 4, 4]), {
+        rtol: 0,
         atol: 1e-4,
       });
+    });
+  });
+
+  suite("numpy.linalg.matrixPower()", () => {
+    test("matrixPower(A, 0) preserves input dtype", () => {
+      const dtype = device === "webgpu" ? np.float16 : np.float64;
+      const a = np.array(
+        [
+          [2, 1],
+          [1, 3],
+        ],
+        { dtype },
+      );
+      const result = np.linalg.matrixPower(a, 0);
+      expect(result.dtype).toBe(dtype);
+      expect(result).toBeAllclose(np.eye(2), { rtol: 0, atol: 1e-3 });
     });
   });
 

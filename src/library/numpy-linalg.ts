@@ -56,7 +56,7 @@ export { diagonal } from "./numpy";
 export function inv(a: ArrayLike): Array {
   a = fudgeArray(a);
   const n = checkSquare("inv", a);
-  return solve(a, np.eye(n));
+  return solve(a, np.eye(n, undefined, { dtype: a.dtype }));
 }
 
 /**
@@ -118,8 +118,9 @@ export function matrixPower(a: ArrayLike, n: number): Array {
   a = fudgeArray(a);
   const m = checkSquare("matrixPower", a);
   if (n === 0) {
+    const dtype = a.dtype;
     a.dispose();
-    return np.broadcastTo(np.eye(m), a.shape);
+    return np.broadcastTo(np.eye(m, undefined, { dtype }), a.shape);
   }
   if (n < 0) {
     a = inv(a);

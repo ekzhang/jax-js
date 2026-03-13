@@ -1326,7 +1326,9 @@ suite.each(devices)("device:%s", (device) => {
       const x = np.array([-8, -1, 0, 1, 8]);
       const [y, dy] = jvp(np.cbrt, [x], [np.ones([5])]);
       expect(y).toBeAllclose([-2, -1, 0, 1, 2]);
-      expect(dy).toBeAllclose([1 / 12, 1 / 3, NaN, 1 / 3, 1 / 12]);
+      expect(dy).toBeAllclose([1 / 12, 1 / 3, NaN, 1 / 3, 1 / 12], {
+        equalNaN: true,
+      });
     });
   });
 
