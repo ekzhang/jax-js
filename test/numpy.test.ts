@@ -10,6 +10,8 @@ import {
 } from "@jax-js/jax";
 import { beforeEach, expect, onTestFinished, suite, test } from "vitest";
 
+import { hasStrictNumerics } from "./setup";
+
 const devicesAvailable = await init();
 
 suite.each(devices)("device:%s", (device) => {
@@ -1322,14 +1324,16 @@ suite.each(devices)("device:%s", (device) => {
       expect(y).toBeAllclose([-2, -1, 0, 1, 2]);
     });
 
-    test("works with jvp", () => {
-      const x = np.array([-8, -1, 0, 1, 8]);
-      const [y, dy] = jvp(np.cbrt, [x], [np.ones([5])]);
-      expect(y).toBeAllclose([-2, -1, 0, 1, 2]);
-      expect(dy).toBeAllclose([1 / 12, 1 / 3, NaN, 1 / 3, 1 / 12], {
-        equalNaN: true,
+    if (hasStrictNumerics(device)) {
+      test("works with jvp", () => {
+        const x = np.array([-8, -1, 0, 1, 8]);
+        const [y, dy] = jvp(np.cbrt, [x], [np.ones([5])]);
+        expect(y).toBeAllclose([-2, -1, 0, 1, 2]);
+        expect(dy).toBeAllclose([1 / 12, 1 / 3, NaN, 1 / 3, 1 / 12], {
+          equalNaN: true,
+        });
       });
-    });
+    }
   });
 
   suite("jax.numpy.power()", () => {
@@ -1351,10 +1355,12 @@ suite.each(devices)("device:%s", (device) => {
       expect(z.js()).toEqual([NaN, NaN, NaN]);
     });
 
-    test("power of zero", () => {
-      const y = np.power(0, np.array([-2, -1, 0, 0.5, 1, 2]));
-      expect(y.js()).toEqual([Infinity, Infinity, NaN, 0, 0, 0]);
-    });
+    if (hasStrictNumerics(device)) {
+      test("power of zero", () => {
+        const y = np.power(0, np.array([-2, -1, 0, 0.5, 1, 2]));
+        expect(y.js()).toEqual([Infinity, Infinity, NaN, 0, 0, 0]);
+      });
+    }
   });
 
   suite("jax.numpy.min()", () => {

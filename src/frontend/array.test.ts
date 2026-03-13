@@ -2,6 +2,7 @@ import { beforeEach, expect, suite, test } from "vitest";
 
 import { defaultDevice, devices, init } from "../backend";
 import { arange, array, eye, ones, zeros } from "./array";
+import { hasStrictNumerics } from "../../test/setup";
 import { DType } from "../alu";
 
 const devicesAvailable = await init();
@@ -282,21 +283,23 @@ suite.each(devices)("device:%s", (device) => {
     expect(b.js()).toEqual([1, 2, 3]);
   });
 
-  test("cast saturates from large f32 -> i32", () => {
-    const a = array([1e20, -1e20, 1e10, -1e10, 1e5, -1e5], {
-      dtype: DType.Float32,
+  if (hasStrictNumerics(device)) {
+    test("cast saturates from large f32 -> i32", () => {
+      const a = array([1e20, -1e20, 1e10, -1e10, 1e5, -1e5], {
+        dtype: DType.Float32,
+      });
+      const b = a.astype(DType.Int32);
+      expect(b.js()).toEqual([
+        2147483647, -2147483648, 2147483647, -2147483648, 100000, -100000,
+      ]);
     });
-    const b = a.astype(DType.Int32);
-    expect(b.js()).toEqual([
-      2147483647, -2147483648, 2147483647, -2147483648, 100000, -100000,
-    ]);
-  });
 
-  test("cast saturates from large f32 -> u32", () => {
-    const a = array([1e20, -1e20, 1e10, -1e10, 1e5, -1e5], {
-      dtype: DType.Float32,
+    test("cast saturates from large f32 -> u32", () => {
+      const a = array([1e20, -1e20, 1e10, -1e10, 1e5, -1e5], {
+        dtype: DType.Float32,
+      });
+      const b = a.astype(DType.Uint32);
+      expect(b.js()).toEqual([4294967295, 0, 4294967295, 0, 100000, 0]);
     });
-    const b = a.astype(DType.Uint32);
-    expect(b.js()).toEqual([4294967295, 0, 4294967295, 0, 100000, 0]);
-  });
+  }
 });

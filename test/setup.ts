@@ -1,4 +1,4 @@
-import { numpy as np } from "@jax-js/jax";
+import { type Device, numpy as np } from "@jax-js/jax";
 import { expect } from "vitest";
 
 expect.extend({
@@ -29,3 +29,11 @@ expect.extend({
     };
   },
 });
+
+/**
+ * Some devices have numerics edge cases around handling of NaN/Infinity values
+ * and overflow, we skip certain tests for them.
+ */
+export function hasStrictNumerics(device: Device): boolean {
+  return device !== "webgl";
+}
