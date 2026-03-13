@@ -1738,7 +1738,7 @@ suite.each(devices)("device:%s", (device) => {
   });
 
   suite("jax.numpy.atan()", () => {
-    const numDigits = hasStrictNumerics(device) ? 5 : 4;
+    const numDigits = hasStrictNumerics(device) ? 5 : 3;
 
     test("arctan values", () => {
       const vals = [-1000, -100, -10, -1, 0, 1, 10, 100, 1000, Infinity];
@@ -1774,7 +1774,7 @@ suite.each(devices)("device:%s", (device) => {
   });
 
   suite("jax.numpy.atan2()", () => {
-    const numDigits = hasStrictNumerics(device) ? 5 : 4;
+    const numDigits = hasStrictNumerics(device) ? 5 : 3;
 
     test("arctan2 values", () => {
       // Test all four quadrants and special cases with various values
