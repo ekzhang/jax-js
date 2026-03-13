@@ -20,8 +20,11 @@ export default defineConfig({
       screenshotFailures: false,
       provider: playwright({
         launchOptions: {
-          args:
-            BROWSER === "chromium" ? ["--headless=new", "--no-sandbox"] : [],
+          args: ["--headless=new", "--no-sandbox"], // Chromium
+          firefoxUserPrefs: {
+            "dom.webgpu.enabled": true,
+            "gfx.webgpu.ignore-blocklist": true, // Bypasses the blocklist
+          },
         },
       }),
       // https://vitest.dev/config/browser/playwright.html

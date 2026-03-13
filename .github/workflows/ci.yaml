@@ -61,6 +61,7 @@ jobs:
         run: BROWSER=firefox pnpm test
 
       - name: Browser test - Safari
+        if: runner.os == 'macOS'
         run: BROWSER=webkit pnpm test
 
       - uses: denoland/setup-deno@v2
