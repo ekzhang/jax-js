@@ -158,7 +158,7 @@ Most operations behave the same way as they do in JAX.
 | `atleast_1d`          | ⚪️      | confusing, use `reshape`                |
 | `atleast_2d`          | ⚪️      | confusing, use `reshape`                |
 | `atleast_3d`          | ⚪️      | confusing, use `reshape`                |
-| `average`             | 🟠      | `mean` is supported                     |
+| `average`             | 🟢      |                                         |
 | `bartlett`            | 🟠      |                                         |
 | `bincount`            | 🟠      |                                         |
 | `bitwise_and`         | 🔴      |                                         |

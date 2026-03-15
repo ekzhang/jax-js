@@ -42,6 +42,50 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.average()", () => {
+    test("no weights is same as mean", () => {
+      const x = np.array([1, 2, 3, 4]);
+      expect(np.average(x).js()).toEqual(2.5);
+    });
+
+    test("with weights", () => {
+      const x = np.array([1, 2, 3, 4]);
+      const w = np.array([4, 3, 2, 1]);
+      expect(np.average(x, null, { weights: w }).js()).toEqual(2);
+    });
+
+    test("with weights along axis", () => {
+      const x = np.array([
+        [1, 2, 3],
+        [4, 5, 6],
+      ]);
+      const w = np.array([0.25, 0.5, 0.25]);
+      expect(np.average(x, 1, { weights: w }).js()).toEqual([2, 5]);
+    });
+
+    test("with matching shape weights", () => {
+      const x = np.array([
+        [1, 2],
+        [3, 4],
+      ]);
+      const w = np.array([
+        [1, 2],
+        [3, 4],
+      ]);
+      expect(np.average(x, 1, { weights: w })).toBeAllclose([5 / 3, 25 / 7]);
+    });
+
+    test("keepdims", () => {
+      const x = np.array([
+        [1, 2, 3],
+        [4, 5, 6],
+      ]);
+      const result = np.average(x, 1, { keepdims: true });
+      expect(result.shape).toEqual([2, 1]);
+      expect(result.js()).toEqual([[2], [5]]);
+    });
+  });
+
   suite("jax.numpy.cumsum()", () => {
     test("computes cumsum along axis", () => {
       const x = np.array([
