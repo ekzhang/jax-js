@@ -195,7 +195,7 @@ Most operations behave the same way as they do in JAX.
 | `cosh`                | 🟢      |                                         |
 | `count_nonzero`       | 🟠      |                                         |
 | `cov`                 | 🟢      |                                         |
-| `cross`               | 🟠      |                                         |
+| `cross`               | 🟢      |                                         |
 | `cumprod`             | 🟠      |                                         |
 | `cumsum`              | 🟡      | Quadratic-time                          |
 | `cumulative_prod`     | 🟠      |                                         |
@@ -510,7 +510,7 @@ Cholesky but are missing other building blocks like:
 | ------------------ | ------- | --------------------------------------- |
 | `cholesky`         | 🟢      |                                         |
 | `cond`             | 🔴      |                                         |
-| `cross`            | 🟠      |                                         |
+| `cross`            | 🟢      |                                         |
 | `det`              | 🟢      |                                         |
 | `diagonal`         | 🟢      |                                         |
 | `eig`              | 🔴      |                                         |

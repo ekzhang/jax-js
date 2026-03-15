@@ -105,6 +105,47 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.cross()", () => {
+    test("2D cross product", () => {
+      const a = np.array([1, 2]);
+      const b = np.array([3, 4]);
+      expect(np.cross(a, b).js()).toEqual(-2);
+    });
+
+    test("3D cross product", () => {
+      const a = np.array([1, 2, 3]);
+      const b = np.array([4, 5, 6]);
+      expect(np.cross(a, b).js()).toEqual([-3, 6, -3]);
+    });
+
+    test("batched 3D cross product", () => {
+      const a = np.array([
+        [1, 2, 3],
+        [3, 4, 3],
+      ]);
+      const b = np.array([
+        [2, 3, 2],
+        [4, 5, 6],
+      ]);
+      expect(np.cross(a, b).js()).toEqual([
+        [-5, 4, -1],
+        [9, -6, -1],
+      ]);
+    });
+
+    test("cross product along axis=0", () => {
+      const a = np.array([
+        [1, 2, 3],
+        [3, 4, 3],
+      ]);
+      const b = np.array([
+        [2, 3, 2],
+        [4, 5, 6],
+      ]);
+      expect(np.cross(a, b, { axis: 0 }).js()).toEqual([-2, -2, 12]);
+    });
+  });
+
   suite("jax.numpy.eye()", () => {
     test("computes a square matrix", () => {
       const x = np.eye(3);
