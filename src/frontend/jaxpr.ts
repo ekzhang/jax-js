@@ -785,7 +785,7 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     return [new ShapedArray(x.shape, dtype, false)];
   },
   [Primitive.Bitcast]([x]: ShapedArray[], { dtype }) {
-    if (x.dtype === DType.Bool || dtype === DType.Bool) {
+    if (x.dtype !== dtype && (x.dtype === DType.Bool || dtype === DType.Bool)) {
       throw new TypeError("Bitcast to/from bool is not allowed");
     }
     if (byteWidth(x.dtype) !== byteWidth(dtype)) {

@@ -302,4 +302,53 @@ suite.each(devices)("device:%s", (device) => {
       expect(b.js()).toEqual([4294967295, 0, 4294967295, 0, 100000, 0]);
     });
   }
+
+  test("view float32 -> int32 bitcast", () => {
+    // IEEE 754: 1.0f = 0x3F800000 = 1065353216
+    const a = array([1.0, 2.0], { dtype: DType.Float32 });
+    const b = a.view(DType.Int32);
+    expect(b.dtype).toBe(DType.Int32);
+    expect(b.ref.js()).toEqual([1065353216, 1073741824]);
+
+    // Round-trip back to float32.
+    const c = b.view(DType.Float32);
+    expect(c.dtype).toBe(DType.Float32);
+    expect(c.js()).toEqual([1.0, 2.0]);
+  });
+
+  test("view int32 -> float32 bitcast", () => {
+    const a = array([1065353216, 1073741824], { dtype: DType.Int32 });
+    const b = a.view(DType.Float32);
+    expect(b.dtype).toBe(DType.Float32);
+    expect(b.js()).toEqual([1.0, 2.0]);
+  });
+
+  test("view identity and invalid values", () => {
+    const a = array([1, 2, 3], { dtype: DType.Float32 });
+    const b = a.ref.view(DType.Float32);
+    expect(b.dtype).toBe(DType.Float32);
+    expect(b.js()).toEqual([1, 2, 3]);
+
+    // Bool cannot be cast currently.
+    const c = array([true, false]);
+    expect(() => c.view(DType.Int32)).toThrow();
+    c.dispose();
+
+    const d = array([1, 0], { dtype: DType.Int32 });
+    expect(() => d.view(DType.Bool)).toThrow();
+    d.dispose();
+  });
+
+  test("view preserves special float values", () => {
+    const a = array([Infinity, -Infinity, NaN], { dtype: DType.Float32 });
+    const b = a.view(DType.Int32);
+    expect(b.dtype).toBe(DType.Int32);
+    // Round-trip through int32 and back.
+    const c = b.view(DType.Float32);
+    expect(c.dtype).toBe(DType.Float32);
+    const vals = c.js() as number[];
+    expect(vals[0]).toBe(Infinity);
+    expect(vals[1]).toBe(-Infinity);
+    expect(vals[2]).toBeNaN();
+  });
 });
