@@ -43,13 +43,20 @@ export interface TraceInfo {
   properties: [string, string][];
 }
 
+function humanSize(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toPrecision(3)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toPrecision(3)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toPrecision(3)}K`;
+  return `${n}`;
+}
+
 /** Build a trace label, properties, and color from a kernel or routine source. */
 export function traceSourceInfo(source: Kernel | Routine): TraceInfo {
   const properties: [string, string][] = [];
   let label: string;
   let color: string;
   if (source instanceof Kernel) {
-    label = `Kernel[${source.size}]`;
+    label = `Kernel[${humanSize(source.size)}]`;
     properties.push(["exp", `${source.exp}`]);
     properties.push(["size", `${source.size}`]);
     properties.push(["nargs", `${source.nargs}`]);
