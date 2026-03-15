@@ -326,6 +326,53 @@ export function mean(
 }
 
 /**
+ * Compute the weighted average along the specified axis.
+ *
+ * If no axis is specified, mean is computed along all the axes. The weights
+ * should have shape matching that of `a`, or if an axis is specified, it should
+ * match the shape along those axes.
+ */
+export function average(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: { weights?: ArrayLike } & core.ReduceOpts,
+): Array {
+  a = fudgeArray(a);
+  if (opts?.weights == null) {
+    return mean(a, axis, opts);
+  }
+  const weights = fudgeArray(opts.weights);
+  axis = normalizeAxis(axis, ndim(a));
+
+  const wShape = weights.shape;
+  const aShape = a.shape;
+
+  if (deepEqual(wShape, aShape)) {
+    // weights match shape of a exactly
+    const scl = sum(weights.ref, axis, opts);
+    return sum(multiply(a, weights) as Array, axis, opts).div(scl);
+  } else if (
+    axis.length === 1 &&
+    wShape.length === 1 &&
+    wShape[0] === aShape[axis[0]]
+  ) {
+    // 1-D weights along a single axis: reshape to broadcast
+    const broadcastShape = aShape.map((_, i) =>
+      i === axis[0] ? wShape[0] : 1,
+    );
+    const wReshaped = reshape(weights, broadcastShape);
+    const scl = sum(wReshaped.ref, axis, opts);
+    return sum(multiply(a, wReshaped) as Array, axis, opts).div(scl);
+  } else {
+    weights.dispose();
+    a.dispose();
+    throw new Error(
+      `average: weights shape ${JSON.stringify(wShape)} is not compatible with array shape ${JSON.stringify(aShape)} and axis ${JSON.stringify(axis)}`,
+    );
+  }
+}
+
+/**
  * Returns the indices of the minimum values along an axis.
  *
  * By default, index is into the flatted array, otherwise it is along the
