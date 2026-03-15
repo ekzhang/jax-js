@@ -394,6 +394,70 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.arrayEqual()", () => {
+    test("equal arrays", () => {
+      const a = np.array([1, 2, 3]);
+      const b = np.array([1, 2, 3]);
+      expect(np.arrayEqual(a, b).js()).toBe(true);
+    });
+
+    test("unequal arrays", () => {
+      const a = np.array([1, 2, 3]);
+      const b = np.array([1, 2, 4]);
+      expect(np.arrayEqual(a, b).js()).toBe(false);
+    });
+
+    test("different shapes", () => {
+      const a = np.array([1, 2, 3]);
+      const b = np.array([1, 2]);
+      expect(np.arrayEqual(a, b).js()).toBe(false);
+    });
+
+    test("NaN not equal by default", () => {
+      const a = np.array([1, NaN]);
+      const b = np.array([1, NaN]);
+      expect(np.arrayEqual(a, b).js()).toBe(false);
+    });
+
+    test("NaN equal with equalNaN", () => {
+      const a = np.array([1, NaN]);
+      const b = np.array([1, NaN]);
+      expect(np.arrayEqual(a, b, { equalNaN: true }).js()).toBe(true);
+    });
+  });
+
+  suite("jax.numpy.arrayEquiv()", () => {
+    test("equal arrays", () => {
+      const a = np.array([1, 2, 3]);
+      const b = np.array([1, 2, 3]);
+      expect(np.arrayEquiv(a, b).js()).toBe(true);
+    });
+
+    test("broadcast-compatible arrays", () => {
+      const a = np.array([
+        [1, 2],
+        [1, 2],
+      ]);
+      const b = np.array([1, 2]);
+      expect(np.arrayEquiv(a, b).js()).toBe(true);
+    });
+
+    test("broadcast-compatible but unequal", () => {
+      const a = np.array([
+        [1, 2],
+        [3, 4],
+      ]);
+      const b = np.array([1, 2]);
+      expect(np.arrayEquiv(a, b).js()).toBe(false);
+    });
+
+    test("incompatible shapes", () => {
+      const a = np.array([1, 2, 3]);
+      const b = np.array([1, 2]);
+      expect(np.arrayEquiv(a, b).js()).toBe(false);
+    });
+  });
+
   suite("jax.numpy.transpose()", () => {
     test("transposes a 1D array (no-op)", () => {
       const x = np.array([1, 2, 3]);

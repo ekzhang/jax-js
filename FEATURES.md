@@ -120,7 +120,7 @@ Most operations behave the same way as they do in JAX.
 | `acosh`               | 🟢      |                                         |
 | `add`                 | 🟢      |                                         |
 | `all`                 | 🟢      |                                         |
-| `allclose`            | 🟡      | no `equal_nan` option                   |
+| `allclose`            | 🟡      | currently returns JS boolean            |
 | `amax`                | ⚪️      | alias of `max`                          |
 | `amin`                | ⚪️      | alias of `min`                          |
 | `angle`               | ⚪️      | complex numbers                         |
@@ -143,11 +143,11 @@ Most operations behave the same way as they do in JAX.
 | `argwhere`            | 🟠      | sorting                                 |
 | `around`              | ⚪️      | alias of `round`                        |
 | `array`               | 🟢      |                                         |
-| `array_equal`         | 🔴      |                                         |
-| `array_equiv`         | 🔴      |                                         |
-| `array_repr`          | 🔴      |                                         |
+| `array_equal`         | 🟢      |                                         |
+| `array_equiv`         | 🟢      |                                         |
+| `array_repr`          | ⚪️      |                                         |
 | `array_split`         | 🟠      | `split` is supported                    |
-| `array_str`           | 🔴      |                                         |
+| `array_str`           | ⚪️      |                                         |
 | `asarray`             | ⚪️      | alias of `array`                        |
 | `asin`                | 🟢      |                                         |
 | `asinh`               | 🟢      |                                         |
