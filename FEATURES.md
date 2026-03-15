@@ -141,7 +141,7 @@ Most operations behave the same way as they do in JAX.
 | `argpartition`        | 🟠      | sorting                                 |
 | `argsort`             | 🟢      | sorting                                 |
 | `argwhere`            | 🟠      | sorting                                 |
-| `around`              | ⚪️      | alias of `round`                        |
+| `around`              | 🟢      | alias of `round`                        |
 | `array`               | 🟢      |                                         |
 | `array_equal`         | 🟢      |                                         |
 | `array_equiv`         | 🟢      |                                         |
@@ -188,7 +188,7 @@ Most operations behave the same way as they do in JAX.
 | `conjugate`           | ⚪️      | complex numbers                         |
 | `convolve`            | 🟢      | `lax.conv_general_dilated` is supported |
 | `copy`                | ⚪️      | move semantics                          |
-| `copysign`            | 🟠      |                                         |
+| `copysign`            | 🟢      |                                         |
 | `corrcoef`            | 🟢      |                                         |
 | `correlate`           | 🟢      | `lax.conv_general_dilated` is supported |
 | `cos`                 | 🟢      |                                         |
@@ -396,12 +396,12 @@ Most operations behave the same way as they do in JAX.
 | `resize`              | 🟠      |                                         |
 | `result_type`         | 🟠      | see `promote_types`                     |
 | `right_shift`         | 🔴      |                                         |
-| `rint`                | 🟠      |                                         |
+| `rint`                | 🟢      |                                         |
 | `roll`                | 🟠      |                                         |
 | `rollaxis`            | 🟠      |                                         |
 | `roots`               | 🔴      |                                         |
 | `rot90`               | 🟠      |                                         |
-| `round`               | 🟠      |                                         |
+| `round`               | 🟢      |                                         |
 | `s_`                  | ⚪️      | Python-specific                         |
 | `save`                | ⚪️      | file I/O                                |
 | `savez`               | ⚪️      | file I/O                                |
