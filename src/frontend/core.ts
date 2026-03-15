@@ -848,6 +848,12 @@ export abstract class Tracer {
     return cast(this, dtype) as this;
   }
 
+  /** Return a bitwise cast of the array, viewed as a new dtype. */
+  view(dtype?: DType): this {
+    if (!dtype || dtype === this.dtype) return this; // No-op.
+    return bitcast(this, dtype) as this;
+  }
+
   // Below this line are composite operations built from primitives.
 
   /** Subtract an array from this one. */

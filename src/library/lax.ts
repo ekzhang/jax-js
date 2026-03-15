@@ -15,6 +15,11 @@ import { checkAxis, deepEqual, prod, range, rep, zipn } from "../utils";
 
 export * as linalg from "./lax-linalg";
 
+/** Elementwise bitcast an array into a new dtype. */
+export function bitcastConvertType(x: ArrayLike, newDtype: DType): Array {
+  return fudgeArray(x).view(newDtype);
+}
+
 /**
  * Dimension numbers for general `dot()` primitive.
  *

@@ -911,10 +911,10 @@ export class Array extends Tracer {
         return [x.#unary(AluOp.Cast, dtype)];
       },
       [Primitive.Bitcast]([x], { dtype }) {
+        if (x.dtype === dtype) return [x];
         if (x.dtype === DType.Bool || dtype === DType.Bool) {
           throw new TypeError("Bitcast to/from bool is not allowed");
         }
-        if (x.dtype === dtype) return [x];
         if (byteWidth(x.dtype) !== byteWidth(dtype)) {
           throw new TypeError(
             `Bitcast from ${x.dtype} to ${dtype} with different byte width`,
