@@ -29,6 +29,7 @@ import {
 } from "./webgpu/codegen";
 import { SyncReader } from "./webgpu/reader";
 import { createRoutineShader } from "./webgpu/routines";
+import { maybeAcquireTracingSlot, recordTrace } from "./webgpu/tracing";
 
 interface ShaderDispatch extends ShaderInfo {
   pipeline: GPUComputePipeline; // Compiled pipeline for the shader.
@@ -229,7 +230,7 @@ export class WebGPUBackend implements Backend {
   ): void {
     const inputBuffers = inputs.map((slot) => this.#getBuffer(slot).buffer);
     const outputBuffers = outputs.map((slot) => this.#getBuffer(slot).buffer);
-    pipelineSubmit(this.device, exe.data, inputBuffers, outputBuffers);
+    pipelineSubmit(this.device, exe, inputBuffers, outputBuffers);
   }
 
   #getBuffer(slot: Slot): { buffer: GPUBuffer; size: number } {
@@ -635,10 +636,11 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
 
 function pipelineSubmit(
   device: GPUDevice,
-  pipelines: ShaderDispatch[],
+  exe: Executable<ShaderDispatch[]>,
   inputs: GPUBuffer[],
   outputs: GPUBuffer[],
 ) {
+  const { data: pipelines, source } = exe;
   const commandEncoder = device.createCommandEncoder();
   for (const { pipeline, ...shader } of pipelines) {
     if (
@@ -654,6 +656,7 @@ function pipelineSubmit(
     const filteredPasses = shader.passes.filter(({ grid }) => prod(grid) > 0);
     if (filteredPasses.length === 0) continue; // No work to do.
 
+    const slot = maybeAcquireTracingSlot(device);
     const bindGroup = device.createBindGroup({
       layout: pipeline.getBindGroupLayout(0),
       entries: [
@@ -686,7 +689,16 @@ function pipelineSubmit(
 
     for (let i = 0; i < filteredPasses.length; i++) {
       const { grid } = filteredPasses[i];
-      const passEncoder = commandEncoder.beginComputePass();
+      const passEncoder = commandEncoder.beginComputePass({
+        timestampWrites: slot
+          ? {
+              querySet: slot.batch.querySet,
+              beginningOfPassWriteIndex: i === 0 ? slot.beginIndex : undefined,
+              endOfPassWriteIndex:
+                i === filteredPasses.length - 1 ? slot.endIndex : undefined,
+            }
+          : undefined,
+      });
       passEncoder.setPipeline(pipeline);
       passEncoder.setBindGroup(0, bindGroup);
       if (uniformBindGroup)
@@ -694,7 +706,12 @@ function pipelineSubmit(
       passEncoder.dispatchWorkgroups(grid[0], grid[1]);
       passEncoder.end();
     }
+
+    if (slot) {
+      recordTrace(device, slot, source, filteredPasses.length, shader.code);
+    }
   }
+
   device.queue.submit([commandEncoder.finish()]);
 }
 

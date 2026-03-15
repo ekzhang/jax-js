@@ -7,6 +7,7 @@
     lax,
     nn,
     numpy as np,
+    profiler,
   } from "@jax-js/jax";
   import { ONNXModel } from "@jax-js/onnx";
 
@@ -262,6 +263,7 @@
   }
 
   async function loadAndRun() {
+    profiler.startTrace();
     const devices = await init("webgpu");
     if (!devices.includes("webgpu")) {
       alert("WebGPU is not supported on this device/browser.");

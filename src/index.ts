@@ -11,6 +11,7 @@ import * as nn from "./library/nn";
 import * as numpy from "./library/numpy";
 import * as random from "./library/random";
 import * as scipySpecial from "./library/scipy-special";
+import { startTrace, stopTrace } from "./tracing";
 import * as tree from "./tree";
 import type { JsTree, JsTreeDef, MapJsTree } from "./tree";
 import { setDebug } from "./utils";
@@ -36,6 +37,12 @@ export {
   setDebug,
   scipySpecial,
   tree,
+};
+
+/** @namespace */
+export const profiler = {
+  startTrace,
+  stopTrace,
 };
 
 /**

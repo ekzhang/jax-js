@@ -355,6 +355,8 @@ self-contained way in other projects.
 
 ### Performance
 
+To see per-kernel traces in browser development tools, call `jax.profiler.startTrace()`.
+
 The WebGPU runtime includes an ML compiler with tile-aware optimizations, tuned for indiidual
 browsers. Also, this library uniquely has the `jit()` feature that fuses operations together and
 records an execution graph. jax-js achieves **over 7000 GFLOP/s** for matrix multiplication on an
@@ -417,9 +419,6 @@ Contributions are welcomed! Some fruitful areas to look into:
 - Adding support for more JAX functions and operations, see [compatibility table](./FEATURES.md).
 - Improving performance of the WebGPU and Wasm runtimes, generating better kernels, and using SIMD
   and multithreading. (Even single-threaded Wasm could be ~20x faster.)
-- Adding support for `jax.profiling`, in particular the start and end trace functions. We should be
-  able to generate `traceEvents` from backends (especially on GPU, with precise timestamp queries)
-  to help with model performance debugging.
 - Helping the JIT compiler to fuse operations in more cases, like `tanh` branches.
 - Making a fast transformer inference engine, comparing against onnxruntime-web.
 

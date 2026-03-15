@@ -669,6 +669,9 @@ The `jax.tree` module is available but differs significantly in how it is implem
 based on nested JavaScript objects and arrays similar to JSON format, and it has generic TypeScript
 bindings.
 
+The `jax.profiler` module has `startTrace()` and `stopTrace()`. When traces are started, `jax-js`
+emits per-kernel timings that appear in browser development tools.
+
 These modules are unimplemented:
 
 - `jax.scipy`
@@ -681,7 +684,6 @@ These modules are unimplemented:
 - `jax.flatten_util`
 - `jax.image`
 - `jax.ops`
-- `jax.profiler`
 - `jax.ref`
 - `jax.stages`
 - `jax.test_util`
