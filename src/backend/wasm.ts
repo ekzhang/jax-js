@@ -160,8 +160,8 @@ export class WasmBackend implements Backend {
     }
 
     if (tracing) {
-      const { label, properties } = traceSourceInfo(exe.source);
-      emitTrace("wasm", label, properties, start, performance.now());
+      const info = traceSourceInfo(exe.source);
+      emitTrace("wasm", info, start, performance.now());
     }
   }
 

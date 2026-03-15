@@ -37,25 +37,33 @@ export function onFlushTrace(cb: () => void): void {
   flushCallbacks.push(cb);
 }
 
-/** Build a trace label and properties from a kernel or routine source. */
-export function traceSourceInfo(source: Kernel | Routine): {
+export interface TraceInfo {
   label: string;
+  color: string;
   properties: [string, string][];
-} {
+}
+
+/** Build a trace label, properties, and color from a kernel or routine source. */
+export function traceSourceInfo(source: Kernel | Routine): TraceInfo {
   const properties: [string, string][] = [];
   let label: string;
+  let color: string;
   if (source instanceof Kernel) {
     label = `Kernel[${source.size}]`;
     properties.push(["exp", `${source.exp}`]);
     properties.push(["size", `${source.size}`]);
     properties.push(["nargs", `${source.nargs}`]);
-    if (source.reduction) {
+    if (!source.reduction) {
+      color = "primary";
+    } else {
+      color = "secondary";
       properties.push([
         "reduction",
         `${source.reduction.op}:${source.reduction.size}`,
       ]);
     }
   } else {
+    color = "tertiary";
     label = source.name;
     properties.push([
       "inputShapes",
@@ -67,23 +75,23 @@ export function traceSourceInfo(source: Kernel | Routine): {
     ]);
     properties.push(["dtype", source.type.inputDtypes.join(", ")]);
   }
-  return { label, properties };
+  return { label, color, properties };
 }
 
 /** Emit a trace entry as a `performance.measure` with devtools metadata. */
 export function emitTrace(
   track: string,
-  label: string,
-  properties: [string, string][],
+  info: TraceInfo,
   start: number,
   end: number,
 ): void {
-  performance.measure(label, {
+  performance.measure(info.label, {
     detail: {
       devtools: {
         trackGroup: "JAX Profiler",
         track,
-        properties,
+        color: info.color,
+        properties: info.properties,
       },
     },
     start,

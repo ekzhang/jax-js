@@ -4,14 +4,13 @@ import {
   emitTrace,
   isTracing,
   onFlushTrace,
+  type TraceInfo,
   traceSourceInfo,
 } from "../../tracing";
 
 const MAX_TIMESTAMP_QUERIES = 4096;
 
-interface TracingEntry {
-  label: string;
-  properties: [string, string][];
+interface TracingEntry extends TraceInfo {
   beginIndex: number;
   endIndex: number;
 }
@@ -100,12 +99,11 @@ export function recordTrace(
   numPasses: number,
   wgslSource: string,
 ): void {
-  const { label, properties } = traceSourceInfo(source);
-  properties.push(["passes", `${numPasses}`]);
-  properties.push(["source", wgslSource]);
+  const info = traceSourceInfo(source);
+  info.properties.push(["passes", `${numPasses}`]);
+  info.properties.push(["source", wgslSource]);
   slot.batch.entries.push({
-    label,
-    properties,
+    ...info,
     beginIndex: slot.beginIndex,
     endIndex: slot.endIndex,
   });
@@ -154,7 +152,7 @@ function flushTracingBatch(device: GPUDevice, batch: TracingBatch): void {
           anchorCpuMs + Number(times[entry.beginIndex] - anchorGpuNs) / 1e6;
         const endMs =
           anchorCpuMs + Number(times[entry.endIndex] - anchorGpuNs) / 1e6;
-        emitTrace("webgpu", entry.label, entry.properties, startMs, endMs);
+        emitTrace("webgpu", entry, startMs, endMs);
       }
     } finally {
       batch.dst.unmap();
