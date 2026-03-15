@@ -1302,6 +1302,66 @@ export function outer(x: ArrayLike, y: ArrayLike): Array {
   return multiply(x.reshape([x.shape[0], 1]), y);
 }
 
+/**
+ * @function Compute the cross product of two arrays.
+ *
+ * Supports 2D (scalar result) and 3D cross products, with optional axis
+ * arguments. If `axis` is given, it overrides `axisa`, `axisb`, and `axisc`.
+ */
+export const cross = jit(
+  function cross(
+    a: ArrayLike,
+    b: ArrayLike,
+    {
+      axisa = -1,
+      axisb = -1,
+      axisc = -1,
+      axis,
+    }: { axisa?: number; axisb?: number; axisc?: number; axis?: number } = {},
+  ): Array {
+    if (axis !== undefined) {
+      axisa = axis;
+      axisb = axis;
+      axisc = axis;
+    }
+    axisa = checkAxis(axisa, ndim(a));
+    axisb = checkAxis(axisb, ndim(b));
+    a = moveaxis(a, axisa, -1);
+    b = moveaxis(b, axisb, -1);
+    const da = a.shape.at(-1)!;
+    const db = b.shape.at(-1)!;
+    if ((da !== 2 && da !== 3) || (db !== 2 && db !== 3)) {
+      throw new Error(
+        `cross: incompatible dimensions for cross product (got ${da} and ${db})`,
+      );
+    }
+
+    if (da === 2 && db === 2) {
+      const [a0, a1] = split(a, 2, -1);
+      const [b0, b1] = split(b, 2, -1);
+      return squeeze(a0.mul(b1).sub(a1.mul(b0)), -1);
+    }
+
+    // Pad 2D inputs to 3D with a zero third component
+    if (da === 2) {
+      const zeroShape = [...a.shape.slice(0, -1), 1];
+      a = concatenate([a, zeros(zeroShape)], -1);
+    }
+    if (db === 2) {
+      const zeroShape = [...b.shape.slice(0, -1), 1];
+      b = concatenate([b, zeros(zeroShape)], -1);
+    }
+
+    const [a0, a1, a2] = split(a, 3, -1);
+    const [b0, b1, b2] = split(b, 3, -1);
+    const c0 = a1.ref.mul(b2.ref).sub(a2.ref.mul(b1.ref));
+    const c1 = a2.mul(b0.ref).sub(a0.ref.mul(b2));
+    const c2 = a0.mul(b1).sub(a1.mul(b0));
+    return moveaxis(concatenate([c0, c1, c2], -1), -1, axisc);
+  },
+  { staticArgnums: [2] },
+);
+
 /** Vector dot product of two arrays along a given axis. */
 export function vecdot(
   x: ArrayLike,
