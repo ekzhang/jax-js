@@ -655,6 +655,78 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.matvec()", () => {
+    test("basic matrix-vector product", () => {
+      const a = np.array([
+        [1, 2],
+        [3, 4],
+      ]);
+      const v = np.array([5, 6]);
+      expect(np.matvec(a, v).js()).toEqual([17, 39]);
+    });
+
+    test("batched matrix-vector product", () => {
+      const a = np.array([
+        [
+          [1, 0],
+          [0, 1],
+        ],
+        [
+          [0, 1],
+          [1, 0],
+        ],
+      ]);
+      const v = np.array([3, 7]);
+      const result = np.matvec(a, v);
+      expect(result.js()).toEqual([
+        [3, 7],
+        [7, 3],
+      ]);
+    });
+
+    test("rotation example from docs", () => {
+      const a = np.array([
+        [0, 1, 0],
+        [-1, 0, 0],
+        [0, 0, 1],
+      ]);
+      const v = np.array([
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [0, 6, 8],
+      ]);
+      const result = np.matvec(a, v);
+      expect(result.js()).toEqual([
+        [0, -1, 0],
+        [1, 0, 0],
+        [0, 0, 1],
+        [6, 0, 8],
+      ]);
+    });
+  });
+
+  suite("jax.numpy.vecmat()", () => {
+    test("basic vector-matrix product", () => {
+      const v = np.array([1, 2]);
+      const a = np.array([
+        [3, 4],
+        [5, 6],
+      ]);
+      expect(np.vecmat(v, a).js()).toEqual([13, 16]);
+    });
+
+    test("projection example from docs", () => {
+      const v = np.array([0, 4, 2]);
+      const a = np.array([
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 0],
+      ]);
+      expect(np.vecmat(v, a).js()).toEqual([0, 4, 0]);
+    });
+  });
+
   suite("jax.numpy.dot()", () => {
     test("acts as scalar multiplication", () => {
       const z = np.dot(3, 4);
