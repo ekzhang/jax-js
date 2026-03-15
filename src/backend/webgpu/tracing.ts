@@ -1,7 +1,11 @@
 import { Kernel } from "../../alu";
 import { Routine } from "../../routine";
-import { isTracing } from "../../tracing";
-import { onFlushTrace } from "../../tracing";
+import {
+  emitTrace,
+  isTracing,
+  onFlushTrace,
+  traceSourceInfo,
+} from "../../tracing";
 
 const MAX_TIMESTAMP_QUERIES = 4096;
 
@@ -96,31 +100,7 @@ export function recordTrace(
   numPasses: number,
   wgslSource: string,
 ): void {
-  let label: string;
-  const properties: [string, string][] = [];
-  if (source instanceof Kernel) {
-    label = `Kernel[${source.size}]`;
-    properties.push(["exp", `${source.exp}`]);
-    properties.push(["size", `${source.size}`]);
-    properties.push(["nargs", `${source.nargs}`]);
-    if (source.reduction) {
-      properties.push([
-        "reduction",
-        `${source.reduction.op}:${source.reduction.size}`,
-      ]);
-    }
-  } else {
-    label = source.name;
-    properties.push([
-      "inputShapes",
-      source.type.inputShapes.map((s) => `[${s}]`).join(", "),
-    ]);
-    properties.push([
-      "outputShapes",
-      source.type.outputShapes.map((s) => `[${s}]`).join(", "),
-    ]);
-    properties.push(["dtype", source.type.inputDtypes.join(", ")]);
-  }
+  const { label, properties } = traceSourceInfo(source);
   properties.push(["passes", `${numPasses}`]);
   properties.push(["source", wgslSource]);
   slot.batch.entries.push({
@@ -174,17 +154,7 @@ function flushTracingBatch(device: GPUDevice, batch: TracingBatch): void {
           anchorCpuMs + Number(times[entry.beginIndex] - anchorGpuNs) / 1e6;
         const endMs =
           anchorCpuMs + Number(times[entry.endIndex] - anchorGpuNs) / 1e6;
-        performance.measure(entry.label, {
-          detail: {
-            devtools: {
-              trackGroup: "JAX Profiler",
-              track: "webgpu",
-              properties: entry.properties,
-            },
-          },
-          start: startMs,
-          end: endMs,
-        });
+        emitTrace("webgpu", entry.label, entry.properties, startMs, endMs);
       }
     } finally {
       batch.dst.unmap();

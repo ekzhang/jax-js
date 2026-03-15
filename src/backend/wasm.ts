@@ -16,6 +16,7 @@ import {
   UnsupportedOpError,
 } from "../backend";
 import { Routine, runCpuRoutine } from "../routine";
+import { emitTrace, isTracing, traceSourceInfo } from "../tracing";
 import { tuneNullopt } from "../tuner";
 import { DEBUG, FpHash, mapSetUnion, rep, runWithCache } from "../utils";
 import { WasmAllocator } from "./wasm/allocator";
@@ -138,22 +139,30 @@ export class WasmBackend implements Backend {
     inputs: Slot[],
     outputs: Slot[],
   ): void {
+    const tracing = isTracing();
+    const start = tracing ? performance.now() : 0;
+
     if (exe.source instanceof Routine) {
-      return runCpuRoutine(
+      runCpuRoutine(
         exe.source,
         inputs.map((slot) => this.#getBuffer(slot)),
         outputs.map((slot) => this.#getBuffer(slot)),
       );
+    } else {
+      const instance = new WebAssembly.Instance(exe.data.module, {
+        env: { memory: this.#memory },
+      });
+      const func = instance.exports.kernel as (...args: number[]) => void;
+      const ptrs = [...inputs, ...outputs].map(
+        (slot) => this.#buffers.get(slot)!.ptr,
+      );
+      func(...ptrs);
     }
 
-    const instance = new WebAssembly.Instance(exe.data.module, {
-      env: { memory: this.#memory },
-    });
-    const func = instance.exports.kernel as (...args: number[]) => void;
-    const ptrs = [...inputs, ...outputs].map(
-      (slot) => this.#buffers.get(slot)!.ptr,
-    );
-    func(...ptrs);
+    if (tracing) {
+      const { label, properties } = traceSourceInfo(exe.source);
+      emitTrace("wasm", label, properties, start, performance.now());
+    }
   }
 
   #getBuffer(slot: Slot): Uint8Array<ArrayBuffer> {
