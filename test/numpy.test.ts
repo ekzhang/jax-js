@@ -2537,7 +2537,10 @@ suite.each(devices)("device:%s", (device) => {
 
   suite("jax.numpy.copysign()", () => {
     test("basic copysign", () => {
-      const result = np.copysign(np.array([1, -2, 3, -4]), np.array([-1, 1, -1, 1]));
+      const result = np.copysign(
+        np.array([1, -2, 3, -4]),
+        np.array([-1, 1, -1, 1]),
+      );
       expect(result.js()).toEqual([-1, 2, -3, 4]);
     });
 
