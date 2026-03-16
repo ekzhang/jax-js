@@ -12,6 +12,7 @@
 import { AluOp, DType, Kernel } from "./alu";
 import { CpuBackend } from "./backend/cpu";
 import { WasmBackend } from "./backend/wasm";
+import type { WebGPUBackend } from "./backend/webgpu";
 import { Routine, Routines } from "./routine";
 
 export type Device = "cpu" | "wasm" | "webgpu" | "webgl";
@@ -232,4 +233,22 @@ export class UnsupportedRoutineError extends Error {
   constructor(name: Routines, device: Device) {
     super(`routine '${name}' is not supported in ${device} backend`);
   }
+}
+
+// Backend-specific functions are below this line.
+
+/**
+ * If the WebGPU backend has been initialized, return the `GPUDevice` that this
+ * backend runs on. This is useful for sharing buffers.
+ */
+export function getWebGPUDevice(): GPUDevice {
+  const backend = initializedBackends.get("webgpu") as
+    | WebGPUBackend
+    | undefined;
+  if (!backend) {
+    throw new Error(
+      "WebGPU backend not initialized, call init('webgpu') first",
+    );
+  }
+  return backend.device;
 }
