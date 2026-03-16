@@ -2535,6 +2535,51 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.logicalAnd()", () => {
+    test("basic logical and", () => {
+      const result = np.logicalAnd(
+        np.array([1, 0, 3, 0]),
+        np.array([false, false, true, false]),
+      );
+      expect(result.js()).toEqual([false, false, true, false]);
+    });
+
+    test("float inputs", () => {
+      const result = np.logicalAnd(
+        np.array([1.5, 0.0, -2.0]),
+        np.array([0.5, 0.0, 1.0]),
+      );
+      expect(result.js()).toEqual([true, false, true]);
+    });
+  });
+
+  suite("jax.numpy.logicalOr()", () => {
+    test("basic logical or", () => {
+      const result = np.logicalOr(
+        np.array([1, 0, 3, 0]),
+        np.array([0, 0, 1, 0]),
+      );
+      expect(result.js()).toEqual([true, false, true, false]);
+    });
+  });
+
+  suite("jax.numpy.logicalXor()", () => {
+    test("basic logical xor", () => {
+      const result = np.logicalXor(
+        np.array([1, 0, 3, 0]),
+        np.array([0, 0, 1, 0]),
+      );
+      expect(result.js()).toEqual([true, false, false, false]);
+    });
+  });
+
+  suite("jax.numpy.logicalNot()", () => {
+    test("basic logical not", () => {
+      const result = np.logicalNot(np.array([1, 0, 3, 0]));
+      expect(result.js()).toEqual([false, true, false, true]);
+    });
+  });
+
   suite("jax.numpy.copysign()", () => {
     test("basic copysign", () => {
       const result = np.copysign(

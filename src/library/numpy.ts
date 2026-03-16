@@ -147,6 +147,27 @@ export const lessEqual = core.lessEqual as (
   x: ArrayLike,
   y: ArrayLike,
 ) => Array;
+
+/** Compute element-wise logical AND. */
+export function logicalAnd(x: ArrayLike, y: ArrayLike): Array {
+  return astype(x, DType.Bool).mul(astype(y, DType.Bool));
+}
+
+/** Compute element-wise logical OR. */
+export function logicalOr(x: ArrayLike, y: ArrayLike): Array {
+  return astype(x, DType.Bool).add(astype(y, DType.Bool));
+}
+
+/** Compute element-wise logical XOR. */
+export function logicalXor(x: ArrayLike, y: ArrayLike): Array {
+  return notEqual(astype(x, DType.Bool), astype(y, DType.Bool));
+}
+
+/** Compute element-wise logical NOT. */
+export function logicalNot(x: ArrayLike): Array {
+  return notEqual(astype(x, DType.Bool), true);
+}
+
 /** @function Element-wise ternary operator, evaluates to `x` if cond else `y`. */
 export const where = core.where as (
   cond: ArrayLike,
