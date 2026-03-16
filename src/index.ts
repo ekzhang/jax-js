@@ -1,5 +1,12 @@
 import { DType } from "./alu";
-import { defaultDevice, Device, devices, getBackend, init } from "./backend";
+import {
+  defaultDevice,
+  Device,
+  devices,
+  getBackend,
+  getWebGPUDevice,
+  init,
+} from "./backend";
 import { Array, ArrayLike } from "./frontend/array";
 import * as jaxprModule from "./frontend/jaxpr";
 import { ClosedJaxpr, Jaxpr, OwnedFunction } from "./frontend/jaxpr";
@@ -33,6 +40,7 @@ export {
   nn,
   numpy,
   type OwnedFunction,
+  getWebGPUDevice,
   random,
   setDebug,
   scipySpecial,
