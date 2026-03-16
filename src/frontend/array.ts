@@ -837,6 +837,45 @@ export class Array extends Tracer {
   }
 
   /**
+   * Return this array as a WebGPU buffer (with `STORAGE | COPY_SRC`).
+   *
+   * Only available on the WebGPU backend. The array's memory is still managed
+   * by jax-js, and it will be freed when the buffer is no longer in use. You
+   * _should not_ mutate the buffer's contents.
+   *
+   * Note that the GPU buffer may be slightly larger than the array's size; it
+   * will always be aligned to 4 bytes.
+   */
+  async gpuBuffer(): Promise<GPUBuffer> {
+    if (this.device !== "webgpu")
+      throw new Error(`gpuBuffer() is only available on WebGPU backend`);
+    this.#realize();
+    const pending = this.#pending;
+    if (pending) {
+      // Compile all pending executables concurrently.
+      await Promise.all(pending.map((p) => p.prepare()));
+      for (const p of pending) p.submit();
+    }
+    const backend = this.#backend as import("../backend/webgpu").WebGPUBackend;
+    const { buffer } = backend.buffers.get(this.#source as Slot)!;
+    return buffer;
+  }
+
+  /** Synchronous version of `Array.gpuBuffer()`. */
+  gpuBufferSync(): GPUBuffer {
+    if (this.device !== "webgpu")
+      throw new Error(`gpuBufferSync() is only available on WebGPU backend`);
+    this.#realize();
+    for (const p of this.#pending) {
+      p.prepareSync();
+      p.submit();
+    }
+    const backend = this.#backend as import("../backend/webgpu").WebGPUBackend;
+    const { buffer } = backend.buffers.get(this.#source as Slot)!;
+    return buffer;
+  }
+
+  /**
    * Convert this array into a JavaScript object.
    *
    * This is a blocking operation that will compile all of the shaders and wait
