@@ -73,6 +73,7 @@ Demos on the jax-js website:
 - [Voice cloning: Kyutai Pocket TTS](https://jax-js.com/tts)
 - [CLIP embeddings for books in-browser](https://jax-js.com/mobileclip)
 - [Object detection: DETR ResNet-50 (ONNX)](https://jax-js.com/detr-resnet-50)
+- [Fluid simulation (Navier-Stokes)](https://jax-js.com/fluid-sim)
 - [In-browser REPL](https://jax-js.com/repl)
 - [Matmul benchmark](https://jax-js.com/bench/matmul)
 - [Conv2d benchmark](https://jax-js.com/bench/conv2d)

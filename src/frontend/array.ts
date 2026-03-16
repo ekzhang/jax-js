@@ -858,6 +858,7 @@ export class Array extends Tracer {
     }
     const backend = this.#backend as import("../backend/webgpu").WebGPUBackend;
     const { buffer } = backend.buffers.get(this.#source as Slot)!;
+    this.dispose();
     return buffer;
   }
 
@@ -872,6 +873,7 @@ export class Array extends Tracer {
     }
     const backend = this.#backend as import("../backend/webgpu").WebGPUBackend;
     const { buffer } = backend.buffers.get(this.#source as Slot)!;
+    this.dispose();
     return buffer;
   }
 
