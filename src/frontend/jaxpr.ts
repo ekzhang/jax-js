@@ -776,6 +776,27 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
   [Primitive.Mod]: binopAbstractEval,
   [Primitive.Min]: binopAbstractEval,
   [Primitive.Max]: binopAbstractEval,
+  [Primitive.BitCombine]([x, y]: ShapedArray[]) {
+    const aval = promoteAvals(x, y);
+    if (isFloatDtype(aval.dtype))
+      throw new TypeError(
+        `bitwise operations require integer or boolean inputs, got ${aval.dtype}`,
+      );
+    return [aval];
+  },
+  [Primitive.BitShift]([x, y]: ShapedArray[]) {
+    const shape = generalBroadcast(x.shape, y.shape);
+    if (
+      isFloatDtype(x.dtype) ||
+      isFloatDtype(y.dtype) ||
+      x.dtype === DType.Bool ||
+      y.dtype === DType.Bool
+    )
+      throw new TypeError(
+        `bit shift operations require integer inputs, got ${x} and ${y}`,
+      );
+    return [new ShapedArray(shape, x.dtype, x.weakType)];
+  },
   [Primitive.Neg]: vectorizedUnopAbstractEval,
   [Primitive.Reciprocal]: vectorizedUnopAbstractEval,
   [Primitive.Floor]: vectorizedUnopAbstractEval,

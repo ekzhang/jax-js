@@ -36,13 +36,15 @@ import type { Jaxpr } from "./jaxpr";
  * All n-ary operations support broadcasting, with NumPy semantics.
  */
 export enum Primitive {
-  // Arithmetic
+  // Arithmetic (binary operations)
   Add = "add",
   Mul = "mul",
   Idiv = "idiv",
   Mod = "mod", // uses sign of numerator, C-style, matches JS but not Python
   Min = "min",
   Max = "max",
+  BitCombine = "bit_combine",
+  BitShift = "bit_shift",
 
   // Unary functions and type casting
   Neg = "neg",
@@ -97,6 +99,8 @@ export enum Primitive {
 }
 
 interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
+  [Primitive.BitCombine]: { op: "and" | "or" | "xor" };
+  [Primitive.BitShift]: { op: "shl" | "shr" };
   [Primitive.Cast]: { dtype: DType };
   [Primitive.Bitcast]: { dtype: DType };
   [Primitive.Reduce]: { op: AluOp; axis: number[] };
@@ -167,6 +171,22 @@ export function min(x: TracerValue, y: TracerValue) {
 
 export function max(x: TracerValue, y: TracerValue) {
   return bind1(Primitive.Max, [x, y]);
+}
+
+export function bitCombine(
+  x: TracerValue,
+  y: TracerValue,
+  op: "and" | "or" | "xor",
+) {
+  return bind1(Primitive.BitCombine, [x, y], { op });
+}
+
+export function bitShift(
+  x: TracerValue,
+  y: TracerValue,
+  op: "shl" | "shr",
+) {
+  return bind1(Primitive.BitShift, [x, y], { op });
 }
 
 export function neg(x: TracerValue) {

@@ -192,6 +192,8 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
   [Primitive.Max]([x, y], [dx, dy]) {
     return [[max(x.ref, y.ref)], [where(less(x, y), dy, dx)]];
   },
+  [Primitive.BitCombine]: zeroTangentsJvp(Primitive.BitCombine),
+  [Primitive.BitShift]: zeroTangentsJvp(Primitive.BitShift),
   [Primitive.Neg]: linearTangentsJvp(Primitive.Neg),
   [Primitive.Reciprocal]([x], [dx]) {
     // d(1/x) = -x^-2 * dx

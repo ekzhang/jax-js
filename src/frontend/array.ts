@@ -933,6 +933,18 @@ export class Array extends Tracer {
       [Primitive.Max]([x, y]) {
         return [x.#binary(AluOp.Max, y)];
       },
+      [Primitive.BitCombine]([x, y], { op }) {
+        const custom = (src: AluExp[]) => AluExp.bitCombine(src[0], src[1], op);
+        return [Array.#naryCustom("bit_combine", custom, [x, y])];
+      },
+      [Primitive.BitShift]([x, y], { op }) {
+        const custom = (src: AluExp[]) => AluExp.bitShift(src[0], src[1], op);
+        return [
+          Array.#naryCustom("bit_shift", custom, [x, y], {
+            dtypeOverride: [undefined, y.dtype],
+          }),
+        ];
+      },
       [Primitive.Neg]([x]) {
         return [zerosLike(x.ref).#binary(AluOp.Sub, x)];
       },

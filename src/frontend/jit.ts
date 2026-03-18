@@ -576,6 +576,12 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   [Primitive.Mod]: broadcastedJit(([a, b]) => AluExp.mod(a, b)),
   [Primitive.Min]: broadcastedJit(([a, b]) => AluExp.min(a, b)),
   [Primitive.Max]: broadcastedJit(([a, b]) => AluExp.max(a, b)),
+  [Primitive.BitCombine]: broadcastedJit(([a, b], { op }) =>
+    AluExp.bitCombine(a, b, op),
+  ),
+  [Primitive.BitShift]: broadcastedJit(([a, b], { op }) =>
+    AluExp.bitShift(a, b, op),
+  ),
   [Primitive.Neg]: unopJit((a) => AluExp.sub(AluExp.const(a.dtype, 0), a)),
   [Primitive.Reciprocal]: unopJit(AluExp.reciprocal),
   [Primitive.Floor]: unopJit(AluExp.floor),
@@ -856,7 +862,9 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
           case Primitive.Idiv:
           case Primitive.Mod:
           case Primitive.Min:
-          case Primitive.Max: {
+          case Primitive.Max:
+          case Primitive.BitCombine:
+          case Primitive.BitShift: {
             const otherInput = nextEqn.inputs.find((v) => v !== outVar)!;
             if (
               otherInput instanceof Lit ||
