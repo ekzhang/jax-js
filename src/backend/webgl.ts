@@ -662,6 +662,13 @@ function generateExpression(
       } else if (op === AluOp.Max) {
         if (dtype === DType.Bool) source = `(${a} || ${b})`;
         else source = `max(${a}, ${b})`;
+      } else if (op === AluOp.BitCombine) {
+        if (arg === "and") source = `(${a} & ${b})`;
+        else if (arg === "or") source = `(${a} | ${b})`;
+        else source = `(${a} ^ ${b})`;
+      } else if (op === AluOp.BitShift) {
+        if (arg === "shl") source = `(${a} << ${b})`;
+        else source = `(${a} >> ${b})`;
       }
     } else if (AluGroup.Compare.has(op)) {
       const a = gen(src[0]);

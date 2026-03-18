@@ -170,6 +170,101 @@ suite.each(devices)("device:%s", (device) => {
     }
   });
 
+  test("bitwise operations", async () => {
+    const backend = getBackend(device);
+
+    const shape = ShapeTracker.fromShape([4]);
+    const gidx = AluVar.gidx;
+
+    // Test BitCombine (and, or, xor) on uint32
+    const aData = new Uint32Array([0xff00ff00, 0x0f0f0f0f, 0xaaaaaaaa, 7]);
+    const bData = new Uint32Array([0x00ff00ff, 0xf0f0f0f0, 0x55555555, 3]);
+    const a = backend.malloc(
+      4 * 4,
+      new Uint8Array(aData.buffer),
+    );
+    const b = backend.malloc(
+      4 * 4,
+      new Uint8Array(bData.buffer),
+    );
+    const c = backend.malloc(4 * 4);
+
+    try {
+      const arg1 = accessorGlobal(DType.Uint32, 0, shape, [gidx]);
+      const arg2 = accessorGlobal(DType.Uint32, 1, shape, [gidx]);
+
+      // AND
+      let exe = await backend.prepareKernel(
+        new Kernel(2, 4, AluExp.bitCombine(arg1, arg2, "and")),
+      );
+      backend.dispatch(exe, [a, b], [c]);
+      let buf = (await backend.read(c)).buffer;
+      expect(new Uint32Array(buf)).toEqual(
+        new Uint32Array([0x00000000, 0x00000000, 0x00000000, 3]),
+      );
+
+      // OR
+      exe = await backend.prepareKernel(
+        new Kernel(2, 4, AluExp.bitCombine(arg1, arg2, "or")),
+      );
+      backend.dispatch(exe, [a, b], [c]);
+      buf = (await backend.read(c)).buffer;
+      expect(new Uint32Array(buf)).toEqual(
+        new Uint32Array([0xffffffff, 0xffffffff, 0xffffffff, 7]),
+      );
+
+      // XOR
+      exe = await backend.prepareKernel(
+        new Kernel(2, 4, AluExp.bitCombine(arg1, arg2, "xor")),
+      );
+      backend.dispatch(exe, [a, b], [c]);
+      buf = (await backend.read(c)).buffer;
+      expect(new Uint32Array(buf)).toEqual(
+        new Uint32Array([0xffffffff, 0xffffffff, 0xffffffff, 4]),
+      );
+
+      // BitShift left
+      const shiftData = new Uint32Array([1, 1, 1, 1]);
+      const shiftAmt = new Uint32Array([0, 1, 8, 16]);
+      const sa = backend.malloc(4 * 4, new Uint8Array(shiftData.buffer));
+      const sb = backend.malloc(4 * 4, new Uint8Array(shiftAmt.buffer));
+
+      const sarg1 = accessorGlobal(DType.Uint32, 0, shape, [gidx]);
+      const sarg2 = accessorGlobal(DType.Uint32, 1, shape, [gidx]);
+
+      exe = await backend.prepareKernel(
+        new Kernel(2, 4, AluExp.bitShift(sarg1, sarg2, "shl")),
+      );
+      backend.dispatch(exe, [sa, sb], [c]);
+      buf = (await backend.read(c)).buffer;
+      expect(new Uint32Array(buf)).toEqual(
+        new Uint32Array([1, 2, 256, 65536]),
+      );
+
+      // BitShift right
+      const rData = new Uint32Array([256, 65536, 0xffff0000, 8]);
+      const ra = backend.malloc(4 * 4, new Uint8Array(rData.buffer));
+      const rarg1 = accessorGlobal(DType.Uint32, 0, shape, [gidx]);
+
+      exe = await backend.prepareKernel(
+        new Kernel(2, 4, AluExp.bitShift(rarg1, sarg2, "shr")),
+      );
+      backend.dispatch(exe, [ra, sb], [c]);
+      buf = (await backend.read(c)).buffer;
+      expect(new Uint32Array(buf)).toEqual(
+        new Uint32Array([256, 32768, 0x00ffff00, 0]),
+      );
+
+      backend.decRef(sa);
+      backend.decRef(sb);
+      backend.decRef(ra);
+    } finally {
+      backend.decRef(a);
+      backend.decRef(b);
+      backend.decRef(c);
+    }
+  });
+
   test("performs 64x64 matmul", async () => {
     const backend = getBackend(device);
 

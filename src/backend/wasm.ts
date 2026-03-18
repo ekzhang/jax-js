@@ -399,6 +399,13 @@ function translateExp(
           }
           cg.select();
         } else throw new UnsupportedOpError(op, dtype, "wasm");
+      } else if (op === AluOp.BitCombine) {
+        if (arg === "and") cg.i32.and();
+        else if (arg === "or") cg.i32.or();
+        else cg.i32.xor();
+      } else if (op === AluOp.BitShift) {
+        if (arg === "shl") cg.i32.shl();
+        else cg.i32.shr_u();
       } else if (op === AluOp.Cmplt) {
         const srcDtype = src[0].dtype;
         if (isFloatDtype(srcDtype)) dtyF(cg, op, srcDtype).lt();

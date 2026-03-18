@@ -143,18 +143,47 @@ export class AluExp implements FpHashable {
   ) {
     if (AluGroup.RequiredFloat.has(op) && !isFloatDtype(dtype))
       throw new TypeError(`Unsupported dtype for ${op}: ${dtype}`);
-    if (
-      op === AluOp.Bitcast &&
-      (dtype === DType.Bool ||
-        src[0].dtype === DType.Bool ||
-        byteWidth(dtype) !== byteWidth(src[0].dtype))
-    )
-      throw new TypeError(`Bitcast from ${src[0].dtype} -> ${dtype}`);
-    if (
-      op === AluOp.Threefry2x32 &&
-      (dtype !== DType.Uint32 || src.some((x) => x.dtype !== DType.Uint32))
-    )
-      throw new TypeError("Threefry2x32 requires uint32 types");
+
+    // Type guards for certain operations.
+    switch (op) {
+      case AluOp.Bitcast:
+        if (
+          dtype === DType.Bool ||
+          src[0].dtype === DType.Bool ||
+          byteWidth(dtype) !== byteWidth(src[0].dtype)
+        )
+          throw new TypeError(`Bitcast from ${src[0].dtype} -> ${dtype}`);
+        break;
+
+      case AluOp.Threefry2x32:
+        if (dtype !== DType.Uint32 || src.some((x) => x.dtype !== DType.Uint32))
+          throw new TypeError("Threefry2x32 requires uint32 types");
+        break;
+
+      case AluOp.BitCombine:
+        if (src[0].dtype !== src[1].dtype || isFloatDtype(src[0].dtype))
+          throw new TypeError(
+            `BitCombine[${arg}] requires matching integral dtype, got ${src[0].dtype} and ${src[1].dtype}`,
+          );
+        break;
+      case AluOp.BitShift:
+        if (
+          src[0].dtype === DType.Bool ||
+          src[1].dtype === DType.Bool ||
+          isFloatDtype(src[0].dtype) ||
+          isFloatDtype(src[1].dtype)
+        )
+          throw new TypeError(
+            `BitShift[${arg}] requires two integral, non-bool dtypes, got ${src[0].dtype} and ${src[1].dtype}`,
+          );
+        break;
+      case AluOp.BitInvert:
+        if (isFloatDtype(src[0].dtype))
+          throw new TypeError(
+            `BitInvert requires an integral dtype, got ${src[0].dtype}`,
+          );
+        break;
+    }
   }
 
   static add(a: AluExp, b: AluExp): AluExp {
@@ -232,6 +261,12 @@ export class AluExp implements FpHashable {
     mode: "xor" | 0 | 1 = "xor",
   ): AluExp {
     return new AluExp(AluOp.Threefry2x32, DType.Uint32, [k0, k1, c0, c1], mode);
+  }
+  static bitCombine(a: AluExp, b: AluExp, mode: "and" | "or" | "xor"): AluExp {
+    return new AluExp(AluOp.BitCombine, a.dtype, [a, b], mode);
+  }
+  static bitShift(a: AluExp, b: AluExp, mode: "shl" | "shr"): AluExp {
+    return new AluExp(AluOp.BitShift, a.dtype, [a, b], mode);
   }
   static cmplt(a: AluExp, b: AluExp): AluExp {
     return new AluExp(AluOp.Cmplt, DType.Bool, [a, b]);
@@ -1031,6 +1066,17 @@ export class AluExp implements FpHashable {
           return Math.min(x, y);
         case AluOp.Max:
           return Math.max(x, y);
+        case AluOp.BitCombine: {
+          let r: number;
+          if (this.arg === "and") r = x & y;
+          else if (this.arg === "or") r = x | y;
+          else r = x ^ y;
+          return this.dtype === DType.Int32 ? r | 0 : r >>> 0;
+        }
+        case AluOp.BitShift:
+          if (this.arg === "shl")
+            return this.dtype === DType.Int32 ? (x << y) | 0 : (x << y) >>> 0;
+          return x >>> y;
         case AluOp.Cmplt:
           return Number(x < y);
         case AluOp.Cmpne:
@@ -1205,6 +1251,14 @@ export class AluExp implements FpHashable {
       if (CMP_SYM[node.op]) {
         return `(${parts[0]} ${CMP_SYM[node.op]!} ${parts[1]})`;
       }
+      if (node.op === AluOp.BitCombine) {
+        const sym = { and: "&", or: "|", xor: "^" }[node.arg as string];
+        return `(${parts[0]} ${sym} ${parts[1]})`;
+      }
+      if (node.op === AluOp.BitShift) {
+        const sym = node.arg === "shl" ? "<<" : ">>";
+        return `(${parts[0]} ${sym} ${parts[1]})`;
+      }
 
       /* unary ops with pretty names ­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­ */
       if (UNARY_SYM[node.op]) {
@@ -1320,6 +1374,10 @@ export enum AluOp {
   Cast = "Cast",
   Bitcast = "Bitcast",
 
+  BitCombine = "BitCombine", // arg = 'or' | 'and' | 'xor'
+  BitInvert = "BitInvert",
+  BitShift = "BitShift", // arg = 'shl' | 'shr'
+
   Cmplt = "Cmplt",
   Cmpne = "Cmpne",
   Where = "Where", // Ternary operator: `cond ? a : b`
@@ -1345,6 +1403,8 @@ export const AluGroup = {
     AluOp.Mod,
     AluOp.Min,
     AluOp.Max,
+    AluOp.BitCombine,
+    AluOp.BitShift,
   ]),
   Unary: new Set([
     AluOp.Sin,
