@@ -16,10 +16,10 @@ Other features just aren't implemented yet. But those can probably be added easi
 
 In the tables below, we use a color legend to refer to functions in JAX:
 
-- 🟢 = supported **(~52%)**
+- 🟢 = supported **(~54%)**
 - 🟡 = supported, with API limitations **(~2%)**
 - 🟠 = not supported, easy to add (<1 day) **(~32%)**
-- 🔴 = not supported **(~14%)**
+- 🔴 = not supported **(~12%)**
 - ⚪️ = not applicable, will not be supported (see notes)
 
 ## [`jax`](https://docs.jax.dev/en/latest/jax.html)
@@ -161,14 +161,14 @@ Most operations behave the same way as they do in JAX.
 | `average`             | 🟢      |                                         |
 | `bartlett`            | 🟠      |                                         |
 | `bincount`            | 🟠      |                                         |
-| `bitwise_and`         | 🔴      |                                         |
-| `bitwise_count`       | 🔴      |                                         |
-| `bitwise_invert`      | 🔴      |                                         |
-| `bitwise_left_shift`  | 🔴      |                                         |
-| `bitwise_not`         | 🔴      |                                         |
-| `bitwise_or`          | 🔴      |                                         |
-| `bitwise_right_shift` | 🔴      |                                         |
-| `bitwise_xor`         | 🔴      |                                         |
+| `bitwise_and`         | 🟢      |                                         |
+| `bitwise_count`       | 🟠      |                                         |
+| `bitwise_invert`      | 🟢      | alias of `invert`                       |
+| `bitwise_left_shift`  | 🟢      | alias of `left_shift`                   |
+| `bitwise_not`         | 🟢      | alias of `invert`                       |
+| `bitwise_or`          | 🟢      |                                         |
+| `bitwise_right_shift` | 🟢      | alias of `right_shift`                  |
+| `bitwise_xor`         | 🟢      |                                         |
 | `blackman`            | 🟠      |                                         |
 | `block`               | 🟠      |                                         |
 | `broadcast_arrays`    | 🟢      |                                         |
@@ -278,7 +278,7 @@ Most operations behave the same way as they do in JAX.
 | `insert`              | 🟠      |                                         |
 | `interp`              | 🟠      |                                         |
 | `intersect1d`         | 🔴      | sorting                                 |
-| `invert`              | 🔴      |                                         |
+| `invert`              | 🟢      |                                         |
 | `isclose`             | ⚪️      | use `allclose`                          |
 | `iscomplex`           | ⚪️      | complex numbers                         |
 | `iscomplexobj`        | ⚪️      | complex numbers                         |
@@ -299,7 +299,7 @@ Most operations behave the same way as they do in JAX.
 | `kron`                | 🟠      |                                         |
 | `lcm`                 | 🔴      |                                         |
 | `ldexp`               | 🟢      |                                         |
-| `left_shift`          | 🔴      |                                         |
+| `left_shift`          | 🟢      |                                         |
 | `less`                | 🟢      |                                         |
 | `less_equal`          | 🟢      |                                         |
 | `lexsort`             | 🔴      | sorting                                 |
@@ -395,7 +395,7 @@ Most operations behave the same way as they do in JAX.
 | `reshape`             | 🟢      |                                         |
 | `resize`              | 🟠      |                                         |
 | `result_type`         | 🟠      | see `promote_types`                     |
-| `right_shift`         | 🔴      |                                         |
+| `right_shift`         | 🟢      |                                         |
 | `rint`                | 🟢      |                                         |
 | `roll`                | 🟠      |                                         |
 | `rollaxis`            | 🟠      |                                         |

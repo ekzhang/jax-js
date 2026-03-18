@@ -423,7 +423,7 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
       } else if (op === AluOp.BitCombine) {
         if (arg === "and") source = `(${a} & ${b})`;
         else if (arg === "or") source = `(${a} | ${b})`;
-        else source = `(${a} ^ ${b})`;
+        else source = dtype === DType.Bool ? `(${a} != ${b})` : `(${a} ^ ${b})`;
       } else if (op === AluOp.BitShift) {
         if (arg === "shl") source = `(${a} << ${b})`;
         else source = `(${a} >> ${b})`;

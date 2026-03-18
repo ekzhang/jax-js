@@ -168,6 +168,55 @@ export function logicalNot(x: ArrayLike): Array {
   return notEqual(astype(x, DType.Bool), true);
 }
 
+/** Compute element-wise bitwise AND. */
+export function bitwiseAnd(x: ArrayLike, y: ArrayLike): Array {
+  return core.bitCombine(x, y, "and") as Array;
+}
+
+/** Compute element-wise bitwise OR. */
+export function bitwiseOr(x: ArrayLike, y: ArrayLike): Array {
+  return core.bitCombine(x, y, "or") as Array;
+}
+
+/** Compute element-wise bitwise XOR. */
+export function bitwiseXor(x: ArrayLike, y: ArrayLike): Array {
+  return core.bitCombine(x, y, "xor") as Array;
+}
+
+/** Compute element-wise bitwise NOT (inversion). */
+export function invert(x: ArrayLike): Array {
+  const arr = fudgeArray(x);
+  let allOnes: ArrayLike;
+  switch (arr.dtype) {
+    case DType.Bool:
+      allOnes = true;
+      break;
+    case DType.Uint32:
+      allOnes = 0xffffffff;
+      break;
+    case DType.Int32:
+      allOnes = -1;
+      break;
+    default:
+      throw new TypeError(`invert: unsupported dtype ${arr.dtype}`);
+  }
+  return core.bitCombine(arr, allOnes, "xor") as Array;
+}
+
+export { invert as bitwiseInvert, invert as bitwiseNot };
+
+/** Compute element-wise left bit shift. */
+export function leftShift(x: ArrayLike, y: ArrayLike): Array {
+  return core.bitShift(x, y, "shl") as Array;
+}
+
+/** Compute element-wise right bit shift. */
+export function rightShift(x: ArrayLike, y: ArrayLike): Array {
+  return core.bitShift(x, y, "shr") as Array;
+}
+
+export { leftShift as bitShiftLeft, rightShift as bitShiftRight };
+
 /** @function Element-wise ternary operator, evaluates to `x` if cond else `y`. */
 export const where = core.where as (
   cond: ArrayLike,
