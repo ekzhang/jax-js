@@ -181,11 +181,7 @@ export function bitCombine(
   return bind1(Primitive.BitCombine, [x, y], { op });
 }
 
-export function bitShift(
-  x: TracerValue,
-  y: TracerValue,
-  op: "shl" | "shr",
-) {
+export function bitShift(x: TracerValue, y: TracerValue, op: "shl" | "shr") {
   return bind1(Primitive.BitShift, [x, y], { op });
 }
 

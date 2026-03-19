@@ -179,14 +179,8 @@ suite.each(devices)("device:%s", (device) => {
     // Test BitCombine (and, or, xor) on uint32
     const aData = new Uint32Array([0xff00ff00, 0x0f0f0f0f, 0xaaaaaaaa, 7]);
     const bData = new Uint32Array([0x00ff00ff, 0xf0f0f0f0, 0x55555555, 3]);
-    const a = backend.malloc(
-      4 * 4,
-      new Uint8Array(aData.buffer),
-    );
-    const b = backend.malloc(
-      4 * 4,
-      new Uint8Array(bData.buffer),
-    );
+    const a = backend.malloc(4 * 4, new Uint8Array(aData.buffer));
+    const b = backend.malloc(4 * 4, new Uint8Array(bData.buffer));
     const c = backend.malloc(4 * 4);
 
     try {
@@ -237,9 +231,7 @@ suite.each(devices)("device:%s", (device) => {
       );
       backend.dispatch(exe, [sa, sb], [c]);
       buf = (await backend.read(c)).buffer;
-      expect(new Uint32Array(buf)).toEqual(
-        new Uint32Array([1, 2, 256, 65536]),
-      );
+      expect(new Uint32Array(buf)).toEqual(new Uint32Array([1, 2, 256, 65536]));
 
       // BitShift right
       const rData = new Uint32Array([256, 65536, 0xffff0000, 8]);
