@@ -215,7 +215,7 @@ export function rightShift(x: ArrayLike, y: ArrayLike): Array {
   return core.bitShift(x, y, "shr") as Array;
 }
 
-export { leftShift as bitShiftLeft, rightShift as bitShiftRight };
+export { leftShift as bitwiseLeftShift, rightShift as bitwiseRightShift };
 
 /** @function Element-wise ternary operator, evaluates to `x` if cond else `y`. */
 export const where = core.where as (
