@@ -537,7 +537,7 @@ Cholesky but are missing other building blocks like:
 | `tensorinv`        | 🔴      |                                         |
 | `tensorsolve`      | 🔴      |                                         |
 | `trace`            | 🟢      |                                         |
-| `vector_norm`      | 🟠      |                                         |
+| `vector_norm`      | 🟢      |                                         |
 | `vecdot`           | 🟢      |                                         |
 
 ## [`jax.lax` module](https://docs.jax.dev/en/latest/jax.lax.html)
