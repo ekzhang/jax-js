@@ -301,4 +301,49 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
       expect(xPred).toBeAllclose(xTrue, { rtol: 1e-2, atol: 1e-4 });
     });
   });
+
+  suite("numpy.linalg.vectorNorm()", () => {
+    test("L2 norm (default)", () => {
+      const x = np.array([3.0, 4.0]);
+      expect(np.linalg.vectorNorm(x)).toBeAllclose(5.0);
+    });
+
+    test("L1 norm", () => {
+      const x = np.array([3.0, -4.0]);
+      expect(np.linalg.vectorNorm(x, { ord: 1 })).toBeAllclose(7.0);
+    });
+
+    test("Linf norm", () => {
+      const x = np.array([3.0, -4.0]);
+      expect(np.linalg.vectorNorm(x, { ord: Infinity })).toBeAllclose(4.0);
+    });
+
+    test("negative Inf norm", () => {
+      const x = np.array([3.0, -4.0]);
+      expect(np.linalg.vectorNorm(x, { ord: -Infinity })).toBeAllclose(3.0);
+    });
+
+    test("L0 norm (count nonzeros)", () => {
+      const x = np.array([0.0, 3.0, 0.0, -4.0, 5.0]);
+      expect(np.linalg.vectorNorm(x, { ord: 0 })).toBeAllclose(3.0);
+    });
+
+    test("axis argument", () => {
+      const x = np.array([
+        [3.0, 4.0],
+        [5.0, 12.0],
+      ]);
+      expect(np.linalg.vectorNorm(x, { axis: 1 })).toBeAllclose([5.0, 13.0]);
+    });
+
+    test("keepdims", () => {
+      const x = np.array([
+        [3.0, 4.0],
+        [5.0, 12.0],
+      ]);
+      const norms = np.linalg.vectorNorm(x, { axis: 1, keepdims: true });
+      expect(norms.shape).toEqual([2, 1]);
+      expect(norms).toBeAllclose([[5.0], [13.0]]);
+    });
+  });
 });
