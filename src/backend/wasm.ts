@@ -33,6 +33,150 @@ import {
 } from "./wasm/builtins";
 import { CodeGenerator } from "./wasm/wasmblr";
 
+/** SIMD version of translateExp: emits v128 (f32x4) instructions instead of scalar. */
+function translateExpSimd(
+  cg: CodeGenerator,
+  funcs: Record<string, number>,
+  exp: AluExp,
+  ctx: Record<string, number>,
+): void {
+  const references = new Map<AluExp, number>();
+  const seen = new Set<AluExp>();
+  const countReferences = (exp: AluExp) => {
+    references.set(exp, (references.get(exp) ?? 0) + 1);
+    if (!seen.has(exp)) {
+      seen.add(exp);
+      for (const src of exp.src) countReferences(src);
+    }
+  };
+
+  const expContext = new Map<AluExp, number>();
+  const gen = (exp: AluExp) => {
+    if (expContext.has(exp)) return cg.local.get(expContext.get(exp)!);
+    const { op, src, arg } = exp;
+
+    if (op === AluOp.Add) {
+      gen(src[0]);
+      gen(src[1]);
+      cg.f32x4.add();
+    } else if (op === AluOp.Sub) {
+      gen(src[0]);
+      gen(src[1]);
+      cg.f32x4.sub();
+    } else if (op === AluOp.Mul) {
+      gen(src[0]);
+      gen(src[1]);
+      cg.f32x4.mul();
+    } else if (op === AluOp.Min) {
+      gen(src[0]);
+      gen(src[1]);
+      cg.f32x4.min();
+    } else if (op === AluOp.Max) {
+      gen(src[0]);
+      gen(src[1]);
+      cg.f32x4.max();
+    } else if (op === AluOp.Sqrt) {
+      gen(src[0]);
+      cg.f32x4.sqrt();
+    } else if (op === AluOp.Const) {
+      cg.f32.const(arg as number);
+      cg.f32x4.splat();
+    } else if (op === AluOp.Variable || op === AluOp.Special) {
+      // These are scalar context variables (gidx, ridx, acc, etc.). For SIMD-
+      // eligible kernels, the only one present should be gidx inside GlobalIndex's
+      // index subtree — which we skip (we do a wide load instead). If we reach
+      // here, the eligibility check missed something.
+      throw new Error(`translateExpSimd: unexpected ${op}(${arg})`);
+    } else if (op === AluOp.GlobalIndex) {
+      // Contiguous wide load, skip the index subtree (src[0]) since we verified
+      // consecutive gidx values map to consecutive memory. Just compute
+      // base_ptr + gidx * byteWidth and v128.load 4 floats.
+      const [gid] = arg as [number, number];
+      cg.local.get(gid); // base pointer of this input buffer
+      cg.local.get(ctx["gidx"]); // current gidx (steps by 4)
+      cg.i32.const(4); // byteWidth of f32
+      cg.i32.mul();
+      cg.i32.add(); // address = base + gidx * 4
+      cg.f32x4.load(4); // v128.load, alignment 4
+    } else {
+      throw new Error(`translateExpSimd: unsupported op ${op}`);
+    }
+
+    // CSE: if this node is used more than once, store in a local
+    if ((references.get(exp) ?? 0) > 1) {
+      const local = cg.local.declare(cg.f32x4);
+      cg.local.tee(local);
+      expContext.set(exp, local);
+    }
+  };
+
+  countReferences(exp);
+  gen(exp);
+}
+
+/** Ops that have direct SIMD (f32x4) instruction variants. */
+const simdSupportedOps = new Set([
+  AluOp.Add,
+  AluOp.Sub,
+  AluOp.Mul,
+  AluOp.Min,
+  AluOp.Max,
+  AluOp.Sqrt,
+  AluOp.Const,
+  AluOp.GlobalIndex,
+]);
+
+/**
+ * Check if a kernel is eligible for SIMD (f32x4) codegen.
+ *
+ * A kernel qualifies when:
+ * - size >= 4 (need at least one v128 worth of elements)
+ * - no reduction (SIMD reductions need horizontal ops, not yet implemented)
+ * - all nodes are f32 (we only emit f32x4 instructions, i32x4 is future work)
+ * - all ops have direct SIMD variants (see simdSupportedOps)
+ * - all GlobalIndex loads are contiguous (index is just gidx, so consecutive
+ *   gidx values map to consecutive memory, so safe for v128.load)
+ * - all input buffers are >= kernel.size (v128.load reads 4 elements at once,
+ *   so the last SIMD iteration must stay in bounds)
+ */
+export function isSimdEligible(
+  tunedExp: AluExp,
+  kernel: Kernel,
+): boolean {
+  if (kernel.size < 4) return false;
+  if (kernel.reduction) return false;
+
+  const check = (exp: AluExp, visited: Set<AluExp>): boolean => {
+    if (visited.has(exp)) return true;
+    visited.add(exp);
+
+    // All visited nodes must be f32 and have SIMD variants.
+    if (exp.dtype !== DType.Float32) return false;
+    if (!simdSupportedOps.has(exp.op)) return false;
+
+    // GlobalIndex: check contiguity and buffer size, then return without
+    // recursing into children. The child subtree is scalar i32 index math that
+    // the SIMD codegen doesn't vectorize, it computes one address and does a
+    // wide v128.load, so the children don't need to pass SIMD criteria.
+    if (exp.op === AluOp.GlobalIndex) {
+      const [, len] = exp.arg as [number, number];
+      const indexExp = exp.src[0];
+      const isSimpleGidx =
+        (indexExp.op === AluOp.Special && indexExp.arg[0] === "gidx") ||
+        (indexExp.op === AluOp.Variable && indexExp.arg === "gidx");
+      return isSimpleGidx && len >= kernel.size;
+    }
+
+    // Recurse into children.
+    for (const child of exp.src) {
+      if (!check(child, visited)) return false;
+    }
+    return true;
+  };
+
+  return check(tunedExp, new Set());
+}
+
 interface WasmBuffer {
   ptr: number;
   size: number;
@@ -204,8 +348,52 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
   if (distinctOps.has(AluOp.Threefry2x32))
     funcs.threefry2x32 = wasm_threefry2x32(cg);
 
+  // Use tune.exp (not kernel.exp) since GlobalView nodes have been rewritten
+  // to GlobalIndex by this point, matching what translateExpSimd will codegen.
+  const useSimd = isSimdEligible(tune.exp, kernel);
+
   const kernelFunc = cg.function(rep(kernel.nargs + 1, cg.i32), [], () => {
     const gidx = cg.local.declare(cg.i32);
+
+    if (useSimd) {
+      // SIMD loop: process 4 elements per iteration.
+      const simdSize = kernel.size & ~3; // round down to multiple of 4
+      cg.loop(cg.void);
+      {
+        // if (gidx >= simdSize) break;
+        cg.block(cg.void);
+        cg.local.get(gidx);
+        cg.i32.const(simdSize);
+        cg.i32.ge_u();
+        cg.br_if(0);
+
+        // Output address for v128.store
+        cg.local.get(kernel.nargs);
+        cg.local.get(gidx);
+        cg.i32.const(byteWidth(kernel.dtype));
+        cg.i32.mul();
+        cg.i32.add();
+
+        // Evaluate expression tree in SIMD mode, pushes v128.
+        translateExpSimd(cg, funcs, tune.exp, { gidx });
+
+        // Store 4 results at once.
+        cg.v128.store(4);
+
+        // gidx += 4
+        cg.local.get(gidx);
+        cg.i32.const(4);
+        cg.i32.add();
+        cg.local.set(gidx);
+
+        cg.br(1);
+        cg.end();
+      }
+      cg.end();
+      // gidx is now simdSize, so fall through to scalar tail if size % 4 != 0.
+    }
+
+    // Scalar loop (full loop for non-SIMD, tail loop for SIMD).
     cg.loop(cg.void);
     {
       // if (gidx >= size) break;

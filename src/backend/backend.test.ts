@@ -292,4 +292,60 @@ suite.each(devices)("device:%s", (device) => {
       backend.decRef(b);
     }
   });
+
+  test("pointwise SIMD-eligible kernel with size not divisible by 4", async () => {
+    const backend = getBackend(device);
+    const data = new Float32Array([1, 2, 3, 4, 5, 6, 7]);
+    const a = backend.malloc(7 * 4, new Uint8Array(data.buffer));
+    const out = backend.malloc(7 * 4);
+
+    try {
+      const shape = ShapeTracker.fromShape([7]);
+      const gidx = AluVar.gidx;
+      const arg = accessorGlobal(DType.Float32, 0, shape, [gidx]);
+      const kernel = new Kernel(
+        1,
+        7,
+        AluExp.mul(AluExp.add(arg, AluExp.f32(2)), AluExp.f32(3)),
+      );
+      const exe = await backend.prepareKernel(kernel);
+      backend.dispatch(exe, [a], [out]);
+
+      const { buffer } = await backend.read(out);
+      expect(new Float32Array(buffer)).toEqual(
+        new Float32Array([9, 12, 15, 18, 21, 24, 27]),
+      );
+    } finally {
+      backend.decRef(a);
+      backend.decRef(out);
+    }
+  });
+
+  test("pointwise SIMD-eligible kernel with two inputs", async () => {
+    const backend = getBackend(device);
+    const dataA = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const dataB = new Float32Array([2, 3, 4, 5, 6, 7, 8, 9]);
+    const a = backend.malloc(8 * 4, new Uint8Array(dataA.buffer));
+    const b = backend.malloc(8 * 4, new Uint8Array(dataB.buffer));
+    const out = backend.malloc(8 * 4);
+
+    try {
+      const shape = ShapeTracker.fromShape([8]);
+      const gidx = AluVar.gidx;
+      const arg1 = accessorGlobal(DType.Float32, 0, shape, [gidx]);
+      const arg2 = accessorGlobal(DType.Float32, 1, shape, [gidx]);
+      const kernel = new Kernel(2, 8, AluExp.mul(arg1, arg2));
+      const exe = await backend.prepareKernel(kernel);
+      backend.dispatch(exe, [a, b], [out]);
+
+      const { buffer } = await backend.read(out);
+      expect(new Float32Array(buffer)).toEqual(
+        new Float32Array([2, 6, 12, 20, 30, 42, 56, 72]),
+      );
+    } finally {
+      backend.decRef(a);
+      backend.decRef(b);
+      backend.decRef(out);
+    }
+  });
 });
