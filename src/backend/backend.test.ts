@@ -22,6 +22,17 @@ suite.each(devices)("device:%s", (device) => {
     if (skipped) skip();
   });
 
+  if (device === "wasm") {
+    // Make sure tests are configured so wasm runs with SharedArrayBuffer, we
+    // want to test the multithreaded backend.
+    test("SharedArrayBuffer is available", () => {
+      if (typeof window !== "undefined") {
+        expect(window.crossOriginIsolated).toBe(true);
+      }
+      expect(typeof SharedArrayBuffer).toBe("function");
+    });
+  }
+
   test("can run simple operations", async () => {
     const backend = getBackend(device);
 

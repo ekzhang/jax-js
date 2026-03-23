@@ -6,6 +6,12 @@ import { beforeEach, expect, suite, test } from "vitest";
 const nodeDevices: Device[] = ["cpu", "wasm"];
 const devicesAvailable = await init(...nodeDevices);
 
+test("SharedArrayBuffer is available", () => {
+  expect(typeof SharedArrayBuffer).toBe("function");
+  const mem = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  expect(mem.buffer instanceof SharedArrayBuffer).toBe(true);
+});
+
 suite.each(nodeDevices)("device:%s", (device) => {
   const skipped = !devicesAvailable.includes(device);
   beforeEach(({ skip }) => {
