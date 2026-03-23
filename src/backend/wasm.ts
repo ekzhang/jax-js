@@ -156,7 +156,7 @@ export class WasmBackend implements Backend {
       const ptrs = [...inputs, ...outputs].map(
         (slot) => this.#buffers.get(slot)!.ptr,
       );
-      func(...ptrs);
+      func(...ptrs, 0, exe.source.size);
     }
 
     if (tracing) {
@@ -204,14 +204,19 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
   if (distinctOps.has(AluOp.Threefry2x32))
     funcs.threefry2x32 = wasm_threefry2x32(cg);
 
-  const kernelFunc = cg.function(rep(kernel.nargs + 1, cg.i32), [], () => {
+  // Params: arg0, ..., argN-1, output, begin, end
+  const paramBegin = kernel.nargs + 1;
+  const paramEnd = kernel.nargs + 2;
+  const kernelFunc = cg.function(rep(kernel.nargs + 3, cg.i32), [], () => {
     const gidx = cg.local.declare(cg.i32);
+    cg.local.get(paramBegin);
+    cg.local.set(gidx);
     cg.loop(cg.void);
     {
-      // if (gidx >= size) break;
+      // if (gidx >= end) break;
       cg.block(cg.void);
       cg.local.get(gidx);
-      cg.i32.const(kernel.size);
+      cg.local.get(paramEnd);
       cg.i32.ge_u();
       cg.br_if(0);
 
