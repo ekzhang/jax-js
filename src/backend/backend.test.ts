@@ -293,7 +293,7 @@ suite.each(devices)("device:%s", (device) => {
     }
   });
 
-  test("pointwise SIMD-eligible kernel with size not divisible by 4", async () => {
+  test("pointwise f32 add+mul with 7 elements", async () => {
     const backend = getBackend(device);
     const data = new Float32Array([1, 2, 3, 4, 5, 6, 7]);
     const a = backend.malloc(7 * 4, new Uint8Array(data.buffer));
@@ -321,7 +321,7 @@ suite.each(devices)("device:%s", (device) => {
     }
   });
 
-  test("pointwise SIMD-eligible kernel with two inputs", async () => {
+  test("pointwise f32 mul with two inputs", async () => {
     const backend = getBackend(device);
     const dataA = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]);
     const dataB = new Float32Array([2, 3, 4, 5, 6, 7, 8, 9]);
@@ -346,6 +346,146 @@ suite.each(devices)("device:%s", (device) => {
       backend.decRef(a);
       backend.decRef(b);
       backend.decRef(out);
+    }
+  });
+
+  test("pointwise f32 add on flipped 8-element array", async () => {
+    const backend = getBackend(device);
+    const data = new Float32Array([10, 20, 30, 40, 50, 60, 70, 80]);
+    const a = backend.malloc(8 * 4, new Uint8Array(data.buffer));
+    const out = backend.malloc(8 * 4);
+
+    try {
+      // Flip reverses the array — stride becomes -1, non-contiguous.
+      // On WASM SIMD, this exercises the gather path for pointwise kernels.
+      const shape = ShapeTracker.fromShape([8]).flip([true]);
+      const gidx = AluVar.gidx;
+      const arg = accessorGlobal(DType.Float32, 0, shape, [gidx]);
+      const kernel = new Kernel(1, 8, AluExp.add(arg, AluExp.f32(2)));
+
+      const exe = await backend.prepareKernel(kernel);
+      backend.dispatch(exe, [a], [out]);
+
+      const { buffer } = await backend.read(out);
+      // Flipped: gidx=0 reads element 7 (80), gidx=1 reads element 6 (70), etc.
+      // Each +2: [82, 72, 62, 52, 42, 32, 22, 12]
+      expect(new Float32Array(buffer)).toEqual(
+        new Float32Array([82, 72, 62, 52, 42, 32, 22, 12]),
+      );
+    } finally {
+      backend.decRef(a);
+      backend.decRef(out);
+    }
+  });
+
+  test("reduction sum on [3,8] f32 array", () => {
+    const backend = getBackend(device);
+    // [3, 8] array: sum each row of 8 elements → 3 outputs
+    const data = new Float32Array([
+      1, 2, 3, 4, 5, 6, 7, 8,
+      10, 20, 30, 40, 50, 60, 70, 80,
+      100, 200, 300, 400, 500, 600, 700, 800,
+    ]);
+    const a = backend.malloc(24 * 4, new Uint8Array(data.buffer));
+    const output = backend.malloc(3 * 4);
+    try {
+      const st = ShapeTracker.fromShape([3, 8]);
+      const exp = AluExp.globalView(DType.Float32, 0, st, [
+        AluVar.gidx,
+        AluVar.ridx,
+      ]);
+      const kernel = new Kernel(
+        1, 3, exp,
+        new Reduction(DType.Float32, AluOp.Add, 8),
+      );
+      const exe = backend.prepareKernelSync(kernel);
+      backend.dispatch(exe, [a], [output]);
+      const buf = backend.readSync(output).buffer;
+      expect(new Float32Array(buf)).toEqual(new Float32Array([36, 360, 3600]));
+    } finally {
+      backend.decRef(a);
+      backend.decRef(output);
+    }
+  });
+
+  test("reduction sum on [3,7] f32 array", () => {
+    const backend = getBackend(device);
+    // [3, 7] array: sum each row of 7 elements → 3 outputs
+    // SIMD handles 4, scalar tail handles 3
+    const data = new Float32Array([
+      1, 2, 3, 4, 5, 6, 7,
+      10, 20, 30, 40, 50, 60, 70,
+      100, 200, 300, 400, 500, 600, 700,
+    ]);
+    const a = backend.malloc(21 * 4, new Uint8Array(data.buffer));
+    const output = backend.malloc(3 * 4);
+    try {
+      const st = ShapeTracker.fromShape([3, 7]);
+      const exp = AluExp.globalView(DType.Float32, 0, st, [
+        AluVar.gidx,
+        AluVar.ridx,
+      ]);
+      const kernel = new Kernel(
+        1, 3, exp,
+        new Reduction(DType.Float32, AluOp.Add, 7),
+      );
+      const exe = backend.prepareKernelSync(kernel);
+      backend.dispatch(exe, [a], [output]);
+      const buf = backend.readSync(output).buffer;
+      expect(new Float32Array(buf)).toEqual(new Float32Array([28, 280, 2800]));
+    } finally {
+      backend.decRef(a);
+      backend.decRef(output);
+    }
+  });
+
+  test("reduction sum on permuted [8,4] f32 array", () => {
+    const backend = getBackend(device);
+    // Transposed [8, 4] array: permute swaps strides so ridx (last index)
+    // has stride 4 instead of 1. This simulates a column reduction on a
+    // transposed array — the natural frontend layout [gidx, ridx] where
+    // ridx is non-contiguous due to the permuted strides.
+    // reduction.size = 8 (>= 4) so SIMD is eligible.
+    const data = new Float32Array([
+      // Stored in memory as the original [8, 4] row-major layout:
+      1, 2, 3, 4,
+      5, 6, 7, 8,
+      9, 10, 11, 12,
+      13, 14, 15, 16,
+      17, 18, 19, 20,
+      21, 22, 23, 24,
+      25, 26, 27, 28,
+      29, 30, 31, 32,
+    ]);
+    const a = backend.malloc(32 * 4, new Uint8Array(data.buffer));
+    const output = backend.malloc(4 * 4);
+    try {
+      // permute([1, 0]) gives shape [4, 8] with strides [1, 4].
+      // With indices [gidx, ridx]: gidx has stride 1, ridx has stride 4.
+      // Stepping ridx by 1 gives stride-4 access — non-contiguous.
+      const st = ShapeTracker.fromShape([8, 4]).permute([1, 0]);
+      const exp = AluExp.globalView(DType.Float32, 0, st, [
+        AluVar.gidx,
+        AluVar.ridx,
+      ]);
+      const kernel = new Kernel(
+        1, 4, exp,
+        new Reduction(DType.Float32, AluOp.Add, 8),
+      );
+      const exe = backend.prepareKernelSync(kernel);
+      backend.dispatch(exe, [a], [output]);
+      const buf = backend.readSync(output).buffer;
+      // Each output[gidx] sums column gidx across 8 rows.
+      // gidx=0: 1+5+9+13+17+21+25+29 = 120
+      // gidx=1: 2+6+10+14+18+22+26+30 = 128
+      // gidx=2: 3+7+11+15+19+23+27+31 = 136
+      // gidx=3: 4+8+12+16+20+24+28+32 = 144
+      expect(new Float32Array(buf)).toEqual(
+        new Float32Array([120, 128, 136, 144]),
+      );
+    } finally {
+      backend.decRef(a);
+      backend.decRef(output);
     }
   });
 });

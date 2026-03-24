@@ -33,12 +33,18 @@ import {
 } from "./wasm/builtins";
 import { CodeGenerator } from "./wasm/wasmblr";
 
-/** SIMD version of translateExp: emits v128 (f32x4) instructions instead of scalar. */
+/**
+ * SIMD version of translateExp: emits v128 (f32x4) instructions instead of scalar.
+ * stepping: which loop variable steps by 4 — "gidx" for pointwise, "ridx" for reduction inner loop.
+ * contiguous: map from GlobalIndex nodes to whether they can use wide v128.load (true) or need 4 scalar loads (false).
+ */
 function translateExpSimd(
   cg: CodeGenerator,
   funcs: Record<string, number>,
   exp: AluExp,
   ctx: Record<string, number>,
+  stepping: "gidx" | "ridx",
+  contiguous: Map<AluExp, boolean>,
 ): void {
   const references = new Map<AluExp, number>();
   const seen = new Set<AluExp>();
@@ -82,22 +88,94 @@ function translateExpSimd(
       cg.f32.const(arg as number);
       cg.f32x4.splat();
     } else if (op === AluOp.Variable || op === AluOp.Special) {
-      // These are scalar context variables (gidx, ridx, acc, etc.). For SIMD-
-      // eligible kernels, the only one present should be gidx inside GlobalIndex's
-      // index subtree — which we skip (we do a wide load instead). If we reach
-      // here, the eligibility check missed something.
+      // These are scalar context variables (gidx, ridx, acc, etc.). They only
+      // appear inside GlobalIndex's index subtree, which we handle below via
+      // scalar translateExp. If we reach here outside of GlobalIndex, the
+      // eligibility check missed something.
       throw new Error(`translateExpSimd: unexpected ${op}(${arg})`);
     } else if (op === AluOp.GlobalIndex) {
-      // Contiguous wide load, skip the index subtree (src[0]) since we verified
-      // consecutive gidx values map to consecutive memory. Just compute
-      // base_ptr + gidx * byteWidth and v128.load 4 floats.
-      const [gid] = arg as [number, number];
-      cg.local.get(gid); // base pointer of this input buffer
-      cg.local.get(ctx["gidx"]); // current gidx (steps by 4)
-      cg.i32.const(4); // byteWidth of f32
-      cg.i32.mul();
-      cg.i32.add(); // address = base + gidx * 4
-      cg.f32x4.load(4); // v128.load, alignment 4
+      const [gid, len] = arg as [number, number];
+      const indexSubtree = src[0];
+      const isContig = contiguous.get(exp) ?? false;
+
+      if (isContig) {
+        // Wide load: evaluate index subtree once (scalar) to get starting
+        // address, then v128.load 4 consecutive elements.
+        // If index is out-of-bounds, clamp to len-4 to prevent WASM traps.
+        translateExp(cg, funcs, indexSubtree, ctx);
+        {
+          const maxIdx = Math.max(len - 4, 0);
+          const wideIdx = cg.local.declare(cg.i32);
+          cg.local.set(wideIdx);
+          cg.local.get(wideIdx); // val_true = index
+          cg.i32.const(maxIdx); // val_false = maxIdx
+          cg.local.get(wideIdx);
+          cg.i32.const(maxIdx);
+          cg.i32.lt_u(); // condition: index < maxIdx
+          cg.select();
+        }
+
+        cg.i32.const(byteWidth(DType.Float32));
+        cg.i32.mul();
+        cg.local.get(gid); // base pointer
+        cg.i32.add();
+        cg.f32x4.load(4);
+      } else {
+        // Gather: evaluate index subtree 4 times with stepping_var+0,+1,+2,+3,
+        // do 4 scalar loads, pack into v128.
+        const steppingLocal = ctx[stepping];
+        const origValue = cg.local.declare(cg.i32);
+        cg.local.get(steppingLocal);
+        cg.local.set(origValue);
+
+        // Start with zeros, replace each lane
+        cg.f32.const(0);
+        cg.f32x4.splat();
+        const vec = cg.local.declare(cg.f32x4);
+        cg.local.set(vec);
+
+        const idx = cg.local.declare(cg.i32);
+        const scalarVal = cg.local.declare(cg.f32);
+
+        for (let lane = 0; lane < 4; lane++) {
+          // Set stepping var to original + lane
+          cg.local.get(origValue);
+          if (lane > 0) {
+            cg.i32.const(lane);
+            cg.i32.add();
+          }
+          cg.local.set(steppingLocal);
+
+          // Evaluate index subtree to get flat element index, with OOB clamping.
+          // Same bounds check as scalar translateExp's GlobalIndex handler:
+          // if index >= len, use 0 instead (prevents WASM memory traps).
+          translateExp(cg, funcs, indexSubtree, ctx);
+          cg.local.tee(idx);
+          cg.i32.const(0);
+          (cg.local.get(idx), cg.i32.const(len), cg.i32.lt_u());
+          cg.select();
+
+          cg.i32.const(byteWidth(DType.Float32));
+          cg.i32.mul();
+          cg.local.get(gid); // base pointer
+          cg.i32.add();
+          cg.f32.load(2); // scalar f32 load
+
+          // Pack into v128: replace_lane expects [v128, f32] on stack
+          cg.local.set(scalarVal);
+          cg.local.get(vec);
+          cg.local.get(scalarVal);
+          cg.f32x4.replace_lane(lane);
+          cg.local.set(vec);
+        }
+
+        // Restore original stepping var value
+        cg.local.get(origValue);
+        cg.local.set(steppingLocal);
+
+        // Push the gathered v128 onto the stack
+        cg.local.get(vec);
+      }
     } else {
       throw new Error(`translateExpSimd: unsupported op ${op}`);
     }
@@ -112,6 +190,34 @@ function translateExpSimd(
 
   countReferences(exp);
   gen(exp);
+}
+
+/**
+ * Check if a flat index expression has stride 1 w.r.t. a stepping variable.
+ *
+ * After lowering (GlobalView → GlobalIndex) and simplification, a contiguous
+ * access's flat index is either:
+ * - just the stepping variable: `gidx` (pointwise) or `ridx` (reduction)
+ * - the stepping variable added to terms that don't involve it: `gidx*8 + ridx`
+ *
+ * This relies on the simplifier folding contiguous round-trips like
+ * `(x/A)*A + x%A => x`, so the flat index reduces to the bare variable
+ * when the access is truly stride-1.
+ */
+function isContiguousWrt(exp: AluExp, varName: string): boolean {
+  const isVar = (e: AluExp): boolean =>
+    e.op === AluOp.Special && e.arg[0] === varName;
+  const containsVar = (e: AluExp): boolean =>
+    isVar(e) || e.src.some(containsVar);
+
+  if (isVar(exp)) return true;
+  if (exp.op === AluOp.Add) {
+    for (let i = 0; i < 2; i++) {
+      if (isContiguousWrt(exp.src[i], varName) && !containsVar(exp.src[1 - i]))
+        return true;
+    }
+  }
+  return false;
 }
 
 /** Ops that have direct SIMD (f32x4) instruction variants. */
@@ -130,21 +236,19 @@ const simdSupportedOps = new Set([
  * Check if a kernel is eligible for SIMD (f32x4) codegen.
  *
  * A kernel qualifies when:
- * - size >= 4 (need at least one v128 worth of elements)
- * - no reduction (SIMD reductions need horizontal ops, not yet implemented)
- * - all nodes are f32 (we only emit f32x4 instructions, i32x4 is future work)
- * - all ops have direct SIMD variants (see simdSupportedOps)
- * - all GlobalIndex loads are contiguous (index is just gidx, so consecutive
- *   gidx values map to consecutive memory, so safe for v128.load)
- * - all input buffers are >= kernel.size (v128.load reads 4 elements at once,
- *   so the last SIMD iteration must stay in bounds)
+ * - For pointwise: size >= 4
+ * - For reductions: reduction.size >= 4 and reduction dtype is f32
+ * - All nodes are f32 (we only emit f32x4 instructions, i32x4 is future work)
+ * - All ops have direct SIMD variants (see simdSupportedOps)
  */
-export function isSimdEligible(
-  tunedExp: AluExp,
-  kernel: Kernel,
-): boolean {
-  if (kernel.size < 4) return false;
-  if (kernel.reduction) return false;
+export function isSimdEligible(tunedExp: AluExp, kernel: Kernel): boolean {
+  if (kernel.reduction) {
+    if (kernel.reduction.size < 4) return false;
+    if (kernel.reduction.dtype !== DType.Float32) return false;
+    if (!simdSupportedOps.has(kernel.reduction.op)) return false;
+  } else {
+    if (kernel.size < 4) return false;
+  }
 
   const check = (exp: AluExp, visited: Set<AluExp>): boolean => {
     if (visited.has(exp)) return true;
@@ -154,18 +258,10 @@ export function isSimdEligible(
     if (exp.dtype !== DType.Float32) return false;
     if (!simdSupportedOps.has(exp.op)) return false;
 
-    // GlobalIndex: check contiguity and buffer size, then return without
-    // recursing into children. The child subtree is scalar i32 index math that
-    // the SIMD codegen doesn't vectorize, it computes one address and does a
-    // wide v128.load, so the children don't need to pass SIMD criteria.
-    if (exp.op === AluOp.GlobalIndex) {
-      const [, len] = exp.arg as [number, number];
-      const indexExp = exp.src[0];
-      const isSimpleGidx =
-        (indexExp.op === AluOp.Special && indexExp.arg[0] === "gidx") ||
-        (indexExp.op === AluOp.Variable && indexExp.arg === "gidx");
-      return isSimpleGidx && len >= kernel.size;
-    }
+    // GlobalIndex: skip the index subtree. It's scalar i32 index math that
+    // translateExpSimd evaluates scalarly (via translateExp). Non-contiguous
+    // access is handled by the gather fallback.
+    if (exp.op === AluOp.GlobalIndex) return true;
 
     // Recurse into children.
     for (const child of exp.src) {
@@ -324,6 +420,23 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
     console.info(`kernel.exp: ${kernel.exp}\ntune.exp: ${tune.exp}`);
   }
 
+  // Use tune.exp (not kernel.exp) since GlobalView nodes have been rewritten
+  // to GlobalIndex by this point, matching what translateExpSimd will codegen.
+  const useSimd = isSimdEligible(tune.exp, kernel);
+
+  // Analyze per-node contiguity on the simplified tree (only needed for SIMD).
+  // For pointwise SIMD, gidx steps by 4, so we check stride-1 w.r.t. gidx.
+  // For reduction SIMD, ridx steps by 4, so we check stride-1 w.r.t. ridx.
+  const bufferContiguity = new Map<AluExp, boolean>();
+  if (useSimd) {
+    const steppingVar = re ? "ridx" : "gidx";
+    tune.exp
+      .collect((e) => e.op === AluOp.GlobalIndex)
+      .forEach((gi) => {
+        bufferContiguity.set(gi, isContiguousWrt(gi.src[0], steppingVar));
+      });
+  }
+
   const cg = new CodeGenerator();
   cg.memory.import("env", "memory");
 
@@ -348,15 +461,11 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
   if (distinctOps.has(AluOp.Threefry2x32))
     funcs.threefry2x32 = wasm_threefry2x32(cg);
 
-  // Use tune.exp (not kernel.exp) since GlobalView nodes have been rewritten
-  // to GlobalIndex by this point, matching what translateExpSimd will codegen.
-  const useSimd = isSimdEligible(tune.exp, kernel);
-
   const kernelFunc = cg.function(rep(kernel.nargs + 1, cg.i32), [], () => {
     const gidx = cg.local.declare(cg.i32);
 
-    if (useSimd) {
-      // SIMD loop: process 4 elements per iteration.
+    if (useSimd && !re) {
+      // Pointwise SIMD loop: process 4 output elements per iteration.
       const simdSize = kernel.size & ~3; // round down to multiple of 4
       cg.loop(cg.void);
       {
@@ -375,7 +484,14 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
         cg.i32.add();
 
         // Evaluate expression tree in SIMD mode, pushes v128.
-        translateExpSimd(cg, funcs, tune.exp, { gidx });
+        translateExpSimd(
+          cg,
+          funcs,
+          tune.exp,
+          { gidx },
+          "gidx",
+          bufferContiguity,
+        );
 
         // Store 4 results at once.
         cg.v128.store(4);
@@ -410,8 +526,109 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
       cg.i32.mul();
       cg.i32.add();
 
-      if (re) {
-        // If reduction, define accumulator and inner ridx loop.
+      if (re && useSimd) {
+        // SIMD reduction: vectorize the inner ridx loop, stepping by 4.
+        // Note: accumulating 4 partial results then horizontal-reducing
+        // reorders operations vs. the scalar path, so floating-point
+        // results may differ slightly due to reassociation.
+        const simdReSize = re.size & ~3;
+        const ridx = cg.local.declare(cg.i32);
+
+        // v128 accumulator initialized with identity values.
+        const vecAcc = cg.local.declare(cg.f32x4);
+        cg.f32.const(re.identity);
+        cg.f32x4.splat();
+        cg.local.set(vecAcc);
+
+        // SIMD inner loop: ridx steps by 4.
+        cg.i32.const(0);
+        cg.local.set(ridx);
+        cg.loop(cg.void);
+        {
+          cg.block(cg.void);
+          cg.local.get(ridx);
+          cg.i32.const(simdReSize);
+          cg.i32.ge_u();
+          cg.br_if(0);
+
+          // Evaluate expression tree in SIMD mode (stepping ridx by 4).
+          translateExpSimd(
+            cg,
+            funcs,
+            tune.exp,
+            { gidx, ridx },
+            "ridx",
+            bufferContiguity,
+          );
+
+          // vecAcc = f32x4.op(vecAcc, values)
+          cg.local.get(vecAcc);
+          if (re.op === AluOp.Add) cg.f32x4.add();
+          else if (re.op === AluOp.Mul) cg.f32x4.mul();
+          else if (re.op === AluOp.Min) cg.f32x4.min();
+          else if (re.op === AluOp.Max) cg.f32x4.max();
+          else throw new Error(`invalid SIMD reduction op: ${re.op}`);
+          cg.local.set(vecAcc);
+
+          // ridx += 4
+          cg.local.get(ridx);
+          cg.i32.const(4);
+          cg.i32.add();
+          cg.local.set(ridx);
+
+          cg.br(1);
+          cg.end();
+        }
+        cg.end();
+
+        // Horizontal reduce: collapse 4 lanes into 1 scalar.
+        const acc = cg.local.declare(cg.f32);
+        cg.local.get(vecAcc);
+        cg.f32x4.extract_lane(0);
+        cg.local.set(acc);
+        for (let lane = 1; lane < 4; lane++) {
+          cg.local.get(vecAcc);
+          cg.f32x4.extract_lane(lane);
+          cg.local.get(acc);
+          if (re.op === AluOp.Add) cg.f32.add();
+          else if (re.op === AluOp.Mul) cg.f32.mul();
+          else if (re.op === AluOp.Min) cg.f32.min();
+          else if (re.op === AluOp.Max) cg.f32.max();
+          cg.local.set(acc);
+        }
+
+        // Scalar tail: handle remaining ridx values.
+        // ridx is already at simdReSize from the SIMD loop.
+        cg.loop(cg.void);
+        {
+          cg.block(cg.void);
+          cg.local.get(ridx);
+          cg.i32.const(re.size);
+          cg.i32.ge_u();
+          cg.br_if(0);
+
+          translateExp(cg, funcs, tune.exp, { gidx, ridx });
+          cg.local.get(acc);
+          if (re.op === AluOp.Add) cg.f32.add();
+          else if (re.op === AluOp.Mul) cg.f32.mul();
+          else if (re.op === AluOp.Min) cg.f32.min();
+          else if (re.op === AluOp.Max) cg.f32.max();
+          cg.local.set(acc);
+
+          cg.local.get(ridx);
+          cg.i32.const(1);
+          cg.i32.add();
+          cg.local.set(ridx);
+
+          cg.br(1);
+          cg.end();
+        }
+        cg.end();
+
+        // Apply epilogue with scalar accumulator.
+        translateExp(cg, funcs, tune.epilogue!, { acc, gidx });
+      } else if (re) {
+        // Scalar reduction (non-SIMD eligible).
         const acc = cg.local.declare(dty(cg, null, kernel.exp.dtype));
         dty(cg, null, kernel.exp.dtype).const(re.identity);
         cg.local.set(acc);
