@@ -13,7 +13,7 @@
     live: boolean;
   }
 
-  // Fall back to these if
+  // Fall back to these if demo can't run.
   const ericLaptopResults: PerfResults = {
     flops: {
       Wasm: 8.85,
