@@ -16,7 +16,7 @@
   // Fall back to these if
   const ericLaptopResults: PerfResults = {
     flops: {
-      Wasm: 2.72,
+      Wasm: 8.85,
       WebGPU: 2071,
       "WebGPU-fp16": 3343,
     },
@@ -117,7 +117,7 @@
 
     return {
       flops: {
-        Wasm: await benchFlops(128, "wasm", "float32"),
+        Wasm: await benchFlops(256, "wasm", "float32"),
         WebGPU: await benchFlops(gpuDim, "webgpu", "float32"),
         "WebGPU-fp16": hasF16
           ? await benchFlops(gpuDim, "webgpu", "float16")

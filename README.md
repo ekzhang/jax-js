@@ -311,7 +311,9 @@ and determines how to execute compiled operations on them.
 There are currently 4 devices in jax-js:
 
 - `cpu`: Slow, interpreted JS, only meant for debugging.
-- `wasm`: [WebAssembly](https://webassembly.org/), currently single-threaded and blocking.
+- `wasm`: [WebAssembly](https://webassembly.org/), multi-threaded when
+  [`SharedArrayBuffer`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer)
+  is available.
 - `webgpu`: [WebGPU](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API), available on
   [supported browsers](https://caniuse.com/webgpu) (Chrome, Firefox, Safari, iOS).
 - `webgl`: [WebGL2](https://developer.mozilla.org/en-US/docs/Web/API/WebGL2RenderingContext), via

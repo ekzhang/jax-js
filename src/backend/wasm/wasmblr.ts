@@ -410,7 +410,7 @@ export class CodeGenerator {
         concat(importSectionBytes, encodeString(this.memory.aString));
         concat(importSectionBytes, encodeString(this.memory.bString));
         importSectionBytes.push(0x02); // memory flag
-        if (this.memory.min && this.memory.max) {
+        if (this.memory.max) {
           if (this.memory.isShared) {
             importSectionBytes.push(0x03);
           } else {
