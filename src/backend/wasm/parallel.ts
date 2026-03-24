@@ -10,7 +10,10 @@
 
 /** Check if SharedArrayBuffer is available. */
 export function hasSharedArrayBuffer(): boolean {
-  return typeof SharedArrayBuffer !== "undefined";
+  // Node.js has SharedArrayBuffer but not Worker, so check both.
+  return (
+    typeof SharedArrayBuffer !== "undefined" && typeof Worker !== "undefined"
+  );
 }
 
 const MIN_ELEMS_PER_THREAD = 256;
@@ -84,7 +87,7 @@ export class WasmWorkerPool {
     this.#workers = [];
     const readyPromises: Promise<void>[] = [];
     for (let i = 0; i < this.#numWorkers; i++) {
-      const worker = new Worker(url);
+      const worker = new Worker(url, { type: "module" });
       this.#workers.push(worker);
       readyPromises.push(
         new Promise<void>((resolve, reject) => {
