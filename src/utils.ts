@@ -438,3 +438,19 @@ export function runWithCache<V>(
     return value;
   }
 }
+
+/** Async version of `runWithCache`. */
+export async function runWithCacheAsync<V>(
+  cache: Map<string, V>,
+  key: unknown,
+  thunk: () => Promise<V>,
+): Promise<V> {
+  const keyStr = JSON.stringify(key);
+  if (cache.has(keyStr)) {
+    return cache.get(keyStr)!;
+  } else {
+    const value = await thunk();
+    cache.set(keyStr, value);
+    return value;
+  }
+}

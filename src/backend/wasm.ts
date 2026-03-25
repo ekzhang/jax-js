@@ -18,7 +18,14 @@ import {
 import { Routine, runCpuRoutine } from "../routine";
 import { emitTrace, isTracing, traceSourceInfo } from "../tracing";
 import { tuneNullopt } from "../tuner";
-import { DEBUG, FpHash, mapSetUnion, rep, runWithCache } from "../utils";
+import {
+  DEBUG,
+  FpHash,
+  mapSetUnion,
+  rep,
+  runWithCache,
+  runWithCacheAsync,
+} from "../utils";
 import { WasmAllocator } from "./wasm/allocator";
 import {
   wasm_asin,
@@ -31,6 +38,11 @@ import {
   wasm_sin,
   wasm_threefry2x32,
 } from "./wasm/builtins";
+import {
+  createWorkerPool,
+  hasSharedArrayBuffer,
+  WasmWorkerPool,
+} from "./wasm/parallel";
 import { CodeGenerator } from "./wasm/wasmblr";
 
 /**
@@ -281,6 +293,7 @@ interface WasmBuffer {
 
 interface WasmProgram {
   module: WebAssembly.Module;
+  parallel: boolean;
 }
 
 const moduleCache = new Map<string, WebAssembly.Module>();
@@ -294,12 +307,17 @@ export class WasmBackend implements Backend {
   #nextSlot: number;
   #allocator: WasmAllocator;
   #buffers: Map<Slot, WasmBuffer>;
+  #workerPool: WasmWorkerPool | null;
+  #pendingWork: Map<Slot, bigint> = new Map();
 
   constructor() {
-    this.#memory = new WebAssembly.Memory({ initial: 0 });
+    this.#memory = hasSharedArrayBuffer()
+      ? new WebAssembly.Memory({ initial: 0, maximum: 65536, shared: true })
+      : new WebAssembly.Memory({ initial: 0 });
     this.#allocator = new WasmAllocator(this.#memory);
     this.#nextSlot = 1;
     this.#buffers = new Map();
+    this.#workerPool = createWorkerPool(this.#memory);
   }
 
   malloc(size: number, initialData?: Uint8Array): Slot {
@@ -337,7 +355,9 @@ export class WasmBackend implements Backend {
     start?: number,
     count?: number,
   ): Promise<Uint8Array<ArrayBuffer>> {
-    return this.readSync(slot, start, count);
+    const epoch = this.#pendingWork.get(slot);
+    if (epoch) await this.#workerPool!.waitForEpoch(epoch);
+    return this.#readData(slot, start, count);
   }
 
   readSync(
@@ -345,23 +365,52 @@ export class WasmBackend implements Backend {
     start?: number,
     count?: number,
   ): Uint8Array<ArrayBuffer> {
+    const epoch = this.#pendingWork.get(slot);
+    if (epoch && this.#workerPool!.epoch < epoch)
+      throw new Error("cannot read synchronously from a slot with async work");
+    return this.#readData(slot, start, count);
+  }
+
+  #readData(
+    slot: Slot,
+    start?: number,
+    count?: number,
+  ): Uint8Array<ArrayBuffer> {
     const buffer = this.#getBuffer(slot);
     if (start === undefined) start = 0;
     if (count === undefined) count = buffer.byteLength - start;
-    return buffer.slice(start, start + count);
+    if (buffer.buffer instanceof SharedArrayBuffer) {
+      // For SharedArrayBuffer, we need to copy the data to ArrayBuffer.
+      return new Uint8Array(buffer.slice(start, start + count));
+    } else {
+      return buffer.slice(start, start + count);
+    }
   }
 
   async prepareKernel(kernel: Kernel): Promise<Executable<WasmProgram>> {
-    return this.prepareKernelSync(kernel);
+    const kernelHash = FpHash.hash(kernel);
+    const module = await runWithCacheAsync(
+      moduleCache,
+      kernelHash.toString(),
+      () => WebAssembly.compile(codegenWasm(kernel)),
+    );
+    return new Executable(kernel, {
+      module,
+      parallel: this.#workerPool !== null,
+    });
   }
 
   prepareKernelSync(kernel: Kernel): Executable<WasmProgram> {
     const kernelHash = FpHash.hash(kernel);
-    const module = runWithCache(moduleCache, kernelHash.toString(), () => {
-      const bytes = codegenWasm(kernel);
-      return new WebAssembly.Module(bytes);
+    const module = runWithCache(
+      moduleCache,
+      kernelHash.toString(),
+      () => new WebAssembly.Module(codegenWasm(kernel)),
+    );
+    return new Executable(kernel, {
+      module,
+      parallel: false,
     });
-    return new Executable(kernel, { module });
   }
 
   async prepareRoutine(routine: Routine): Promise<Executable<WasmProgram>> {
@@ -371,7 +420,7 @@ export class WasmBackend implements Backend {
   prepareRoutineSync(routine: Routine): Executable<WasmProgram> {
     // Currently, Wasm routines fall back to the CPU reference implementation
     // implementation. We may optimize this in the future.
-    return new Executable(routine, undefined as any);
+    return new Executable(routine, { module: undefined!, parallel: false });
   }
 
   dispatch(
@@ -389,14 +438,33 @@ export class WasmBackend implements Backend {
         outputs.map((slot) => this.#getBuffer(slot)),
       );
     } else {
-      const instance = new WebAssembly.Instance(exe.data.module, {
-        env: { memory: this.#memory },
-      });
-      const func = instance.exports.kernel as (...args: number[]) => void;
       const ptrs = [...inputs, ...outputs].map(
         (slot) => this.#buffers.get(slot)!.ptr,
       );
-      func(...ptrs);
+      if (exe.data.parallel && this.#workerPool) {
+        const epoch = this.#workerPool.dispatch(
+          exe.data.module,
+          ptrs,
+          exe.source.size,
+        );
+        for (const slot of outputs) this.#pendingWork.set(slot, epoch);
+      } else {
+        if (
+          inputs.some((slot) => {
+            const epoch = this.#pendingWork.get(slot);
+            return epoch && this.#workerPool!.epoch < epoch;
+          })
+        ) {
+          throw new Error(
+            "cannot dispatch synchronously with pending async work",
+          );
+        }
+        const instance = new WebAssembly.Instance(exe.data.module, {
+          env: { memory: this.#memory },
+        });
+        const func = instance.exports.kernel as (...args: number[]) => void;
+        func(...ptrs, 0, exe.source.size);
+      }
     }
 
     if (tracing) {
@@ -439,6 +507,9 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
 
   const cg = new CodeGenerator();
   cg.memory.import("env", "memory");
+  if (hasSharedArrayBuffer()) {
+    cg.memory.pages(0, 65536).shared(true);
+  }
 
   const distinctOps = mapSetUnion(
     tune.exp.distinctOps(),
@@ -461,18 +532,33 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
   if (distinctOps.has(AluOp.Threefry2x32))
     funcs.threefry2x32 = wasm_threefry2x32(cg);
 
-  const kernelFunc = cg.function(rep(kernel.nargs + 1, cg.i32), [], () => {
+  // Params: arg0, ..., argN-1, output, begin, end
+  const paramBegin = kernel.nargs + 1;
+  const paramEnd = kernel.nargs + 2;
+  const kernelFunc = cg.function(rep(kernel.nargs + 3, cg.i32), [], () => {
     const gidx = cg.local.declare(cg.i32);
+    cg.local.get(paramBegin);
+    cg.local.set(gidx);
 
     if (useSimd && !re) {
       // Pointwise SIMD loop: process 4 output elements per iteration.
-      const simdSize = kernel.size & ~3; // round down to multiple of 4
+      // Compute simdEnd at runtime: begin + ((end - begin) & ~3)
+      const simdEnd = cg.local.declare(cg.i32);
+      cg.local.get(paramEnd);
+      cg.local.get(paramBegin);
+      cg.i32.sub();
+      cg.i32.const(~3);
+      cg.i32.and();
+      cg.local.get(paramBegin);
+      cg.i32.add();
+      cg.local.set(simdEnd);
+
       cg.loop(cg.void);
       {
-        // if (gidx >= simdSize) break;
+        // if (gidx >= simdEnd) break;
         cg.block(cg.void);
         cg.local.get(gidx);
-        cg.i32.const(simdSize);
+        cg.local.get(simdEnd);
         cg.i32.ge_u();
         cg.br_if(0);
 
@@ -506,16 +592,16 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
         cg.end();
       }
       cg.end();
-      // gidx is now simdSize, so fall through to scalar tail if size % 4 != 0.
+      // gidx is now simdEnd, fall through to scalar tail.
     }
 
     // Scalar loop (full loop for non-SIMD, tail loop for SIMD).
     cg.loop(cg.void);
     {
-      // if (gidx >= size) break;
+      // if (gidx >= end) break;
       cg.block(cg.void);
       cg.local.get(gidx);
-      cg.i32.const(kernel.size);
+      cg.local.get(paramEnd);
       cg.i32.ge_u();
       cg.br_if(0);
 

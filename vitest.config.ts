@@ -9,6 +9,12 @@ export default defineConfig({
       using: false, // Needed to lower 'using' statements in tests.
     },
   },
+  server: {
+    headers: {
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "require-corp",
+    },
+  },
   test: {
     browser: {
       enabled: true,
