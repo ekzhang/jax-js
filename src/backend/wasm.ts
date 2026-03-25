@@ -96,6 +96,12 @@ function translateExpSimd(
     } else if (op === AluOp.Sqrt) {
       gen(src[0]);
       cg.f32x4.sqrt();
+    } else if (op === AluOp.Floor) {
+      gen(src[0]);
+      cg.f32x4.floor();
+    } else if (op === AluOp.Ceil) {
+      gen(src[0]);
+      cg.f32x4.ceil();
     } else if (op === AluOp.Const) {
       cg.f32.const(arg as number);
       cg.f32x4.splat();
@@ -207,12 +213,11 @@ function translateExpSimd(
 /**
  * Check if a flat index expression has stride 1 w.r.t. a stepping variable.
  *
- * After lowering (GlobalView → GlobalIndex) and simplification, a contiguous
- * access's flat index is either:
- * - just the stepping variable: `gidx` (pointwise) or `ridx` (reduction)
- * - the stepping variable added to terms that don't involve it: `gidx*8 + ridx`
+ * After lowering GlobalView to GlobalIndex and simplifying, a contiguous
+ * access's flat index is either just the stepping variable (`gidx` or `ridx`)
+ * or the stepping variable added to terms that don't involve it (`gidx*8 + ridx`).
  *
- * This relies on the simplifier folding contiguous round-trips like
+ * Relies on the simplifier folding contiguous round-trips like
  * `(x/A)*A + x%A => x`, so the flat index reduces to the bare variable
  * when the access is truly stride-1.
  */
@@ -237,6 +242,8 @@ const simdSupportedOps = new Set([
   AluOp.Add,
   AluOp.Sub,
   AluOp.Mul,
+  AluOp.Floor,
+  AluOp.Ceil,
   AluOp.Min,
   AluOp.Max,
   AluOp.Sqrt,
