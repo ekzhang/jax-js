@@ -190,4 +190,58 @@ suite("CodeGenerator", () => {
     expect(callImported(2, 3)).toBe(6); // 2 + 3 + 1
     expect(callImported(5.5, 4.5)).toBe(11); // 5.5 + 4.5 + 1
   });
+
+  test("i32x4.trunc_sat_f32x4_s converts f32x4 to i32x4", async () => {
+    const cg = new CodeGenerator();
+    cg.memory.pages(1).export("memory");
+
+    // Loads 4 floats from memory, truncates to i32x4, stores back
+    const func = cg.function([cg.i32, cg.i32], [], () => {
+      cg.local.get(1); // dst addr (pushed first for store)
+      cg.local.get(0); // src addr
+      cg.v128.load(4);
+      cg.i32x4.trunc_sat_f32x4_s();
+      cg.v128.store(4);
+    });
+    cg.export(func, "truncSat");
+
+    const wasmBytes = cg.finish();
+    const { instance } = await WebAssembly.instantiate(wasmBytes);
+    const { memory, truncSat } = instance.exports as {
+      memory: WebAssembly.Memory;
+      truncSat: (src: number, dst: number) => void;
+    };
+
+    new Float32Array(memory.buffer).set([1.9, -2.7, 3.1, -4.8]);
+    truncSat(0, 16);
+    const result = new Int32Array(memory.buffer, 16, 4);
+    expect([...result]).toEqual([1, -2, 3, -4]);
+  });
+
+  test("f32x4.convert_i32x4_s converts i32x4 to f32x4", async () => {
+    const cg = new CodeGenerator();
+    cg.memory.pages(1).export("memory");
+
+    // Loads 4 ints from memory, converts to f32x4, stores back
+    const func = cg.function([cg.i32, cg.i32], [], () => {
+      cg.local.get(1); // dst addr (pushed first for store)
+      cg.local.get(0); // src addr
+      cg.v128.load(4);
+      cg.f32x4.convert_i32x4_s();
+      cg.v128.store(4);
+    });
+    cg.export(func, "convert");
+
+    const wasmBytes = cg.finish();
+    const { instance } = await WebAssembly.instantiate(wasmBytes);
+    const { memory, convert } = instance.exports as {
+      memory: WebAssembly.Memory;
+      convert: (src: number, dst: number) => void;
+    };
+
+    new Int32Array(memory.buffer).set([1, -2, 3, -4]);
+    convert(0, 16);
+    const result = new Float32Array(memory.buffer, 16, 4);
+    expect([...result]).toEqual([1, -2, 3, -4]);
+  });
 });

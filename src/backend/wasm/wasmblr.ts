@@ -945,6 +945,8 @@ class I32x4 extends V128 {
   min_u = VECTOR_OP("min_u", 0xb7, ["v128", "v128"], "v128");
   max_s = VECTOR_OP("max_s", 0xb8, ["v128", "v128"], "v128");
   max_u = VECTOR_OP("max_u", 0xb9, ["v128", "v128"], "v128");
+  trunc_sat_f32x4_s = VECTOR_OP("trunc_sat_f32x4_s", 0xf8, ["v128"], "v128");
+  trunc_sat_f32x4_u = VECTOR_OP("trunc_sat_f32x4_u", 0xf9, ["v128"], "v128");
 }
 
 class F32x4 extends V128 {
@@ -975,4 +977,6 @@ class F32x4 extends V128 {
   max = VECTOR_OP("max", 0xe9, ["v128", "v128"], "v128");
   pmin = VECTOR_OP("pmin", 0xea, ["v128", "v128"], "v128");
   pmax = VECTOR_OP("pmax", 0xeb, ["v128", "v128"], "v128");
+  convert_i32x4_s = VECTOR_OP("convert_i32x4_s", 0xfa, ["v128"], "v128");
+  convert_i32x4_u = VECTOR_OP("convert_i32x4_u", 0xfb, ["v128"], "v128");
 }
