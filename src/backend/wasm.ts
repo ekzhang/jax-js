@@ -46,7 +46,7 @@ import {
 import { CodeGenerator } from "./wasm/wasmblr";
 
 /**
- * SIMD version of translateExp: emits v128 (f32x4) instructions instead of scalar.
+ * SIMD version of translateExp: emits v128 (f32x4 or i32x4) instructions instead of scalar.
  * stepping: which loop variable steps by 4 — "gidx" for pointwise, "ridx" for reduction inner loop.
  * contiguous: map from GlobalIndex nodes to whether they can use wide v128.load (true) or need 4 scalar loads (false).
  */
@@ -71,28 +71,39 @@ function translateExpSimd(
   const expContext = new Map<AluExp, number>();
   const gen = (exp: AluExp) => {
     if (expContext.has(exp)) return cg.local.get(expContext.get(exp)!);
-    const { op, src, arg } = exp;
+    const { op, src, arg, dtype } = exp;
+    const isInt = dtype === DType.Int32 || dtype === DType.Uint32;
+    const isSigned = dtype === DType.Int32;
 
     if (op === AluOp.Add) {
       gen(src[0]);
       gen(src[1]);
-      cg.f32x4.add();
+      if (isInt) cg.i32x4.add();
+      else cg.f32x4.add();
     } else if (op === AluOp.Sub) {
       gen(src[0]);
       gen(src[1]);
-      cg.f32x4.sub();
+      if (isInt) cg.i32x4.sub();
+      else cg.f32x4.sub();
     } else if (op === AluOp.Mul) {
       gen(src[0]);
       gen(src[1]);
-      cg.f32x4.mul();
+      if (isInt) cg.i32x4.mul();
+      else cg.f32x4.mul();
     } else if (op === AluOp.Min) {
       gen(src[0]);
       gen(src[1]);
-      cg.f32x4.min();
+      if (isInt) {
+        if (isSigned) cg.i32x4.min_s();
+        else cg.i32x4.min_u();
+      } else cg.f32x4.min();
     } else if (op === AluOp.Max) {
       gen(src[0]);
       gen(src[1]);
-      cg.f32x4.max();
+      if (isInt) {
+        if (isSigned) cg.i32x4.max_s();
+        else cg.i32x4.max_u();
+      } else cg.f32x4.max();
     } else if (op === AluOp.Sqrt) {
       gen(src[0]);
       cg.f32x4.sqrt();
@@ -103,8 +114,27 @@ function translateExpSimd(
       gen(src[0]);
       cg.f32x4.ceil();
     } else if (op === AluOp.Const) {
-      cg.f32.const(arg as number);
-      cg.f32x4.splat();
+      if (isInt) {
+        cg.i32.const(arg as number);
+        cg.i32x4.splat();
+      } else {
+        cg.f32.const(arg as number);
+        cg.f32x4.splat();
+      }
+    } else if (op === AluOp.Cast) {
+      gen(src[0]);
+      const dtype0 = src[0].dtype;
+      const src0IsInt = dtype0 === DType.Int32 || dtype0 === DType.Uint32 || dtype0 === DType.Bool;
+      if (isInt && !src0IsInt) {
+        // f32 → i32/u32
+        if (isSigned) cg.i32x4.trunc_sat_f32x4_s();
+        else cg.i32x4.trunc_sat_f32x4_u();
+      } else if (!isInt && src0IsInt) {
+        // i32/u32 → f32
+        if (dtype0 === DType.Int32) cg.f32x4.convert_i32x4_s();
+        else cg.f32x4.convert_i32x4_u();
+      }
+      // i32 ↔ u32: no-op (same bit representation)
     } else if (op === AluOp.Variable || op === AluOp.Special) {
       // These are scalar context variables (gidx, ridx, acc, etc.). They only
       // appear inside GlobalIndex's index subtree, which we handle below via
@@ -133,11 +163,12 @@ function translateExpSimd(
           cg.select();
         }
 
-        cg.i32.const(byteWidth(DType.Float32));
+        cg.i32.const(byteWidth(dtype));
         cg.i32.mul();
         cg.local.get(gid); // base pointer
         cg.i32.add();
-        cg.f32x4.load(4);
+        if (isInt) cg.i32x4.load(4);
+        else cg.f32x4.load(4);
       } else {
         // Gather: evaluate index subtree 4 times with stepping_var+0,+1,+2,+3,
         // do 4 scalar loads, pack into v128.
@@ -147,13 +178,18 @@ function translateExpSimd(
         cg.local.set(origValue);
 
         // Start with zeros, replace each lane
-        cg.f32.const(0);
-        cg.f32x4.splat();
-        const vec = cg.local.declare(cg.f32x4);
+        if (isInt) {
+          cg.i32.const(0);
+          cg.i32x4.splat();
+        } else {
+          cg.f32.const(0);
+          cg.f32x4.splat();
+        }
+        const vec = cg.local.declare(isInt ? cg.i32x4 : cg.f32x4);
         cg.local.set(vec);
 
         const idx = cg.local.declare(cg.i32);
-        const scalarVal = cg.local.declare(cg.f32);
+        const scalarVal = cg.local.declare(isInt ? cg.i32 : cg.f32);
 
         for (let lane = 0; lane < 4; lane++) {
           // Set stepping var to original + lane
@@ -173,17 +209,19 @@ function translateExpSimd(
           (cg.local.get(idx), cg.i32.const(len), cg.i32.lt_u());
           cg.select();
 
-          cg.i32.const(byteWidth(DType.Float32));
+          cg.i32.const(byteWidth(dtype));
           cg.i32.mul();
           cg.local.get(gid); // base pointer
           cg.i32.add();
-          cg.f32.load(2); // scalar f32 load
+          if (isInt) cg.i32.load(2);
+          else cg.f32.load(2);
 
-          // Pack into v128: replace_lane expects [v128, f32] on stack
+          // Pack into v128: replace_lane expects [v128, scalar] on stack
           cg.local.set(scalarVal);
           cg.local.get(vec);
           cg.local.get(scalarVal);
-          cg.f32x4.replace_lane(lane);
+          if (isInt) cg.i32x4.replace_lane(lane);
+          else cg.f32x4.replace_lane(lane);
           cg.local.set(vec);
         }
 
@@ -200,7 +238,7 @@ function translateExpSimd(
 
     // CSE: if this node is used more than once, store in a local
     if ((references.get(exp) ?? 0) > 1) {
-      const local = cg.local.declare(cg.f32x4);
+      const local = cg.local.declare(isInt ? cg.i32x4 : cg.f32x4);
       cg.local.tee(local);
       expContext.set(exp, local);
     }
@@ -238,7 +276,7 @@ function isContiguousWrt(exp: AluExp, varName: string): boolean {
 }
 
 /** Ops that have direct SIMD (f32x4) instruction variants. */
-const simdSupportedOps = new Set([
+const simdF32Ops = new Set([
   AluOp.Add,
   AluOp.Sub,
   AluOp.Mul,
@@ -247,24 +285,36 @@ const simdSupportedOps = new Set([
   AluOp.Min,
   AluOp.Max,
   AluOp.Sqrt,
+  AluOp.Cast,
+  AluOp.Const,
+  AluOp.GlobalIndex,
+]);
+
+/** Ops that have direct SIMD (i32x4) instruction variants. */
+const simdI32Ops = new Set([
+  AluOp.Add,
+  AluOp.Sub,
+  AluOp.Mul,
+  AluOp.Min,
+  AluOp.Max,
+  AluOp.Cast,
   AluOp.Const,
   AluOp.GlobalIndex,
 ]);
 
 /**
- * Check if a kernel is eligible for SIMD (f32x4) codegen.
+ * Check if a kernel is eligible for SIMD codegen.
  *
  * A kernel qualifies when:
  * - For pointwise: size >= 4
- * - For reductions: reduction.size >= 4 and reduction dtype is f32
- * - All nodes are f32 (we only emit f32x4 instructions, i32x4 is future work)
- * - All ops have direct SIMD variants (see simdSupportedOps)
+ * - For reductions: reduction.size >= 4, dtype is f32/i32/u32, and the
+ *   reduction op has a SIMD variant for that dtype
+ * - All nodes have a supported dtype (f32, i32, u32) with SIMD variants
  */
 export function isSimdEligible(tunedExp: AluExp, kernel: Kernel): boolean {
   if (kernel.reduction) {
     if (kernel.reduction.size < 4) return false;
-    if (kernel.reduction.dtype !== DType.Float32) return false;
-    if (!simdSupportedOps.has(kernel.reduction.op)) return false;
+    if (!simdSupportedOpsForDtype(kernel.reduction.dtype)?.has(kernel.reduction.op)) return false;
   } else {
     if (kernel.size < 4) return false;
   }
@@ -273,9 +323,8 @@ export function isSimdEligible(tunedExp: AluExp, kernel: Kernel): boolean {
     if (visited.has(exp)) return true;
     visited.add(exp);
 
-    // All visited nodes must be f32 and have SIMD variants.
-    if (exp.dtype !== DType.Float32) return false;
-    if (!simdSupportedOps.has(exp.op)) return false;
+    const supportedOps = simdSupportedOpsForDtype(exp.dtype);
+    if (!supportedOps || !supportedOps.has(exp.op)) return false;
 
     // GlobalIndex: skip the index subtree. It's scalar i32 index math that
     // translateExpSimd evaluates scalarly (via translateExp). Non-contiguous
@@ -290,6 +339,12 @@ export function isSimdEligible(tunedExp: AluExp, kernel: Kernel): boolean {
   };
 
   return check(tunedExp, new Set());
+}
+
+function simdSupportedOpsForDtype(dtype: DType): Set<AluOp> | null {
+  if (dtype === DType.Float32) return simdF32Ops;
+  if (dtype === DType.Int32 || dtype === DType.Uint32) return simdI32Ops;
+  return null;
 }
 
 interface WasmBuffer {
@@ -626,11 +681,18 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
         // results may differ slightly due to reassociation.
         const simdReSize = re.size & ~3;
         const ridx = cg.local.declare(cg.i32);
+        const reIsInt = re.dtype === DType.Int32 || re.dtype === DType.Uint32;
+        const reIsSigned = re.dtype === DType.Int32;
 
         // v128 accumulator initialized with identity values.
-        const vecAcc = cg.local.declare(cg.f32x4);
-        cg.f32.const(re.identity);
-        cg.f32x4.splat();
+        const vecAcc = cg.local.declare(reIsInt ? cg.i32x4 : cg.f32x4);
+        if (reIsInt) {
+          cg.i32.const(re.identity);
+          cg.i32x4.splat();
+        } else {
+          cg.f32.const(re.identity);
+          cg.f32x4.splat();
+        }
         cg.local.set(vecAcc);
 
         // SIMD inner loop: ridx steps by 4.
@@ -654,13 +716,25 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
             bufferContiguity,
           );
 
-          // vecAcc = f32x4.op(vecAcc, values)
+          // vecAcc = op(vecAcc, values)
           cg.local.get(vecAcc);
-          if (re.op === AluOp.Add) cg.f32x4.add();
-          else if (re.op === AluOp.Mul) cg.f32x4.mul();
-          else if (re.op === AluOp.Min) cg.f32x4.min();
-          else if (re.op === AluOp.Max) cg.f32x4.max();
-          else throw new Error(`invalid SIMD reduction op: ${re.op}`);
+          if (reIsInt) {
+            if (re.op === AluOp.Add) cg.i32x4.add();
+            else if (re.op === AluOp.Mul) cg.i32x4.mul();
+            else if (re.op === AluOp.Min) {
+              if (reIsSigned) cg.i32x4.min_s();
+              else cg.i32x4.min_u();
+            } else if (re.op === AluOp.Max) {
+              if (reIsSigned) cg.i32x4.max_s();
+              else cg.i32x4.max_u();
+            } else throw new Error(`invalid SIMD reduction op: ${re.op}`);
+          } else {
+            if (re.op === AluOp.Add) cg.f32x4.add();
+            else if (re.op === AluOp.Mul) cg.f32x4.mul();
+            else if (re.op === AluOp.Min) cg.f32x4.min();
+            else if (re.op === AluOp.Max) cg.f32x4.max();
+            else throw new Error(`invalid SIMD reduction op: ${re.op}`);
+          }
           cg.local.set(vecAcc);
 
           // ridx += 4
@@ -675,18 +749,47 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
         cg.end();
 
         // Horizontal reduce: collapse 4 lanes into 1 scalar.
-        const acc = cg.local.declare(cg.f32);
+        const acc = cg.local.declare(reIsInt ? cg.i32 : cg.f32);
         cg.local.get(vecAcc);
-        cg.f32x4.extract_lane(0);
+        if (reIsInt) cg.i32x4.extract_lane(0);
+        else cg.f32x4.extract_lane(0);
         cg.local.set(acc);
         for (let lane = 1; lane < 4; lane++) {
           cg.local.get(vecAcc);
-          cg.f32x4.extract_lane(lane);
+          if (reIsInt) cg.i32x4.extract_lane(lane);
+          else cg.f32x4.extract_lane(lane);
           cg.local.get(acc);
-          if (re.op === AluOp.Add) cg.f32.add();
-          else if (re.op === AluOp.Mul) cg.f32.mul();
-          else if (re.op === AluOp.Min) cg.f32.min();
-          else if (re.op === AluOp.Max) cg.f32.max();
+          if (reIsInt) {
+            if (re.op === AluOp.Add) cg.i32.add();
+            else if (re.op === AluOp.Mul) cg.i32.mul();
+            else if (re.op === AluOp.Min) {
+              // Wasm has no i32.min, emulate with select.
+              const tmp = cg.local.declare(cg.i32);
+              cg.local.set(tmp);
+              cg.local.tee(acc);
+              cg.local.get(tmp);
+              cg.local.get(acc);
+              cg.local.get(tmp);
+              if (reIsSigned) cg.i32.lt_s();
+              else cg.i32.lt_u();
+              cg.select();
+            } else if (re.op === AluOp.Max) {
+              const tmp = cg.local.declare(cg.i32);
+              cg.local.set(tmp);
+              cg.local.tee(acc);
+              cg.local.get(tmp);
+              cg.local.get(acc);
+              cg.local.get(tmp);
+              if (reIsSigned) cg.i32.gt_s();
+              else cg.i32.gt_u();
+              cg.select();
+            }
+          } else {
+            if (re.op === AluOp.Add) cg.f32.add();
+            else if (re.op === AluOp.Mul) cg.f32.mul();
+            else if (re.op === AluOp.Min) cg.f32.min();
+            else if (re.op === AluOp.Max) cg.f32.max();
+          }
           cg.local.set(acc);
         }
 
@@ -702,10 +805,36 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
 
           translateExp(cg, funcs, tune.exp, { gidx, ridx });
           cg.local.get(acc);
-          if (re.op === AluOp.Add) cg.f32.add();
-          else if (re.op === AluOp.Mul) cg.f32.mul();
-          else if (re.op === AluOp.Min) cg.f32.min();
-          else if (re.op === AluOp.Max) cg.f32.max();
+          if (reIsInt) {
+            if (re.op === AluOp.Add) cg.i32.add();
+            else if (re.op === AluOp.Mul) cg.i32.mul();
+            else if (re.op === AluOp.Min) {
+              const tmp = cg.local.declare(cg.i32);
+              cg.local.set(tmp);
+              cg.local.tee(acc);
+              cg.local.get(tmp);
+              cg.local.get(acc);
+              cg.local.get(tmp);
+              if (reIsSigned) cg.i32.lt_s();
+              else cg.i32.lt_u();
+              cg.select();
+            } else if (re.op === AluOp.Max) {
+              const tmp = cg.local.declare(cg.i32);
+              cg.local.set(tmp);
+              cg.local.tee(acc);
+              cg.local.get(tmp);
+              cg.local.get(acc);
+              cg.local.get(tmp);
+              if (reIsSigned) cg.i32.gt_s();
+              else cg.i32.gt_u();
+              cg.select();
+            }
+          } else {
+            if (re.op === AluOp.Add) cg.f32.add();
+            else if (re.op === AluOp.Mul) cg.f32.mul();
+            else if (re.op === AluOp.Min) cg.f32.min();
+            else if (re.op === AluOp.Max) cg.f32.max();
+          }
           cg.local.set(acc);
 
           cg.local.get(ridx);

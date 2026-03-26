@@ -50,12 +50,12 @@ suite("isSimdEligible", () => {
     expect(isSimdEligible(kernel.exp, kernel)).toBe(false);
   });
 
-  test("i32 dtype is not eligible", () => {
+  test("i32 dtype is eligible", () => {
     const shape = ShapeTracker.fromShape([16]);
     const gidx = AluVar.gidx;
     const arg = accessorGlobal(DType.Int32, 0, shape, [gidx]);
     const kernel = new Kernel(1, 16, AluExp.add(arg, AluExp.i32(2)));
-    expect(isSimdEligible(kernel.exp, kernel)).toBe(false);
+    expect(isSimdEligible(kernel.exp, kernel)).toBe(true);
   });
 
   test("size less than 4 is not eligible", () => {

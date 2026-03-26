@@ -499,4 +499,84 @@ suite.each(devices)("device:%s", (device) => {
       backend.decRef(output);
     }
   });
+
+  test("pointwise i32 add on 8-element array", async () => {
+    const backend = getBackend(device);
+    const data = new Int32Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const a = backend.malloc(8 * 4, new Uint8Array(data.buffer));
+    const out = backend.malloc(8 * 4);
+
+    try {
+      const shape = ShapeTracker.fromShape([8]);
+      const gidx = AluVar.gidx;
+      const arg = accessorGlobal(DType.Int32, 0, shape, [gidx]);
+      const kernel = new Kernel(1, 8, AluExp.add(arg, AluExp.i32(10)));
+      const exe = await backend.prepareKernel(kernel);
+      backend.dispatch(exe, [a], [out]);
+
+      const { buffer } = await backend.read(out);
+      expect(new Int32Array(buffer)).toEqual(
+        new Int32Array([11, 12, 13, 14, 15, 16, 17, 18]),
+      );
+    } finally {
+      backend.decRef(a);
+      backend.decRef(out);
+    }
+  });
+
+  test("reduction sum on [3,7] i32 array", () => {
+    const backend = getBackend(device);
+    // [3, 7] array: sum each row of 7 elements → 3 outputs
+    // SIMD handles 4, scalar tail handles 3
+    const data = new Int32Array([
+      1, 2, 3, 4, 5, 6, 7,
+      10, 20, 30, 40, 50, 60, 70,
+      100, 200, 300, 400, 500, 600, 700,
+    ]);
+    const a = backend.malloc(21 * 4, new Uint8Array(data.buffer));
+    const output = backend.malloc(3 * 4);
+    try {
+      const st = ShapeTracker.fromShape([3, 7]);
+      const exp = AluExp.globalView(DType.Int32, 0, st, [
+        AluVar.gidx,
+        AluVar.ridx,
+      ]);
+      const kernel = new Kernel(
+        1, 3, exp,
+        new Reduction(DType.Int32, AluOp.Add, 7),
+      );
+      const exe = backend.prepareKernelSync(kernel);
+      backend.dispatch(exe, [a], [output]);
+      const buf = backend.readSync(output).buffer;
+      expect(new Int32Array(buf)).toEqual(new Int32Array([28, 280, 2800]));
+    } finally {
+      backend.decRef(a);
+      backend.decRef(output);
+    }
+  });
+
+  test("pointwise cast f32 to i32 on 8-element array", async () => {
+    const backend = getBackend(device);
+    const data = new Float32Array([1.9, -2.7, 3.1, -4.8, 5.5, -6.2, 7.4, -8.9]);
+    const a = backend.malloc(8 * 4, new Uint8Array(data.buffer));
+    const out = backend.malloc(8 * 4);
+
+    try {
+      const shape = ShapeTracker.fromShape([8]);
+      const gidx = AluVar.gidx;
+      const arg = accessorGlobal(DType.Float32, 0, shape, [gidx]);
+      const kernel = new Kernel(1, 8, AluExp.cast(DType.Int32, arg));
+      const exe = await backend.prepareKernel(kernel);
+      backend.dispatch(exe, [a], [out]);
+
+      const { buffer } = await backend.read(out);
+      // trunc_sat: truncates toward zero
+      expect(new Int32Array(buffer)).toEqual(
+        new Int32Array([1, -2, 3, -4, 5, -6, 7, -8]),
+      );
+    } finally {
+      backend.decRef(a);
+      backend.decRef(out);
+    }
+  });
 });
