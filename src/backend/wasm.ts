@@ -72,7 +72,7 @@ function translateExpSimd(
   const gen = (exp: AluExp) => {
     if (expContext.has(exp)) return cg.local.get(expContext.get(exp)!);
     const { op, src, arg, dtype } = exp;
-    const isInt = dtype === DType.Int32 || dtype === DType.Uint32;
+    const isInt = dtype === DType.Int32 || dtype === DType.Uint32 || dtype === DType.Bool;
     const isSigned = dtype === DType.Int32;
 
     if (op === AluOp.Add) {
@@ -135,6 +135,36 @@ function translateExpSimd(
         else cg.f32x4.convert_i32x4_u();
       }
       // i32 ↔ u32: no-op (same bit representation)
+    } else if (op === AluOp.Cmplt) {
+      gen(src[0]);
+      gen(src[1]);
+      const srcDtype = src[0].dtype;
+      if (srcDtype === DType.Float32) cg.f32x4.lt();
+      else if (srcDtype === DType.Int32) cg.i32x4.lt_s();
+      else if (srcDtype === DType.Uint32) cg.i32x4.lt_u();
+      // SIMD comparisons produce 0xFFFFFFFF per lane; normalize to 0/1.
+      cg.i32.const(1);
+      cg.i32x4.splat();
+      cg.v128.and();
+    } else if (op === AluOp.Cmpne) {
+      gen(src[0]);
+      gen(src[1]);
+      const srcDtype = src[0].dtype;
+      if (srcDtype === DType.Float32) cg.f32x4.ne();
+      else cg.i32x4.ne();
+      // SIMD comparisons produce 0xFFFFFFFF per lane; normalize to 0/1.
+      cg.i32.const(1);
+      cg.i32x4.splat();
+      cg.v128.and();
+    } else if (op === AluOp.Where) {
+      gen(src[1]); // true value
+      gen(src[2]); // false value
+      // Normalize condition to all-ones/all-zeros bitmask.
+      gen(src[0]);
+      cg.i32.const(0);
+      cg.i32x4.splat();
+      cg.i32x4.ne();
+      cg.v128.bitselect();
     } else if (op === AluOp.Variable || op === AluOp.Special) {
       // These are scalar context variables (gidx, ridx, acc, etc.). They only
       // appear inside GlobalIndex's index subtree, which we handle below via
@@ -255,7 +285,7 @@ function translateExpSimd(
  * access's flat index is either just the stepping variable (`gidx` or `ridx`)
  * or the stepping variable added to terms that don't involve it (`gidx*8 + ridx`).
  *
- * Relies on the simplifier folding contiguous round-trips like
+ * Relies on the simplifier folding div-mod identities like
  * `(x/A)*A + x%A => x`, so the flat index reduces to the bare variable
  * when the access is truly stride-1.
  */
@@ -286,6 +316,7 @@ const simdF32Ops = new Set([
   AluOp.Max,
   AluOp.Sqrt,
   AluOp.Cast,
+  AluOp.Where,
   AluOp.Const,
   AluOp.GlobalIndex,
 ]);
@@ -298,6 +329,15 @@ const simdI32Ops = new Set([
   AluOp.Min,
   AluOp.Max,
   AluOp.Cast,
+  AluOp.Where,
+  AluOp.Const,
+  AluOp.GlobalIndex,
+]);
+
+/** Ops that produce Bool (i32x4 bitmask) in SIMD. */
+const simdBoolOps = new Set([
+  AluOp.Cmplt,
+  AluOp.Cmpne,
   AluOp.Const,
   AluOp.GlobalIndex,
 ]);
@@ -309,7 +349,7 @@ const simdI32Ops = new Set([
  * - For pointwise: size >= 4
  * - For reductions: reduction.size >= 4, dtype is f32/i32/u32, and the
  *   reduction op has a SIMD variant for that dtype
- * - All nodes have a supported dtype (f32, i32, u32) with SIMD variants
+ * - All nodes have a supported dtype (f32, i32, u32, bool) with SIMD variants
  */
 export function isSimdEligible(tunedExp: AluExp, kernel: Kernel): boolean {
   if (kernel.reduction) {
@@ -326,9 +366,9 @@ export function isSimdEligible(tunedExp: AluExp, kernel: Kernel): boolean {
     const supportedOps = simdSupportedOpsForDtype(exp.dtype);
     if (!supportedOps || !supportedOps.has(exp.op)) return false;
 
-    // GlobalIndex: skip the index subtree. It's scalar i32 index math that
-    // translateExpSimd evaluates scalarly (via translateExp). Non-contiguous
-    // access is handled by the gather fallback.
+    // GlobalIndex: skip the index subtree. It is evaluated scalarly
+    // (via translateExp), either once for contiguous wide loads or
+    // four times with lane offsets for the gather fallback.
     if (exp.op === AluOp.GlobalIndex) return true;
 
     // Recurse into children.
@@ -344,6 +384,7 @@ export function isSimdEligible(tunedExp: AluExp, kernel: Kernel): boolean {
 function simdSupportedOpsForDtype(dtype: DType): Set<AluOp> | null {
   if (dtype === DType.Float32) return simdF32Ops;
   if (dtype === DType.Int32 || dtype === DType.Uint32) return simdI32Ops;
+  if (dtype === DType.Bool) return simdBoolOps;
   return null;
 }
 
