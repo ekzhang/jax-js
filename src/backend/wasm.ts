@@ -130,8 +130,9 @@ function translateExpSimd(
         if (isSigned) cg.i32x4.trunc_sat_f32x4_s();
         else cg.i32x4.trunc_sat_f32x4_u();
       } else if (!isInt && src0IsInt) {
-        // i32/u32 → f32
-        if (dtype0 === DType.Int32) cg.f32x4.convert_i32x4_s();
+        // i32/bool → f32 (bool uses signed to match scalar path)
+        if (dtype0 === DType.Int32 || dtype0 === DType.Bool)
+          cg.f32x4.convert_i32x4_s();
         else cg.f32x4.convert_i32x4_u();
       }
       // i32 ↔ u32: no-op (same bit representation)
