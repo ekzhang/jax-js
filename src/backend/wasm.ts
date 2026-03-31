@@ -48,7 +48,7 @@ import { CodeGenerator } from "./wasm/wasmblr";
 /**
  * SIMD version of translateExp: emits v128 (f32x4 or i32x4) instructions instead of scalar.
  * stepping: which loop variable steps by 4 — "gidx" for pointwise, "ridx" for reduction inner loop.
- * contiguous: map from GlobalIndex nodes to whether they can use wide v128.load (true) or need 4 scalar loads (false).
+ * strideMap: per-GlobalIndex classification — "broadcast" (scalar load + splat), "contiguous" (v128.load), or "gather" (4 scalar loads).
  */
 function translateExpSimd(
   cg: CodeGenerator,
@@ -56,7 +56,7 @@ function translateExpSimd(
   exp: AluExp,
   ctx: Record<string, number>,
   stepping: "gidx" | "ridx",
-  contiguous: Map<AluExp, boolean>,
+  strideMap: Map<AluExp, StrideClass>,
 ): void {
   const references = new Map<AluExp, number>();
   const seen = new Set<AluExp>();
@@ -175,9 +175,9 @@ function translateExpSimd(
     } else if (op === AluOp.GlobalIndex) {
       const [gid, len] = arg as [number, number];
       const indexSubtree = src[0];
-      const isContig = contiguous.get(exp) ?? false;
+      const cls = strideMap.get(exp) ?? "gather";
 
-      if (isContig) {
+      if (cls === "contiguous") {
         // Wide load: evaluate index subtree once (scalar) to get starting
         // address, then v128.load 4 consecutive elements.
         // If index is out-of-bounds, clamp to len-4 to prevent WASM traps.
@@ -200,6 +200,29 @@ function translateExpSimd(
         cg.i32.add();
         if (isInt) cg.i32x4.load(4);
         else cg.f32x4.load(4);
+      } else if (cls === "broadcast") {
+        // Broadcast: index is constant across 4 SIMD lanes.
+        // Evaluate once scalarly, load one element, splat to v128.
+        translateExp(cg, funcs, indexSubtree, ctx);
+
+        // OOB bounds check (same as scalar path).
+        const local = cg.local.declare(cg.i32);
+        cg.local.tee(local);
+        cg.i32.const(0);
+        (cg.local.get(local), cg.i32.const(len), cg.i32.lt_u());
+        cg.select();
+
+        cg.i32.const(byteWidth(dtype));
+        cg.i32.mul();
+        cg.local.get(gid); // base pointer
+        cg.i32.add();
+        if (isInt) {
+          cg.i32.load(2);
+          cg.i32x4.splat();
+        } else {
+          cg.f32.load(2);
+          cg.f32x4.splat();
+        }
       } else {
         // Gather: evaluate index subtree 4 times with stepping_var+0,+1,+2,+3,
         // do 4 scalar loads, pack into v128.
@@ -280,30 +303,86 @@ function translateExpSimd(
 }
 
 /**
- * Check if a flat index expression has stride 1 w.r.t. a stepping variable.
- *
- * After lowering GlobalView to GlobalIndex and simplifying, a contiguous
- * access's flat index is either just the stepping variable (`gidx` or `ridx`)
- * or the stepping variable added to terms that don't involve it (`gidx*8 + ridx`).
- *
- * Relies on the simplifier folding div-mod identities like
- * `(x/A)*A + x%A => x`, so the flat index reduces to the bare variable
- * when the access is truly stride-1.
+ * Stride classification for a GlobalIndex w.r.t. a stepping variable.
+ * - "broadcast": index doesn't change across 4 consecutive steps → scalar load + splat
+ * - "contiguous": index increments by 1 per step → v128.load
+ * - "gather": anything else → 4 scalar loads + replace_lane
  */
-function isContiguousWrt(exp: AluExp, varName: string): boolean {
+type StrideClass = "broadcast" | "contiguous" | "gather";
+
+/**
+ * Analyze the stride of an index expression w.r.t. a stepping variable.
+ *
+ * Returns the stride (how much the expression changes per +1 of the variable)
+ * and the tile size (how many consecutive steps the stride is guaranteed for).
+ *
+ * The patterns come from unravelAlu which decomposes gidx using Idiv/Mod:
+ * - Mod(gidx, N): stride 1, wraps every N values → tileSize N
+ * - Idiv(gidx, N): stride 0, jumps every N values → tileSize N
+ * - Nested Mod(Idiv(gidx, A), B): stride 0, tileSize A (inner Idiv dominates)
+ * - Mul(inner, C): scales stride by C
+ * - Add(a, b) where one side has the var: passes through
+ */
+function analyzeStride(
+  exp: AluExp,
+  varName: string,
+): { stride: number; tileSize: number } | null {
   const isVar = (e: AluExp): boolean =>
     e.op === AluOp.Special && e.arg[0] === varName;
-  const containsVar = (e: AluExp): boolean =>
-    isVar(e) || e.src.some(containsVar);
+  const hasVar = (e: AluExp): boolean =>
+    isVar(e) || e.src.some(hasVar);
 
-  if (isVar(exp)) return true;
-  if (exp.op === AluOp.Add) {
+  if (!hasVar(exp)) return { stride: 0, tileSize: Infinity };
+  if (isVar(exp)) return { stride: 1, tileSize: Infinity };
+
+  if (exp.op === AluOp.Idiv && exp.src[1].op === AluOp.Const) {
+    const inner = analyzeStride(exp.src[0], varName);
+    if (!inner) return null;
+    if (inner.stride === 1)
+      return { stride: 0, tileSize: Math.min(inner.tileSize, exp.src[1].arg as number) };
+    if (inner.stride === 0) return inner;
+    return null;
+  }
+  if (exp.op === AluOp.Mod && exp.src[1].op === AluOp.Const) {
+    const inner = analyzeStride(exp.src[0], varName);
+    if (!inner) return null;
+    if (inner.stride === 1)
+      return { stride: 1, tileSize: Math.min(inner.tileSize, exp.src[1].arg as number) };
+    if (inner.stride === 0) return inner;
+    return null;
+  }
+  if (exp.op === AluOp.Mul) {
     for (let i = 0; i < 2; i++) {
-      if (isContiguousWrt(exp.src[i], varName) && !containsVar(exp.src[1 - i]))
-        return true;
+      if (exp.src[i].op === AluOp.Const) {
+        const inner = analyzeStride(exp.src[1 - i], varName);
+        if (inner) return { stride: inner.stride * (exp.src[i].arg as number), tileSize: inner.tileSize };
+      }
     }
   }
-  return false;
+  if (exp.op === AluOp.Add) {
+    const has = [hasVar(exp.src[0]), hasVar(exp.src[1])];
+    if (has[0] && !has[1]) return analyzeStride(exp.src[0], varName);
+    if (!has[0] && has[1]) return analyzeStride(exp.src[1], varName);
+  }
+  return null; // unknown, gather
+}
+
+/** Classify a GlobalIndex's index subtree for SIMD codegen. */
+function classifyStride(
+  exp: AluExp,
+  varName: string,
+): { cls: StrideClass; tileSize: number } {
+  const result = analyzeStride(exp, varName);
+  if (!result) return { cls: "gather", tileSize: Infinity };
+  if (result.stride === 0) return { cls: "broadcast", tileSize: result.tileSize };
+  if (result.stride === 1) return { cls: "contiguous", tileSize: result.tileSize };
+  return { cls: "gather", tileSize: Infinity };
+}
+
+/** Legacy wrapper: check if stride is exactly 1 (used for ridx-stepping path). */
+function isContiguousWrt(exp: AluExp, varName: string): boolean {
+  const result = analyzeStride(exp, varName);
+  return result !== null && result.stride === 1;
 }
 
 /** Ops that have direct SIMD (f32x4) instruction variants. */
@@ -596,17 +675,57 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
   // to GlobalIndex by this point, matching what translateExpSimd will codegen.
   const useSimd = isSimdEligible(tune.exp, kernel);
 
-  // Analyze per-node contiguity on the simplified tree (only needed for SIMD).
-  // For pointwise SIMD, gidx steps by 4, so we check stride-1 w.r.t. gidx.
-  // For reduction SIMD, ridx steps by 4, so we check stride-1 w.r.t. ridx.
-  const bufferContiguity = new Map<AluExp, boolean>();
+  // Determine SIMD strategy for reductions: prefer gidx-stepping (SIMD over
+  // output columns) when stride analysis shows broadcast/contiguous patterns,
+  // otherwise fall back to ridx-stepping (SIMD over reduction dim).
+  let simdOverGidx = false;
+  const bufferStrides = new Map<AluExp, StrideClass>();
   if (useSimd) {
-    const steppingVar = re ? "ridx" : "gidx";
-    tune.exp
-      .collect((e) => e.op === AluOp.GlobalIndex)
-      .forEach((gi) => {
-        bufferContiguity.set(gi, isContiguousWrt(gi.src[0], steppingVar));
-      });
+    if (re) {
+      // Try gidx-stepping first: check all GlobalIndex nodes for stride w.r.t. gidx.
+      const globalIndices = tune.exp.collect((e) => e.op === AluOp.GlobalIndex);
+      let minTileSize = Infinity;
+      let allClassified = true;
+      for (const gi of globalIndices) {
+        const { cls, tileSize } = classifyStride(gi.src[0], "gidx");
+        if (cls === "gather") {
+          allClassified = false;
+          break;
+        }
+        if (cls === "contiguous") minTileSize = Math.min(minTileSize, tileSize);
+        // broadcast tileSize doesn't constrain alignment (stride 0 is always safe)
+        // but we still need to track it for correctness of the Idiv boundary
+        if (cls === "broadcast" && tileSize !== Infinity)
+          minTileSize = Math.min(minTileSize, tileSize);
+        bufferStrides.set(gi, cls);
+      }
+
+      if (allClassified && kernel.size >= 4 && minTileSize >= 4 && minTileSize % 4 === 0) {
+        simdOverGidx = true;
+      } else {
+        // Fall back to ridx-stepping.
+        bufferStrides.clear();
+        for (const gi of globalIndices) {
+          bufferStrides.set(
+            gi,
+            isContiguousWrt(gi.src[0], "ridx") ? "contiguous" : "gather",
+          );
+        }
+      }
+    } else {
+      // Pointwise: always step gidx. If tile size < 4, fall back to gather
+      // since the SIMD group would cross a tile boundary.
+      tune.exp
+        .collect((e) => e.op === AluOp.GlobalIndex)
+        .forEach((gi) => {
+          const { cls, tileSize } = classifyStride(gi.src[0], "gidx");
+          if (cls !== "gather" && tileSize < 4) {
+            bufferStrides.set(gi, "gather");
+          } else {
+            bufferStrides.set(gi, cls);
+          }
+        });
+    }
   }
 
   const cg = new CodeGenerator();
@@ -680,11 +799,150 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
           tune.exp,
           { gidx },
           "gidx",
-          bufferContiguity,
+          bufferStrides,
         );
 
         // Store 4 results at once.
         cg.v128.store(4);
+
+        // gidx += 4
+        cg.local.get(gidx);
+        cg.i32.const(4);
+        cg.i32.add();
+        cg.local.set(gidx);
+
+        cg.br(1);
+        cg.end();
+      }
+      cg.end();
+      // gidx is now simdEnd, fall through to scalar tail.
+    }
+
+    if (useSimd && re && simdOverGidx) {
+      // SIMD-over-gidx reduction: step gidx by 4, computing 4 output
+      // elements simultaneously. The inner ridx loop stays scalar but
+      // operates on v128 accumulators (each lane is an independent reduction).
+      const reIsInt = re.dtype === DType.Int32 || re.dtype === DType.Uint32;
+
+      const simdEnd = cg.local.declare(cg.i32);
+      cg.local.get(paramEnd);
+      cg.local.get(paramBegin);
+      cg.i32.sub();
+      cg.i32.const(~3);
+      cg.i32.and();
+      cg.local.get(paramBegin);
+      cg.i32.add();
+      cg.local.set(simdEnd);
+
+      cg.loop(cg.void);
+      {
+        // if (gidx >= simdEnd) break;
+        cg.block(cg.void);
+        cg.local.get(gidx);
+        cg.local.get(simdEnd);
+        cg.i32.ge_u();
+        cg.br_if(0);
+
+        // v128 accumulator initialized with identity values.
+        const vecAcc = cg.local.declare(reIsInt ? cg.i32x4 : cg.f32x4);
+        if (reIsInt) {
+          cg.i32.const(re.identity);
+          cg.i32x4.splat();
+        } else {
+          cg.f32.const(re.identity);
+          cg.f32x4.splat();
+        }
+        cg.local.set(vecAcc);
+
+        // Inner ridx loop: steps by 1, but body uses SIMD ops.
+        const ridx = cg.local.declare(cg.i32);
+        cg.i32.const(0);
+        cg.local.set(ridx);
+        cg.loop(cg.void);
+        {
+          cg.block(cg.void);
+          cg.local.get(ridx);
+          cg.i32.const(re.size);
+          cg.i32.ge_u();
+          cg.br_if(0);
+
+          // Evaluate expression in SIMD mode, stepping gidx.
+          // Each lane computes the value for gidx+0, gidx+1, gidx+2, gidx+3.
+          translateExpSimd(
+            cg,
+            funcs,
+            tune.exp,
+            { gidx, ridx },
+            "gidx",
+            bufferStrides,
+          );
+
+          // vecAcc = op(vecAcc, values)
+          cg.local.get(vecAcc);
+          if (reIsInt) {
+            if (re.op === AluOp.Add) cg.i32x4.add();
+            else if (re.op === AluOp.Mul) cg.i32x4.mul();
+            else if (re.op === AluOp.Min) {
+              if (re.dtype === DType.Int32) cg.i32x4.min_s();
+              else cg.i32x4.min_u();
+            } else if (re.op === AluOp.Max) {
+              if (re.dtype === DType.Int32) cg.i32x4.max_s();
+              else cg.i32x4.max_u();
+            } else throw new Error(`invalid SIMD reduction op: ${re.op}`);
+          } else {
+            if (re.op === AluOp.Add) cg.f32x4.add();
+            else if (re.op === AluOp.Mul) cg.f32x4.mul();
+            else if (re.op === AluOp.Min) cg.f32x4.min();
+            else if (re.op === AluOp.Max) cg.f32x4.max();
+            else throw new Error(`invalid SIMD reduction op: ${re.op}`);
+          }
+          cg.local.set(vecAcc);
+
+          // ridx++
+          cg.local.get(ridx);
+          cg.i32.const(1);
+          cg.i32.add();
+          cg.local.set(ridx);
+
+          cg.br(1);
+          cg.end();
+        }
+        cg.end();
+
+        // No horizontal reduce needed — each lane has its own complete result.
+        // Apply scalar epilogue to each lane and store.
+        for (let lane = 0; lane < 4; lane++) {
+          // Output address for this lane.
+          cg.local.get(kernel.nargs);
+          cg.local.get(gidx);
+          if (lane > 0) {
+            cg.i32.const(lane);
+            cg.i32.add();
+          }
+          cg.i32.const(byteWidth(kernel.dtype));
+          cg.i32.mul();
+          cg.i32.add();
+
+          // Extract lane from v128 accumulator.
+          const acc = cg.local.declare(reIsInt ? cg.i32 : cg.f32);
+          cg.local.get(vecAcc);
+          if (reIsInt) cg.i32x4.extract_lane(lane);
+          else cg.f32x4.extract_lane(lane);
+          cg.local.set(acc);
+
+          // Apply epilogue scalarly. gidx+lane is the actual output index.
+          const laneGidx = cg.local.declare(cg.i32);
+          cg.local.get(gidx);
+          if (lane > 0) {
+            cg.i32.const(lane);
+            cg.i32.add();
+          }
+          cg.local.set(laneGidx);
+          translateExp(cg, funcs, tune.epilogue!, { acc, gidx: laneGidx });
+
+          // Store.
+          dty(cg, null, kernel.dtype).store(Math.log2(byteWidth(kernel.dtype)));
+        }
 
         // gidx += 4
         cg.local.get(gidx);
@@ -716,11 +974,8 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
       cg.i32.mul();
       cg.i32.add();
 
-      if (re && useSimd) {
-        // SIMD reduction: vectorize the inner ridx loop, stepping by 4.
-        // Note: accumulating 4 partial results then horizontal-reducing
-        // reorders operations vs. the scalar path, so floating-point
-        // results may differ slightly due to reassociation.
+      if (re && useSimd && !simdOverGidx) {
+        // SIMD-over-ridx reduction: vectorize the inner ridx loop, stepping by 4.
         const simdReSize = re.size & ~3;
         const ridx = cg.local.declare(cg.i32);
         const reIsInt = re.dtype === DType.Int32 || re.dtype === DType.Uint32;
@@ -748,14 +1003,13 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
           cg.i32.ge_u();
           cg.br_if(0);
 
-          // Evaluate expression tree in SIMD mode (stepping ridx by 4).
           translateExpSimd(
             cg,
             funcs,
             tune.exp,
             { gidx, ridx },
             "ridx",
-            bufferContiguity,
+            bufferStrides,
           );
 
           // vecAcc = op(vecAcc, values)
@@ -805,7 +1059,6 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
             if (re.op === AluOp.Add) cg.i32.add();
             else if (re.op === AluOp.Mul) cg.i32.mul();
             else if (re.op === AluOp.Min) {
-              // Wasm has no i32.min, emulate with select.
               const tmp = cg.local.declare(cg.i32);
               cg.local.set(tmp);
               cg.local.tee(acc);
@@ -836,7 +1089,6 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
         }
 
         // Scalar tail: handle remaining ridx values.
-        // ridx is already at simdReSize from the SIMD loop.
         cg.loop(cg.void);
         {
           cg.block(cg.void);
