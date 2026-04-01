@@ -78,14 +78,15 @@ suite("isSimdEligible", () => {
     expect(isSimdEligible(tune.exp, kernel)).toBe(true);
   });
 
-  test("f32 reduction with size < 4 is not eligible", () => {
-    const shape = ShapeTracker.fromShape([4, 3]);
+  test("f32 reduction with output size < 4 is not eligible", () => {
+    // Need at least 4 output elements for a SIMD group (gidx steps by 4).
+    const shape = ShapeTracker.fromShape([3, 8]);
     const view = AluExp.globalView(DType.Float32, 0, shape, [
-      ...unravelAlu([4], AluVar.gidx),
+      ...unravelAlu([3], AluVar.gidx),
       AluVar.ridx,
     ]);
-    const reduction = new Reduction(DType.Float32, AluOp.Add, 3);
-    const kernel = new Kernel(1, 4, view, reduction);
+    const reduction = new Reduction(DType.Float32, AluOp.Add, 8);
+    const kernel = new Kernel(1, 3, view, reduction);
     const tune = tuneNullopt(kernel);
     expect(isSimdEligible(tune.exp, kernel)).toBe(false);
   });

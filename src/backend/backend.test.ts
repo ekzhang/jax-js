@@ -304,6 +304,58 @@ suite.each(devices)("device:%s", (device) => {
     }
   });
 
+  test("matmul with output size that misaligns parallel chunks", async () => {
+    // Regression test: a matmul with M=131, K=4, N=4 produces 524 output
+    // elements. With most worker counts, ceil(524/workers) is not a multiple
+    // of 4, so some workers get a `begin` that's not 4-aligned. This would
+    // cause SIMD-over-gidx to cross tile boundaries if dispatch isn't aligned.
+    //
+    // Uses distinct values (not all-ones) so wrong-index reads produce
+    // detectably wrong results.
+    const backend = getBackend(device);
+    const M = 131, K = 4, N = 4;
+
+    // A is [M, K] with A[i,j] = i + j*0.01 (distinct per element).
+    const aData = new Float32Array(M * K);
+    for (let i = 0; i < M; i++)
+      for (let j = 0; j < K; j++)
+        aData[i * K + j] = i + j * 0.01;
+
+    // B is [K, N] identity matrix.
+    const bData = new Float32Array(K * N);
+    for (let i = 0; i < K; i++) bData[i * N + i] = 1.0;
+
+    // C = A @ I = A, so C[i, j] = A[i, j].
+    const a = backend.malloc(M * K * 4, new Uint8Array(aData.buffer));
+    const b = backend.malloc(K * N * 4, new Uint8Array(bData.buffer));
+    const c = backend.malloc(M * N * 4);
+    try {
+      const stA = ShapeTracker.fromShape([M, K]).reshape([M, 1, K]).expand([M, N, K]);
+      const stB = ShapeTracker.fromShape([K, N]).permute([1, 0]).reshape([1, N, K]).expand([M, N, K]);
+      const indices = [...unravelAlu([M, N], AluVar.gidx), AluVar.ridx];
+      const exp = AluExp.mul(
+        AluExp.globalView(DType.Float32, 0, stA, indices),
+        AluExp.globalView(DType.Float32, 1, stB, indices),
+      );
+      const reduction = new Reduction(DType.Float32, AluOp.Add, K);
+      const kernel = new Kernel(2, M * N, exp, reduction);
+
+      const exe = await backend.prepareKernel(kernel);
+      backend.dispatch(exe, [a, b], [c]);
+
+      const result = new Float32Array((await backend.read(c)).buffer);
+      for (let i = 0; i < M; i++) {
+        for (let j = 0; j < N; j++) {
+          expect(result[i * N + j]).toBeCloseTo(aData[i * K + j], 4);
+        }
+      }
+    } finally {
+      backend.decRef(a);
+      backend.decRef(b);
+      backend.decRef(c);
+    }
+  });
+
   test("pointwise f32 add+mul with 7 elements", async () => {
     const backend = getBackend(device);
     const data = new Float32Array([1, 2, 3, 4, 5, 6, 7]);
