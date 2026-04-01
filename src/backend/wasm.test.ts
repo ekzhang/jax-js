@@ -66,7 +66,7 @@ suite("isSimdEligible", () => {
     expect(isSimdEligible(kernel.exp, kernel)).toBe(false);
   });
 
-  test("f32 reduction with size >= 4 is eligible", () => {
+  test("f32 reduction with output size >= 4 is eligible", () => {
     const shape = ShapeTracker.fromShape([4, 8]);
     const view = AluExp.globalView(DType.Float32, 0, shape, [
       ...unravelAlu([4], AluVar.gidx),

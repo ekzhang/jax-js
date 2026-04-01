@@ -471,44 +471,11 @@ suite.each(devices)("device:%s", (device) => {
     }
   });
 
-  test("reduction sum on [3,7] f32 array", () => {
-    const backend = getBackend(device);
-    // [3, 7] array: sum each row of 7 elements → 3 outputs
-    // SIMD handles 4, scalar tail handles 3
-    const data = new Float32Array([
-      1, 2, 3, 4, 5, 6, 7,
-      10, 20, 30, 40, 50, 60, 70,
-      100, 200, 300, 400, 500, 600, 700,
-    ]);
-    const a = backend.malloc(21 * 4, new Uint8Array(data.buffer));
-    const output = backend.malloc(3 * 4);
-    try {
-      const st = ShapeTracker.fromShape([3, 7]);
-      const exp = AluExp.globalView(DType.Float32, 0, st, [
-        AluVar.gidx,
-        AluVar.ridx,
-      ]);
-      const kernel = new Kernel(
-        1, 3, exp,
-        new Reduction(DType.Float32, AluOp.Add, 7),
-      );
-      const exe = backend.prepareKernelSync(kernel);
-      backend.dispatch(exe, [a], [output]);
-      const buf = backend.readSync(output).buffer;
-      expect(new Float32Array(buf)).toEqual(new Float32Array([28, 280, 2800]));
-    } finally {
-      backend.decRef(a);
-      backend.decRef(output);
-    }
-  });
-
   test("reduction sum on permuted [8,4] f32 array", () => {
     const backend = getBackend(device);
-    // Transposed [8, 4] array: permute swaps strides so ridx (last index)
-    // has stride 4 instead of 1. This simulates a column reduction on a
-    // transposed array — the natural frontend layout [gidx, ridx] where
-    // ridx is non-contiguous due to the permuted strides.
-    // reduction.size = 8 (>= 4) so SIMD is eligible.
+    // Transposed [8, 4] array: permute gives shape [4, 8] with strides [1, 4].
+    // gidx has stride 1 (contiguous), ridx has stride 4 (non-contiguous).
+    // Output size = 4, so SIMD-over-gidx is eligible.
     const data = new Float32Array([
       // Stored in memory as the original [8, 4] row-major layout:
       1, 2, 3, 4,
@@ -578,8 +545,8 @@ suite.each(devices)("device:%s", (device) => {
 
   test("reduction sum on [3,7] i32 array", () => {
     const backend = getBackend(device);
-    // [3, 7] array: sum each row of 7 elements → 3 outputs
-    // SIMD handles 4, scalar tail handles 3
+    // [3, 7] i32 array: sum each row of 7 elements → 3 outputs.
+    // Output size 3 < 4, so this runs the scalar fallback path.
     const data = new Int32Array([
       1, 2, 3, 4, 5, 6, 7,
       10, 20, 30, 40, 50, 60, 70,
