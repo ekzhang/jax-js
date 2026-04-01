@@ -182,7 +182,7 @@ function translateExpSimd(
         // If index is out-of-bounds, clamp to len-4 to prevent WASM traps.
         translateExp(cg, funcs, indexSubtree, ctx);
         {
-          const maxIdx = Math.max(len - 4, 0);
+          const maxIdx = Math.max(len - SIMD_LANES, 0);
           const wideIdx = cg.local.declare(cg.i32);
           cg.local.set(wideIdx);
           cg.local.get(wideIdx); // val_true = index
@@ -223,7 +223,7 @@ function translateExpSimd(
           cg.f32x4.splat();
         }
       } else {
-        // Gather: evaluate index subtree 4 times with stepping_var+0,+1,+2,+3,
+        // Gather: evaluate index subtree 4 times with gidx+0,+1,+2,+3,
         // do 4 scalar loads, pack into v128.
         const steppingLocal = ctx["gidx"];
         const origValue = cg.local.declare(cg.i32);
@@ -244,7 +244,7 @@ function translateExpSimd(
         const idx = cg.local.declare(cg.i32);
         const scalarVal = cg.local.declare(isInt ? cg.i32 : cg.f32);
 
-        for (let lane = 0; lane < 4; lane++) {
+        for (let lane = 0; lane < SIMD_LANES; lane++) {
           // Set stepping var to original + lane
           cg.local.get(origValue);
           if (lane > 0) {
@@ -300,6 +300,9 @@ function translateExpSimd(
   countReferences(exp);
   gen(exp);
 }
+
+/** Number of SIMD lanes (f32x4 / i32x4 = 4 lanes). */
+const SIMD_LANES = 4;
 
 /** How a GlobalIndex behaves as gidx steps by 1. */
 type StrideResult =
@@ -433,7 +436,7 @@ const simdBoolOps = new Set([
  * - All nodes have a supported dtype (f32, i32, u32, bool) with SIMD variants
  */
 export function isSimdEligible(tunedExp: AluExp, kernel: Kernel): boolean {
-  if (kernel.size < 4) return false;
+  if (kernel.size < SIMD_LANES) return false;
   if (kernel.reduction) {
     if (!simdSupportedOpsForDtype(kernel.reduction.dtype)?.has(kernel.reduction.op)) return false;
   }
@@ -662,6 +665,27 @@ export class WasmBackend implements Backend {
   }
 }
 
+/** Emit a runtime guard: enter the if-block only when [begin, end) is SIMD-aligned. */
+function emitAlignmentGuard(
+  cg: CodeGenerator,
+  paramBegin: number,
+  paramEnd: number,
+): void {
+  const mask = SIMD_LANES - 1; // 3 for 4-wide, 1 for 2-wide
+  cg.local.get(paramEnd);
+  cg.local.get(paramBegin);
+  cg.i32.sub();
+  cg.i32.const(mask);
+  cg.i32.and();
+  cg.i32.eqz(); // (end - begin) % SIMD_LANES === 0
+  cg.local.get(paramBegin);
+  cg.i32.const(mask);
+  cg.i32.and();
+  cg.i32.eqz(); // begin % SIMD_LANES === 0
+  cg.i32.and();
+  cg.if(cg.void);
+}
+
 function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
   const tune = tuneNullopt(kernel);
   const re = kernel.reduction;
@@ -683,15 +707,14 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
       .collect((e) => e.op === AluOp.GlobalIndex)
       .forEach((gi) => {
         const result = analyzeStride(gi.src[0]);
-        // Downgrade to gather if tile size is too small or misaligned for 4-wide SIMD.
-        if (result.kind !== "gather" && (result.tileSize < 4 || (isFinite(result.tileSize) && result.tileSize % 4 !== 0))) {
+        // Downgrade to gather if tile size is too small or misaligned for SIMD width.
+        if (result.kind !== "gather" && (result.tileSize < SIMD_LANES || (isFinite(result.tileSize) && result.tileSize % SIMD_LANES !== 0))) {
           bufferStrides.set(gi, GATHER);
         } else {
           bufferStrides.set(gi, result);
         }
       });
   }
-
   const cg = new CodeGenerator();
   cg.memory.import("env", "memory");
   if (hasSharedArrayBuffer()) {
@@ -729,20 +752,7 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
 
     if (useSimd && !re) {
       // Pointwise SIMD loop: process 4 output elements per iteration.
-      // Safety: skip SIMD if the range [begin, end) is not divisible by 4.
-      // Contiguous/broadcast loads assume SIMD groups align with tile boundaries.
-      cg.local.get(paramEnd);
-      cg.local.get(paramBegin);
-      cg.i32.sub();
-      cg.i32.const(3);
-      cg.i32.and();
-      cg.i32.eqz(); // (end - begin) % 4 === 0
-      cg.local.get(paramBegin);
-      cg.i32.const(3);
-      cg.i32.and();
-      cg.i32.eqz(); // begin % 4 === 0
-      cg.i32.and();  // both conditions
-      cg.if(cg.void);
+      emitAlignmentGuard(cg, paramBegin, paramEnd);
 
       cg.loop(cg.void);
       {
@@ -772,9 +782,9 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
         // Store 4 results at once.
         cg.v128.store(4);
 
-        // gidx += 4
+        // gidx += SIMD_LANES
         cg.local.get(gidx);
-        cg.i32.const(4);
+        cg.i32.const(SIMD_LANES);
         cg.i32.add();
         cg.local.set(gidx);
 
@@ -783,26 +793,14 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
       }
       cg.end();
 
-      cg.end(); // end if (range is 4-aligned)
+      cg.end(); // end if (range is SIMD-aligned)
     }
 
     if (useSimd && re) {
       // SIMD-over-gidx reduction: step gidx by 4, computing 4 output
       // elements simultaneously. The inner ridx loop stays scalar but
       // operates on v128 accumulators (each lane is an independent reduction).
-      // Safety: skip SIMD if the range [begin, end) is not divisible by 4.
-      cg.local.get(paramEnd);
-      cg.local.get(paramBegin);
-      cg.i32.sub();
-      cg.i32.const(3);
-      cg.i32.and();
-      cg.i32.eqz(); // (end - begin) % 4 === 0
-      cg.local.get(paramBegin);
-      cg.i32.const(3);
-      cg.i32.and();
-      cg.i32.eqz(); // begin % 4 === 0
-      cg.i32.and();  // both conditions
-      cg.if(cg.void);
+      emitAlignmentGuard(cg, paramBegin, paramEnd);
 
       const reIsInt = re.dtype === DType.Int32 || re.dtype === DType.Uint32;
 
@@ -848,7 +846,6 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
             bufferStrides,
           );
 
-          // vecAcc = op(vecAcc, values)
           cg.local.get(vecAcc);
           if (reIsInt) {
             if (re.op === AluOp.Add) cg.i32x4.add();
@@ -881,7 +878,7 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
         cg.end();
 
         // Apply scalar epilogue to each lane and store.
-        for (let lane = 0; lane < 4; lane++) {
+        for (let lane = 0; lane < SIMD_LANES; lane++) {
           // Output address for this lane.
           cg.local.get(kernel.nargs);
           cg.local.get(gidx);
@@ -914,9 +911,9 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
           dty(cg, null, kernel.dtype).store(Math.log2(byteWidth(kernel.dtype)));
         }
 
-        // gidx += 4
+        // gidx += SIMD_LANES
         cg.local.get(gidx);
-        cg.i32.const(4);
+        cg.i32.const(SIMD_LANES);
         cg.i32.add();
         cg.local.set(gidx);
 
@@ -924,10 +921,11 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
         cg.end();
       }
       cg.end();
-      cg.end(); // end if (range is 4-aligned)
+      cg.end(); // end if (range is SIMD-aligned)
     }
 
-    // Scalar loop 
+    // Scalar fallback: runs the full range when SIMD is skipped (alignment
+    // check failed or not eligible), or zero iterations when SIMD ran.
     cg.loop(cg.void);
     {
       // if (gidx >= end) break;

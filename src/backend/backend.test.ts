@@ -607,6 +607,149 @@ suite.each(devices)("device:%s", (device) => {
     }
   });
 
+  test("reduction min on [4,8] f32 array", () => {
+    const backend = getBackend(device);
+    // Each row has a different minimum at a different position.
+    const data = new Float32Array([
+      9, 7, 3, 5, 8, 6, 4, 2,   // min = 2
+      10, 1, 20, 30, 40, 50, 60, 70, // min = 1
+      5, 5, 5, 5, 5, 5, 5, 0.5, // min = 0.5
+      99, 98, 97, 96, 95, 94, 93, 92, // min = 92
+    ]);
+    const a = backend.malloc(32 * 4, new Uint8Array(data.buffer));
+    const output = backend.malloc(4 * 4);
+    try {
+      const st = ShapeTracker.fromShape([4, 8]);
+      const exp = AluExp.globalView(DType.Float32, 0, st, [
+        AluVar.gidx,
+        AluVar.ridx,
+      ]);
+      const kernel = new Kernel(
+        1, 4, exp,
+        new Reduction(DType.Float32, AluOp.Min, 8),
+      );
+      const exe = backend.prepareKernelSync(kernel);
+      backend.dispatch(exe, [a], [output]);
+      const buf = backend.readSync(output).buffer;
+      expect(new Float32Array(buf)).toEqual(
+        new Float32Array([2, 1, 0.5, 92]),
+      );
+    } finally {
+      backend.decRef(a);
+      backend.decRef(output);
+    }
+  });
+
+  test("reduction max on [4,8] f32 array", () => {
+    const backend = getBackend(device);
+    const data = new Float32Array([
+      1, 2, 3, 4, 5, 6, 7, 100, // max = 100
+      -1, -2, -3, -4, -5, -6, -7, -0.1, // max = -0.1
+      0, 0, 0, 0, 0, 0, 0, 0.001, // max = 0.001
+      50, 99, 50, 50, 50, 50, 50, 50,  // max = 99
+    ]);
+    const a = backend.malloc(32 * 4, new Uint8Array(data.buffer));
+    const output = backend.malloc(4 * 4);
+    try {
+      const st = ShapeTracker.fromShape([4, 8]);
+      const exp = AluExp.globalView(DType.Float32, 0, st, [
+        AluVar.gidx,
+        AluVar.ridx,
+      ]);
+      const kernel = new Kernel(
+        1, 4, exp,
+        new Reduction(DType.Float32, AluOp.Max, 8),
+      );
+      const exe = backend.prepareKernelSync(kernel);
+      backend.dispatch(exe, [a], [output]);
+      const buf = backend.readSync(output).buffer;
+      expect(new Float32Array(buf)).toEqual(
+        new Float32Array([100, -0.1, 0.001, 99]),
+      );
+    } finally {
+      backend.decRef(a);
+      backend.decRef(output);
+    }
+  });
+
+  test("pointwise f32 add with broadcast input", async () => {
+    const backend = getBackend(device);
+    // A: 4 elements, each broadcast across 8 columns.
+    const dataA = new Float32Array([10, 20, 30, 40]);
+    // B: 32 distinct elements.
+    const dataB = new Float32Array(range(1, 33));
+    const a = backend.malloc(4 * 4, new Uint8Array(dataA.buffer));
+    const b = backend.malloc(32 * 4, new Uint8Array(dataB.buffer));
+    const out = backend.malloc(32 * 4);
+
+    try {
+      const indices = [...unravelAlu([4, 8], AluVar.gidx)];
+      // A: [4] → [4,1] → expand [4,8] — dim 1 has stride 0 (broadcast).
+      const stA = ShapeTracker.fromShape([4]).reshape([4, 1]).expand([4, 8]);
+      const stB = ShapeTracker.fromShape([4, 8]);
+
+      const kernel = new Kernel(
+        2,
+        32,
+        AluExp.add(
+          AluExp.globalView(DType.Float32, 0, stA, indices),
+          AluExp.globalView(DType.Float32, 1, stB, indices),
+        ),
+      );
+      const exe = await backend.prepareKernel(kernel);
+      backend.dispatch(exe, [a, b], [out]);
+
+      const { buffer } = await backend.read(out);
+      // Row i: A[i] + B[i*8+0..7]
+      expect(new Float32Array(buffer)).toEqual(
+        new Float32Array([
+          11, 12, 13, 14, 15, 16, 17, 18, // 10 + [1..8]
+          29, 30, 31, 32, 33, 34, 35, 36, // 20 + [9..16]
+          47, 48, 49, 50, 51, 52, 53, 54, // 30 + [17..24]
+          65, 66, 67, 68, 69, 70, 71, 72, // 40 + [25..32]
+        ]),
+      );
+    } finally {
+      backend.decRef(a);
+      backend.decRef(b);
+      backend.decRef(out);
+    }
+  });
+
+  test("pointwise f32 where with comparison", async () => {
+    const backend = getBackend(device);
+    // where(x < 5, x * 2, x): doubles values below 5, leaves others unchanged.
+    const data = new Float32Array([1, 6, 3, 8, 2, 7, 4, 9]);
+    const a = backend.malloc(8 * 4, new Uint8Array(data.buffer));
+    const out = backend.malloc(8 * 4);
+
+    try {
+      const shape = ShapeTracker.fromShape([8]);
+      const gidx = AluVar.gidx;
+      const x = accessorGlobal(DType.Float32, 0, shape, [gidx]);
+      const kernel = new Kernel(
+        1,
+        8,
+        AluExp.where(
+          AluExp.cmplt(x, AluExp.f32(5)),
+          AluExp.mul(x, AluExp.f32(2)),
+          x,
+        ),
+      );
+      const exe = await backend.prepareKernel(kernel);
+      backend.dispatch(exe, [a], [out]);
+
+      const { buffer } = await backend.read(out);
+      // x < 5: [T, F, T, F, T, F, T, F] → doubled or unchanged
+      expect(new Float32Array(buffer)).toEqual(
+        new Float32Array([2, 6, 6, 8, 4, 7, 8, 9]),
+      );
+    } finally {
+      backend.decRef(a);
+      backend.decRef(out);
+    }
+  });
+
   test("pointwise cast f32 to i32 on 8-element array", async () => {
     const backend = getBackend(device);
     const data = new Float32Array([1.9, -2.7, 3.1, -4.8, 5.5, -6.2, 7.4, -8.9]);
