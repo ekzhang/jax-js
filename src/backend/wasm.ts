@@ -326,7 +326,7 @@ const GATHER: StrideResult = { kind: "gather" };
 /**
  * Classify how a GlobalIndex's index expression behaves as gidx increments.
  */
-function analyzeStride(exp: AluExp): StrideResult {
+export function analyzeStride(exp: AluExp): StrideResult {
   // No gidx in this subtree: value doesn't change across lanes.
   if (!referencesGidx(exp)) return { kind: "broadcast", tileSize: Infinity };
   // Bare gidx: increments by 1 each lane, forever.

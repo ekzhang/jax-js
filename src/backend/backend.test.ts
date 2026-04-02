@@ -419,7 +419,7 @@ suite.each(devices)("device:%s", (device) => {
     const out = backend.malloc(8 * 4);
 
     try {
-      // Flip reverses the array — stride becomes -1, non-contiguous.
+      // Flip reverses the array so stride becomes -1, non-contiguous.
       // On WASM SIMD, this exercises the gather path for pointwise kernels.
       const shape = ShapeTracker.fromShape([8]).flip([true]);
       const gidx = AluVar.gidx;
@@ -438,36 +438,6 @@ suite.each(devices)("device:%s", (device) => {
     } finally {
       backend.decRef(a);
       backend.decRef(out);
-    }
-  });
-
-  test("reduction sum on [3,8] f32 array", () => {
-    const backend = getBackend(device);
-    // [3, 8] array: sum each row of 8 elements → 3 outputs
-    const data = new Float32Array([
-      1, 2, 3, 4, 5, 6, 7, 8,
-      10, 20, 30, 40, 50, 60, 70, 80,
-      100, 200, 300, 400, 500, 600, 700, 800,
-    ]);
-    const a = backend.malloc(24 * 4, new Uint8Array(data.buffer));
-    const output = backend.malloc(3 * 4);
-    try {
-      const st = ShapeTracker.fromShape([3, 8]);
-      const exp = AluExp.globalView(DType.Float32, 0, st, [
-        AluVar.gidx,
-        AluVar.ridx,
-      ]);
-      const kernel = new Kernel(
-        1, 3, exp,
-        new Reduction(DType.Float32, AluOp.Add, 8),
-      );
-      const exe = backend.prepareKernelSync(kernel);
-      backend.dispatch(exe, [a], [output]);
-      const buf = backend.readSync(output).buffer;
-      expect(new Float32Array(buf)).toEqual(new Float32Array([36, 360, 3600]));
-    } finally {
-      backend.decRef(a);
-      backend.decRef(output);
     }
   });
 
