@@ -326,7 +326,7 @@ const GATHER: StrideResult = { kind: "gather" };
 /**
  * Classify how a GlobalIndex's index expression behaves as gidx increments.
  */
-export function analyzeStride(exp: AluExp): StrideResult {
+function analyzeStride(exp: AluExp): StrideResult {
   // No gidx in this subtree: value doesn't change across lanes.
   if (!referencesGidx(exp)) return { kind: "broadcast", tileSize: Infinity };
   // Bare gidx: increments by 1 each lane, forever.
@@ -435,7 +435,7 @@ const simdBoolOps = new Set([
  * - For reductions: the reduction op has a SIMD variant for its dtype
  * - All nodes have a supported dtype (f32, i32, u32, bool) with SIMD variants
  */
-export function isSimdEligible(tunedExp: AluExp, kernel: Kernel): boolean {
+function isSimdEligible(tunedExp: AluExp, kernel: Kernel): boolean {
   if (kernel.size < SIMD_LANES) return false;
   if (kernel.reduction) {
     if (!simdSupportedOpsForDtype(kernel.reduction.dtype)?.has(kernel.reduction.op)) return false;
