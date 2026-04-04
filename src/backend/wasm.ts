@@ -694,8 +694,6 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
     console.info(`kernel.exp: ${kernel.exp}\ntune.exp: ${tune.exp}`);
   }
 
-  // Use tune.exp (not kernel.exp) since GlobalView nodes have been rewritten
-  // to GlobalIndex by this point, matching what translateExpSimd will codegen.
   const useSimd = isSimdEligible(tune.exp, kernel);
 
   // Determine SIMD strategy: classify each GlobalIndex as broadcast/contiguous/gather
@@ -802,7 +800,7 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
       // operates on v128 accumulators (each lane is an independent reduction).
       emitAlignmentGuard(cg, paramBegin, paramEnd);
 
-      const reIsInt = re.dtype === DType.Int32 || re.dtype === DType.Uint32;
+      const reIsInt = kernel.exp.dtype === DType.Int32 || kernel.exp.dtype === DType.Uint32;
 
       cg.loop(cg.void);
       {
@@ -824,7 +822,7 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
         }
         cg.local.set(vecAcc);
 
-        // Inner ridx loop: steps by 1, but body uses SIMD ops.
+        // Inner ridx loop: steps by 1, but each SIMD lane is a different gidx.
         const ridx = cg.local.declare(cg.i32);
         cg.i32.const(0);
         cg.local.set(ridx);
