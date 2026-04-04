@@ -142,7 +142,7 @@ function translateExpSimd(
       else if (srcDtype === DType.Int32) cg.i32x4.lt_s();
       else if (srcDtype === DType.Uint32) cg.i32x4.lt_u();
       else throw new UnsupportedOpError(op, dtype, "wasm");
-      // SIMD comparisons produce 0xFFFFFFFF per lane; normalize to 0/1.
+      // SIMD comparisons produce 0xFFFFFFFF per lane; normalize to 0/1 to match scalar path.
       cg.i32.const(1);
       cg.i32x4.splat();
       cg.v128.and();
@@ -152,14 +152,16 @@ function translateExpSimd(
       const srcDtype = src[0].dtype;
       if (srcDtype === DType.Float32) cg.f32x4.ne();
       else cg.i32x4.ne();
-      // SIMD comparisons produce 0xFFFFFFFF per lane; normalize to 0/1.
+      // SIMD comparisons produce 0xFFFFFFFF per lane; normalize to 0/1 to match scalar path.
       cg.i32.const(1);
       cg.i32x4.splat();
       cg.v128.and();
     } else if (op === AluOp.Where) {
       gen(src[1]); // true value
       gen(src[2]); // false value
-      // Normalize condition to all-ones/all-zeros bitmask.
+      // Scalar where uses select (0 = false, nonzero = true), but SIMD only
+      // has v128.bitselect which needs a full bitmask per lane (0x00000000
+      // or 0xFFFFFFFF). Expand 0/1 conditions with ne(0) to get the bitmask.
       gen(src[0]);
       cg.i32.const(0);
       cg.i32x4.splat();
