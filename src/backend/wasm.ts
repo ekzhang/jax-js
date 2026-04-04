@@ -70,7 +70,8 @@ function translateExpSimd(
   const gen = (exp: AluExp) => {
     if (expContext.has(exp)) return cg.local.get(expContext.get(exp)!);
     const { op, src, arg, dtype } = exp;
-    const isInt = dtype === DType.Int32 || dtype === DType.Uint32 || dtype === DType.Bool;
+    const isInt =
+      dtype === DType.Int32 || dtype === DType.Uint32 || dtype === DType.Bool;
     const isSigned = dtype === DType.Int32;
 
     if (op === AluOp.Add) {
@@ -122,7 +123,10 @@ function translateExpSimd(
     } else if (op === AluOp.Cast) {
       gen(src[0]);
       const dtype0 = src[0].dtype;
-      const src0IsInt = dtype0 === DType.Int32 || dtype0 === DType.Uint32 || dtype0 === DType.Bool;
+      const src0IsInt =
+        dtype0 === DType.Int32 ||
+        dtype0 === DType.Uint32 ||
+        dtype0 === DType.Bool;
       if (isInt && !src0IsInt) {
         // f32 to i32/u32
         if (isSigned) cg.i32x4.trunc_sat_f32x4_s();
@@ -308,9 +312,9 @@ const SIMD_LANES = 4;
 
 /** How a GlobalIndex behaves as gidx steps by 1. */
 type StrideResult =
-  | { kind: "broadcast"; tileSize: number }  // constant across lanes -> scalar load + splat
+  | { kind: "broadcast"; tileSize: number } // constant across lanes -> scalar load + splat
   | { kind: "contiguous"; tileSize: number } // increments by 1 -> v128.load
-  | { kind: "gather" };                      // anything else -> 4 scalar loads
+  | { kind: "gather" }; // anything else -> 4 scalar loads
 
 function referencesGidx(exp: AluExp): boolean {
   if (exp.op === AluOp.Special && exp.arg[0] === "gidx") return true;
@@ -440,7 +444,12 @@ const simdBoolOps = new Set([
 function isSimdEligible(tunedExp: AluExp, kernel: Kernel): boolean {
   if (kernel.size < SIMD_LANES) return false;
   if (kernel.reduction) {
-    if (!simdSupportedOpsForDtype(kernel.reduction.dtype)?.has(kernel.reduction.op)) return false;
+    if (
+      !simdSupportedOpsForDtype(kernel.reduction.dtype)?.has(
+        kernel.reduction.op,
+      )
+    )
+      return false;
   }
 
   const check = (exp: AluExp, visited: Set<AluExp>): boolean => {
@@ -708,7 +717,11 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
       .forEach((gi) => {
         const result = analyzeStride(gi.src[0]);
         // Downgrade to gather if tile size is too small or misaligned for SIMD width.
-        if (result.kind !== "gather" && (result.tileSize < SIMD_LANES || (isFinite(result.tileSize) && result.tileSize % SIMD_LANES !== 0))) {
+        if (
+          result.kind !== "gather" &&
+          (result.tileSize < SIMD_LANES ||
+            (isFinite(result.tileSize) && result.tileSize % SIMD_LANES !== 0))
+        ) {
           bufferStrides.set(gi, GATHER);
         } else {
           bufferStrides.set(gi, result);
@@ -771,13 +784,7 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
         cg.i32.add();
 
         // Evaluate expression tree in SIMD mode, pushes v128.
-        translateExpSimd(
-          cg,
-          funcs,
-          tune.exp,
-          { gidx },
-          bufferStrides,
-        );
+        translateExpSimd(cg, funcs, tune.exp, { gidx }, bufferStrides);
 
         // Store 4 results at once.
         cg.v128.store(4);
@@ -802,7 +809,8 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
       // operates on v128 accumulators (each lane is an independent reduction).
       emitAlignmentGuard(cg, paramBegin, paramEnd);
 
-      const reIsInt = kernel.exp.dtype === DType.Int32 || kernel.exp.dtype === DType.Uint32;
+      const reIsInt =
+        kernel.exp.dtype === DType.Int32 || kernel.exp.dtype === DType.Uint32;
 
       cg.loop(cg.void);
       {
@@ -838,13 +846,7 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
 
           // Evaluate expression in SIMD mode, stepping gidx.
           // Each lane computes the value for gidx+0, gidx+1, gidx+2, gidx+3.
-          translateExpSimd(
-            cg,
-            funcs,
-            tune.exp,
-            { gidx, ridx },
-            bufferStrides,
-          );
+          translateExpSimd(cg, funcs, tune.exp, { gidx, ridx }, bufferStrides);
 
           cg.local.get(vecAcc);
           if (reIsInt) {
@@ -943,7 +945,7 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
       cg.i32.add();
 
       if (re) {
-        // Scalar reduction 
+        // Scalar reduction
         const acc = cg.local.declare(dty(cg, null, kernel.exp.dtype));
         dty(cg, null, kernel.exp.dtype).const(re.identity);
         cg.local.set(acc);
