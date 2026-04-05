@@ -1,6 +1,8 @@
 <script lang="ts">
   import { browser } from "$app/environment";
 
+  import type { Device } from "@jax-js/jax";
+
   import { getWebgpuDevice, importTfjs, runBenchmark } from "$lib/benchmark";
 
   const n = 4096;
@@ -836,18 +838,22 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
 
   class JaxJsStrategy extends Strategy {
     name: string;
+    device: Device;
     fp16: boolean;
 
-    constructor(fp16: boolean = false) {
+    constructor(device: Device = "webgpu", fp16: boolean = false) {
       super();
+      this.device = device;
       this.fp16 = fp16;
-      this.name = fp16 ? "jax-js-fp16" : "jax-js";
+      this.name = "jax-js";
+      if (device !== "webgpu") this.name += `-${device}`;
+      if (fp16) this.name += "-fp16";
     }
 
     async run(): Promise<number> {
       const jax = await import("@jax-js/jax");
       await jax.init();
-      jax.defaultDevice("webgpu");
+      jax.defaultDevice(this.device);
       const np = jax.numpy;
 
       const a = np
@@ -885,8 +891,9 @@ fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
     new OnnxStrategy(true),
     new TfjsStrategy(),
     new TfjsStrategy(true),
-    new JaxJsStrategy(),
-    new JaxJsStrategy(true),
+    new JaxJsStrategy("webgpu"),
+    new JaxJsStrategy("webgpu", true),
+    new JaxJsStrategy("wasm"),
   ];
 
   const strategies = Object.fromEntries(strategiesList.map((s) => [s.name, s]));

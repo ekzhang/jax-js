@@ -330,8 +330,8 @@
   }
 
   onMount(async () => {
-    await init("webgpu");
-    defaultDevice("webgpu");
+    const devices = await init("webgpu");
+    if (devices.includes("webgpu")) defaultDevice("webgpu");
 
     ctx = canvas.getContext("2d", { willReadFrequently: true })!;
     ctx.fillStyle = "white";
@@ -457,11 +457,11 @@
     </p>
 
     <p class="mb-4 text-sm">
-      Note: This demo requires a <a
+      Note: This demo runs faster on <a
         class="underline"
         target="_blank"
         href="https://browserleaks.com/webgpu">WebGPU</a
-      >-enabled browser. Works best on Chrome.
+      >-enabled browsers. Works best on Chrome.
     </p>
 
     <div class="mb-8">
