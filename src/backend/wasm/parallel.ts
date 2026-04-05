@@ -142,7 +142,7 @@ export class WasmWorkerPool {
       this.#workers.length,
       Math.ceil(size / MIN_ELEMS_PER_THREAD),
     );
-    const chunkSize = Math.ceil(size / n);
+    const chunkSize = Math.ceil(size / n / 16) * 16; // Align to cache line.
     const promises: Promise<void>[] = [];
     for (let i = 0; i < n; i++) {
       const begin = i * chunkSize;

@@ -117,7 +117,7 @@
 
     return {
       flops: {
-        Wasm: await benchFlops(256, "wasm", "float32"),
+        Wasm: await benchFlops(512, "wasm", "float32"),
         WebGPU: await benchFlops(gpuDim, "webgpu", "float32"),
         "WebGPU-fp16": hasF16
           ? await benchFlops(gpuDim, "webgpu", "float16")

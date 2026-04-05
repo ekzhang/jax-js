@@ -763,12 +763,14 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
     cg.local.get(paramBegin);
     cg.local.set(gidx);
 
-    if (useSimd && !re) {
-      // Pointwise SIMD loop: process 4 output elements per iteration.
+    if (useSimd) {
+      // SIMD-generated code is always gated on an alignment guard, as the input
+      // pointers may not be properly aligned. In that case we fall back to the
+      // scalar code path.
       emitAlignmentGuard(cg, paramBegin, paramEnd);
 
       cg.loop(cg.void);
-      {
+      if (!re) {
         // if (gidx >= end) break;
         cg.block(cg.void);
         cg.local.get(gidx);
@@ -797,23 +799,13 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
 
         cg.br(1);
         cg.end();
-      }
-      cg.end();
+      } else {
+        // SIMD-over-gidx reduction: step gidx by 4, computing 4 output
+        // elements simultaneously. The inner ridx loop stays scalar but
+        // operates on v128 accumulators (each lane is an independent reduction).
+        const reIsInt =
+          kernel.exp.dtype === DType.Int32 || kernel.exp.dtype === DType.Uint32;
 
-      cg.end(); // end if (range is SIMD-aligned)
-    }
-
-    if (useSimd && re) {
-      // SIMD-over-gidx reduction: step gidx by 4, computing 4 output
-      // elements simultaneously. The inner ridx loop stays scalar but
-      // operates on v128 accumulators (each lane is an independent reduction).
-      emitAlignmentGuard(cg, paramBegin, paramEnd);
-
-      const reIsInt =
-        kernel.exp.dtype === DType.Int32 || kernel.exp.dtype === DType.Uint32;
-
-      cg.loop(cg.void);
-      {
         // if (gidx >= end) break;
         cg.block(cg.void);
         cg.local.get(gidx);
@@ -922,12 +914,12 @@ function codegenWasm(kernel: Kernel): Uint8Array<ArrayBuffer> {
         cg.br(1);
         cg.end();
       }
-      cg.end();
+      cg.end(); // end loop
+      cg.return();
       cg.end(); // end if (range is SIMD-aligned)
     }
 
-    // Scalar fallback: runs the full range when SIMD is skipped (alignment
-    // check failed or not eligible), or zero iterations when SIMD ran.
+    // Scalar codegen path, no SIMD execution.
     cg.loop(cg.void);
     {
       // if (gidx >= end) break;
