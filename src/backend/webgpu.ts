@@ -32,6 +32,7 @@ export class WebGPUBackend implements Backend {
     {
       ref: number;
       size: number; // Refers to "true size" requested, less padding.
+      allocatedSize: number; // Actual GPUBuffer size.
       buffer: GPUBuffer;
     }
   >;
@@ -39,6 +40,7 @@ export class WebGPUBackend implements Backend {
 
   #cachedShaderMap = new Map<bigint, ShaderInfo>();
   #reusableZsb: GPUBuffer;
+  #bufferPool = new Map<number, GPUBuffer[]>();
 
   constructor(readonly device: GPUDevice) {
     if (DEBUG >= 3 && device.adapterInfo) {
@@ -70,39 +72,24 @@ export class WebGPUBackend implements Backend {
 
   malloc(size: number, initialData?: Uint8Array<ArrayBuffer>): Slot {
     let buffer: GPUBuffer;
+    let allocatedSize: number;
     // All GPUBuffer must be a multiple of 4 bytes in length, to support copy
     // operations. Pad it to a multiple of 4.
     const paddedSize = Math.ceil(size / 4) * 4;
     if (size === 0) {
       buffer = this.#reusableZsb;
-    } else if (initialData) {
-      if (initialData.byteLength !== size) {
+      allocatedSize = 4;
+    } else {
+      if (initialData && initialData.byteLength !== size) {
         throw new Error("initialData size does not match buffer size");
       }
-      if (initialData.byteLength < 4096) {
-        buffer = this.#createBuffer(paddedSize, { mapped: true });
-        new Uint8Array(buffer.getMappedRange(), 0, size).set(initialData);
-        buffer.unmap();
-      } else {
-        // getMappedRange() seems slower for large buffers, use writeBuffer() instead.
-        buffer = this.#createBuffer(paddedSize);
-        if (initialData.byteLength % 4 === 0) {
-          this.device.queue.writeBuffer(buffer, 0, initialData);
-        } else {
-          // Copy all but the last few bytes, then copy 4 bytes as remainder.
-          const aligned = initialData.byteLength - (initialData.byteLength % 4);
-          this.device.queue.writeBuffer(buffer, 0, initialData, 0, aligned);
-          const remainder = new Uint8Array(4);
-          remainder.set(initialData.subarray(aligned));
-          this.device.queue.writeBuffer(buffer, aligned, remainder);
-        }
-      }
-    } else {
-      buffer = this.#createBuffer(paddedSize);
+      allocatedSize = paddedSize;
+      buffer = this.#acquireBuffer(allocatedSize);
+      if (initialData) this.#writeInitialData(buffer, initialData);
     }
 
     const slot = this.nextSlot++;
-    this.buffers.set(slot, { buffer, size, ref: 1 });
+    this.buffers.set(slot, { buffer, size, allocatedSize, ref: 1 });
     return slot;
   }
 
@@ -118,10 +105,8 @@ export class WebGPUBackend implements Backend {
     buffer.ref--;
     if (buffer.ref === 0) {
       this.buffers.delete(slot);
-      // The GPUBuffer.destroy() method does not actually free the memory until
-      // pending work is done.
       if (buffer.buffer !== this.#reusableZsb) {
-        buffer.buffer.destroy();
+        this.#releaseBuffer(buffer.buffer, buffer.allocatedSize);
       }
     }
   }
@@ -222,6 +207,41 @@ export class WebGPUBackend implements Backend {
     const buffer = this.buffers.get(slot);
     if (!buffer) throw new SlotError(slot);
     return { buffer: buffer.buffer, size: buffer.size };
+  }
+
+  #acquireBuffer(size: number): GPUBuffer {
+    const bucket = this.#bufferPool.get(size);
+    const buffer = bucket?.pop();
+    if (bucket && bucket.length === 0) this.#bufferPool.delete(size);
+    return buffer ?? this.#createBuffer(size);
+  }
+
+  #releaseBuffer(buffer: GPUBuffer, size: number): void {
+    let bucket = this.#bufferPool.get(size);
+    if (!bucket) {
+      bucket = [];
+      this.#bufferPool.set(size, bucket);
+    }
+    bucket.push(buffer);
+  }
+
+  #writeInitialData(
+    buffer: GPUBuffer,
+    initialData: Uint8Array<ArrayBuffer>,
+  ): void {
+    if (initialData.byteLength % 4 === 0) {
+      this.device.queue.writeBuffer(buffer, 0, initialData);
+      return;
+    }
+
+    // Copy all but the last few bytes, then copy 4 bytes as remainder.
+    const aligned = initialData.byteLength - (initialData.byteLength % 4);
+    if (aligned > 0) {
+      this.device.queue.writeBuffer(buffer, 0, initialData, 0, aligned);
+    }
+    const remainder = new Uint8Array(4);
+    remainder.set(initialData.subarray(aligned));
+    this.device.queue.writeBuffer(buffer, aligned, remainder);
   }
 
   /**
