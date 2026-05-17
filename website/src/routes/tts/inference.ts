@@ -29,7 +29,7 @@ export async function playTTS(
     noiseClamp = null,
   }: Partial<PlayTTSOptions> = {},
 ): Promise<void> {
-  let sequence = model.flowLM.bosEmb.ref.reshape([1, -1]); // [1, 32]
+  let lastLatent = model.flowLM.bosEmb.ref.reshape([1, -1]); // [1, 32]
   let audioPromise: Promise<void> = Promise.resolve();
 
   if (seed === null) seed = Math.floor(Math.random() * 2 ** 32);
@@ -54,7 +54,7 @@ export async function playTTS(
         tree.ref(model.flowLM),
         flowLMState,
         stepKey,
-        step === 0 ? sequence.ref : sequence.ref.slice([-1]),
+        lastLatent.ref,
         step === 0 ? embeds.ref : null,
         flowLMState.kvCacheLen, // same as offset
         lsdDecodeSteps,
@@ -76,7 +76,9 @@ export async function playTTS(
         break;
       }
 
-      sequence = np.concatenate([sequence, latent]);
+      const prevLatent = lastLatent;
+      lastLatent = latent;
+      prevLatent.dispose();
 
       const timestamp = performance.now();
       console.log(
@@ -84,8 +86,7 @@ export async function playTTS(
       );
       lastTimestamp = timestamp;
 
-      let mimiInput = sequence.ref.slice([-1]);
-      mimiInput = mimiInput
+      const mimiInput = latent.ref
         .mul(model.flowLM.embStd.ref)
         .add(model.flowLM.embMean.ref);
 
@@ -93,7 +94,6 @@ export async function playTTS(
         tree.ref(model.mimi),
         mimiState,
         mimiInput,
-        step,
       );
       mimiState = newMimiState;
 
@@ -113,7 +113,7 @@ export async function playTTS(
       })();
     }
   } finally {
-    sequence.dispose();
+    lastLatent.dispose();
     tree.dispose([model, embeds]);
     await audioPromise;
   }
