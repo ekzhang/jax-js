@@ -157,6 +157,68 @@ function batchMatmulT(a: Tracer, b: Tracer): Tracer {
 function mT(a: Tracer): Tracer {
   return moveaxis(a, -2, -1);
 }
+
+function repeatAttentionHeads(x: Tracer, nHeads: number): Tracer {
+  const [B, S, K, H] = x.shape;
+  if (K === nHeads) return x;
+  const groups = nHeads / K;
+  return broadcast(x, [B, S, K, groups, H], [3]).reshape([B, S, nHeads, H]);
+}
+
+/** Compute attention logits: query/key [B, L/S, N/K, H] -> [B, N, L, S]. */
+function attentionScores(query: Tracer, key: Tracer, scale: number): Tracer {
+  const [B, L, N, H] = query.shape;
+  const S = key.shape[1];
+  const q = moveaxis(query, 1, 2).reshape([B, N, L, 1, H]);
+  const k = moveaxis(repeatAttentionHeads(key, N), 1, 2).reshape([
+    B,
+    N,
+    1,
+    S,
+    H,
+  ]);
+  return dot(q, k).mul(scale);
+}
+
+/** Apply attention probabilities [B, N, L, S] to values [B, S, K, H]. */
+function attentionApply(probs: Tracer, value: Tracer): Tracer {
+  const [B, N, L, S] = probs.shape;
+  const H = value.shape[3];
+  const v = moveaxis(repeatAttentionHeads(value, N), 1, 2).reshape([
+    B,
+    N,
+    1,
+    S,
+    H,
+  ]);
+  const out = probs.reshape([B, N, L, S, 1]).mul(v).sum(3);
+  return moveaxis(out, 1, 2);
+}
+
+function attentionCausalMask(L: number, S: number): Tracer {
+  const q = arange(L).reshape([1, 1, L, 1]);
+  const k = arange(S).reshape([1, 1, 1, S]);
+  return less(k, q.add(1));
+}
+
+function attentionLocalMask(
+  L: number,
+  S: number,
+  [before, after]: Pair,
+): Tracer {
+  const q = arange(L).reshape([1, 1, L, 1]);
+  const k = arange(S).reshape([1, 1, 1, S]);
+  return less(k, q.add(after + 1)).mul(less(q, k.add(before + 1)));
+}
+
+function softmaxLast(x: Tracer): Tracer {
+  const xMax = reduce(x.ref, AluOp.Max, -1, { keepdims: true });
+  const unnormalized = exp(x.sub(xMax));
+  return unnormalized.ref.div(
+    reduce(unnormalized, AluOp.Add, -1, { keepdims: true }),
+  );
+}
+
 function sliceAxis(a: Tracer, axis: number, p: Pair): Tracer {
   const slices = Array(a.shape.length).fill([]);
   slices[checkAxis(axis, a.ndim)] = p;
@@ -393,6 +455,44 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
       [luMatrix, pivots, permutation],
       [lDot.add(uDot), zerosLike(pivots.ref), zerosLike(permutation.ref)],
     ];
+  },
+  [Primitive.FlashAttention](
+    [q, k, v, bias, mask],
+    [dq, dk, dv, db, dmask],
+    { scale, isCausal, localWindowSize, hasMask },
+  ) {
+    dmask.dispose();
+    const primal = bind1(
+      Primitive.FlashAttention,
+      [q.ref, k.ref, v.ref, bias.ref, mask.ref],
+      { scale, isCausal, localWindowSize, hasMask },
+    );
+    let scores = attentionScores(q.ref, k.ref, scale).add(bias);
+    let ds = attentionScores(dq, k, scale)
+      .add(attentionScores(q, dk, scale))
+      .add(db);
+    if (hasMask) {
+      scores = where(mask.ref, scores, -Infinity);
+      ds = where(mask, ds, 0);
+    }
+    if (isCausal || localWindowSize !== null) {
+      let mask = isCausal
+        ? attentionCausalMask(q.shape[1], k.shape[1])
+        : attentionLocalMask(q.shape[1], k.shape[1], localWindowSize!);
+      if (isCausal && localWindowSize !== null) {
+        mask = mask.mul(
+          attentionLocalMask(q.shape[1], k.shape[1], localWindowSize),
+        );
+      }
+      scores = where(mask.ref, scores, -Infinity);
+      ds = where(mask, ds, 0);
+    }
+    const probs = softmaxLast(scores);
+    const dprobs = probs.ref.mul(
+      ds.ref.sub(probs.ref.mul(ds).sum(-1, { keepdims: true })),
+    );
+    const tangent = attentionApply(dprobs, v).add(attentionApply(probs, dv));
+    return [[primal], [tangent]];
   },
   [Primitive.Jit](primals, tangents, { name, jaxpr }) {
     const newJaxpr = jvpJaxpr(jaxpr);

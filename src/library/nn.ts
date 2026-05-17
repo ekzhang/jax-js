@@ -19,11 +19,11 @@ import {
   negative,
   onesLike,
   reciprocal,
+  repeat,
   sqrt,
   square,
   squeeze,
   tanh,
-  tile,
   where,
   zerosLike,
 } from "./numpy";
@@ -31,6 +31,7 @@ import { eye, fudgeArray, tri } from "../frontend/array";
 import {
   type Axis,
   erfc,
+  flashAttention,
   type ReduceOpts,
   shrink,
   stopGradient,
@@ -415,6 +416,28 @@ export function oneHot(x: Array, numClasses: number): Array {
   return eye(numClasses, undefined, { device: x.device }).slice(x);
 }
 
+function normalizeLocalWindowSize(
+  localWindowSize: number | [number, number] | undefined,
+): Pair | null {
+  if (localWindowSize === undefined) return null;
+  const [before, after] =
+    typeof localWindowSize === "number"
+      ? [localWindowSize, localWindowSize]
+      : localWindowSize;
+  if (
+    before < 0 ||
+    after < 0 ||
+    !Number.isInteger(before) ||
+    !Number.isInteger(after)
+  ) {
+    throw new Error(
+      `dotProductAttention: localWindowSize values must be non-negative, ` +
+        `got ${localWindowSize}`,
+    );
+  }
+  return [before, after];
+}
+
 /**
  * Scaled dot product attention (SDPA).
  *
@@ -452,6 +475,9 @@ export function oneHot(x: Array, numClasses: number): Array {
  *   values; shape `(B,)`. Taken from the beginning of the tensor.
  * @param opts.localWindowSize - If specified, applies a local attention window
  *   of the given size. Can be a single number or a tuple `[left, right]`.
+ * @param opts.implementation - Selects the implementation. Use `"naive"` for
+ *   the composable matmul/softmax path, or `"flash"` for the streaming
+ *   attention routine. If omitted, currently defaults to `"naive"`.
  *
  * @returns The result of the attention operation; shape is the same as query
  *   `[B, L, N, H]`, or `[L, N, H]` if `B` is omitted.
@@ -468,6 +494,7 @@ export function dotProductAttention(
     querySeqLengths?: ArrayLike;
     keyValueSeqLengths?: ArrayLike;
     localWindowSize?: number | [number, number];
+    implementation?: "flash" | "naive" | null;
   } = {},
 ): Array {
   query = fudgeArray(query);
@@ -512,10 +539,43 @@ export function dotProductAttention(
         `divisible by number of key/value heads K=${K} for GQA`,
     );
   const G = N / K; // number of query groups
-  key = tile(key, [1, 1, G, 1]);
-  value = tile(value, [1, 1, G, 1]);
 
   const scale = opts.scale ?? 1 / Math.sqrt(H);
+  const localWindowSize = normalizeLocalWindowSize(opts.localWindowSize);
+  const implementation = opts.implementation ?? "naive";
+  if (implementation === "flash") {
+    if (
+      opts.querySeqLengths !== undefined ||
+      opts.keyValueSeqLengths !== undefined
+    ) {
+      throw new Error(
+        `dotProductAttention: implementation="flash" does not yet support ` +
+          `sequence lengths`,
+      );
+    }
+    const out = flashAttention(
+      query,
+      key,
+      value,
+      opts.bias ?? 0,
+      opts.mask ?? true,
+      {
+        scale,
+        isCausal: opts.isCausal ?? false,
+        localWindowSize,
+        hasMask: opts.mask !== undefined,
+      },
+    ) as Array;
+    return isRank3 ? out.reshape([L, N, H]) : out;
+  } else if (implementation !== "naive") {
+    throw new Error(
+      `dotProductAttention: unknown implementation ${implementation}`,
+    );
+  }
+
+  key = repeat(key, G, 2);
+  value = repeat(value, G, 2);
+
   let scores = einsum("BLNH,BSNH->BNLS", query, key).mul(scale);
   if (opts.bias !== undefined) {
     scores = scores.add(opts.bias);
@@ -529,22 +589,8 @@ export function dotProductAttention(
     const causalMask = tri(L, S, 0, { dtype: DType.Bool });
     scores = where(causalMask, scores, -Infinity);
   }
-  if (opts.localWindowSize !== undefined) {
-    const [before, after] =
-      typeof opts.localWindowSize === "number"
-        ? [opts.localWindowSize, opts.localWindowSize]
-        : opts.localWindowSize;
-    if (
-      before < 0 ||
-      after < 0 ||
-      !Number.isInteger(before) ||
-      !Number.isInteger(after)
-    ) {
-      throw new Error(
-        `dotProductAttention: localWindowSize values must be non-negative, ` +
-          `got ${opts.localWindowSize}`,
-      );
-    }
+  if (localWindowSize !== null) {
+    const [before, after] = localWindowSize;
     const localMask = tri(L, S, after, { dtype: DType.Bool }).mul(
       tri(L, S, -before - 1, { dtype: DType.Bool }).notEqual(true),
     );

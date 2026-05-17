@@ -254,6 +254,7 @@ export function runMimiStreamingMultiheadAttention(
     x = nn.dotProductAttention(q, k.ref, v.ref, {
       isCausal: true,
       localWindowSize: context ? [context - 1, 0] : undefined,
+      implementation: "flash",
     });
     kvCache = { key: k, value: v };
   } else {
@@ -282,7 +283,10 @@ export function runMimiStreamingMultiheadAttention(
     const mask = context
       ? maskDelta.ref.lessEqual(0).mul(maskDelta.greater(-context))
       : maskDelta.lessEqual(0);
-    x = nn.dotProductAttention(q, kvCache.key.ref, kvCache.value.ref, { mask });
+    x = nn.dotProductAttention(q, kvCache.key.ref, kvCache.value.ref, {
+      mask,
+      implementation: "flash",
+    });
   }
   x = x.reshape([T, embedDim]);
   x = runLinear(outProj, x);
