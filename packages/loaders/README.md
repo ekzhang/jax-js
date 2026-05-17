@@ -70,7 +70,7 @@ safetensors.parse(buf); // => { tensors: { ... } };
 Tokenization for preparing the inputs to a model. It currently supports the following formats:
 
 - [Byte-pair encoding (BPE)](https://github.com/openai/tiktoken) format for various LLMs and CLIP.
-- [SentencePiece Unigram](https://github.com/google/sentencepiece) format.
+- [SentencePiece Unigram/BPE](https://github.com/google/sentencepiece) format.
 
 Since tokenizer definitions can be nontrivially large (~1 MB), their data is fetched from CDN as
 needed.

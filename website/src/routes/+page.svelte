@@ -37,10 +37,15 @@
       description: "View the full API documentation.",
     },
     {
+      title: "Gemma 3 Chat",
+      href: resolve("/chat"),
+      description: "Run a small language model locally in your browser.",
+    },
+    {
       title: "MobileCLIP2 Inference",
       href: resolve("/mobileclip"),
       description:
-        "Generate embeddings for books and search them in real time.",
+        "Compute embeddings for book passages and search through them.",
     },
     {
       title: "Kyutai Pocket TTS",
@@ -51,6 +56,11 @@
       title: "MNIST Training",
       href: resolve("/mnist"),
       description: "Demo of training a neural network on MNIST.",
+    },
+    {
+      title: "Benchmarks",
+      href: resolve("/bench/matmul"),
+      description: "Micro-benchmarks of jax-js versus other libraries.",
     },
   ];
 </script>
@@ -210,7 +220,7 @@ console.log(vmap(grad(np.square))(x));
           {href}
           class="bg-primary/5 hover:bg-primary/15 transition-colors p-4 rounded-lg"
         >
-          <h3 class="mb-2">
+          <h3 class="mb-1">
             {title}
             <ArrowUpRight size={18} class="inline-block text-gray-400 mb-px" />
           </h3>

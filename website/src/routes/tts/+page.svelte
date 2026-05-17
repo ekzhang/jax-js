@@ -71,7 +71,7 @@
     marius: HF_URL_PREFIX + `/embeddings/marius.safetensors`,
   };
 
-  async function getTokenizer(): Promise<tokenizers.Unigram> {
+  async function getTokenizer(): Promise<tokenizers.SentencePiece> {
     if (!_tokenizer)
       _tokenizer = await tokenizers.loadSentencePiece(
         "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning/resolve/fbf8280/tokenizer.model",

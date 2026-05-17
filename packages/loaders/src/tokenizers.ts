@@ -3,6 +3,7 @@ import {
   type ModelProto,
   ModelProto_SentencePiece_Type,
   ModelProtoSchema,
+  TrainerSpec_ModelType,
 } from "sentencepiece-buf/model";
 
 import { cachedFetch } from "./opfs";
@@ -530,75 +531,96 @@ function createTrieNode(): TrieNode {
 }
 
 /**
- * SentencePiece Unigram tokenizer.
+ * SentencePiece tokenizer.
  *
- * This implements the Viterbi-based unigram language model tokenization
- * algorithm used by SentencePiece. It finds the most likely segmentation
- * of input text based on learned piece scores (log probabilities).
- *
- * Uses a trie for efficient O(n * maxPieceLen) vocabulary lookup.
+ * Supports both SentencePiece Unigram and SentencePiece BPE model files. The
+ * model type is detected from the trainer spec at construction time.
  */
-export class Unigram {
-  #trie: TrieNode; // trie for piece lookup
-  #decoder: Map<number, string>; // id -> piece
-  #byteFallback: Map<string, number>; // byte hex -> id (for <0xXX> tokens)
+export class SentencePiece {
+  #modelType: TrainerSpec_ModelType;
+  #trie: TrieNode | null = null; // Unigram vocabulary lookup.
+  #pieces: string[] = [];
+  #pieceToId = new Map<string, number>();
+  #pieceScore = new Map<string, number>();
+  #byteFallback = new Map<string, number>();
+  #specialTokens = new Map<string, number>();
   #unkId: number;
   #bosId: number;
   #eosId: number;
-
-  /** Normalizer settings */
   #addDummyPrefix: boolean;
   #removeExtraWhitespaces: boolean;
 
   constructor(model: ModelProto) {
-    this.#trie = createTrieNode();
-    this.#decoder = new Map();
-    this.#byteFallback = new Map();
+    this.#modelType =
+      model.trainerSpec?.modelType ?? TrainerSpec_ModelType.UNIGRAM;
+    if (
+      this.#modelType !== TrainerSpec_ModelType.UNIGRAM &&
+      this.#modelType !== TrainerSpec_ModelType.BPE
+    ) {
+      throw new Error(
+        `Unsupported SentencePiece model type: ${this.#modelType}`,
+      );
+    }
 
-    // Get special token IDs from trainer spec or use defaults
     this.#unkId = model.trainerSpec?.unkId ?? 0;
     this.#bosId = model.trainerSpec?.bosId ?? 1;
     this.#eosId = model.trainerSpec?.eosId ?? 2;
-
-    // Get normalizer settings
     this.#addDummyPrefix = model.normalizerSpec?.addDummyPrefix ?? true;
     this.#removeExtraWhitespaces =
       model.normalizerSpec?.removeExtraWhitespaces ?? true;
 
-    // Build vocabulary maps
+    if (this.#modelType === TrainerSpec_ModelType.UNIGRAM) {
+      this.#trie = createTrieNode();
+    }
+
     for (let i = 0; i < model.pieces.length; i++) {
       const piece = model.pieces[i];
       const pieceStr = piece.piece;
       const score = piece.score;
       const type = piece.type;
 
-      this.#decoder.set(i, pieceStr);
+      this.#pieces[i] = pieceStr;
+      this.#pieceToId.set(pieceStr, i);
+      this.#pieceScore.set(pieceStr, score);
 
       if (type === ModelProto_SentencePiece_Type.BYTE) {
         // Byte fallback tokens like <0x00>, <0x01>, etc.
         const match = pieceStr.match(/^<0x([0-9A-Fa-f]{2})>$/);
-        if (match) {
-          this.#byteFallback.set(match[1].toLowerCase(), i);
-        }
-      } else if (
-        type === ModelProto_SentencePiece_Type.NORMAL ||
-        type === ModelProto_SentencePiece_Type.USER_DEFINED
+        if (match) this.#byteFallback.set(match[1].toLowerCase(), i);
+      } else if (type === ModelProto_SentencePiece_Type.USER_DEFINED) {
+        // USER_DEFINED tokens are matched atomically before model-specific
+        // segmentation. This is important for Gemma chat tokens like
+        // <start_of_turn> and <end_of_turn>.
+        this.#specialTokens.set(pieceStr, i);
+      }
+
+      if (
+        this.#modelType === TrainerSpec_ModelType.UNIGRAM &&
+        (type === ModelProto_SentencePiece_Type.NORMAL ||
+          type === ModelProto_SentencePiece_Type.USER_DEFINED)
       ) {
-        // Insert into trie
         this.#insertIntoTrie(pieceStr, i, score);
       }
-      // CONTROL, UNKNOWN, UNUSED types are handled specially
     }
   }
 
-  static fromBinary(data: Uint8Array): Unigram {
-    const model = fromBinary(ModelProtoSchema, data);
-    return new Unigram(model);
+  get modelType(): "unigram" | "bpe" {
+    return this.#modelType === TrainerSpec_ModelType.UNIGRAM
+      ? "unigram"
+      : "bpe";
   }
 
-  /** Insert a piece into the trie. */
+  static fromBinary(data: Uint8Array): SentencePiece {
+    const model = fromBinary(ModelProtoSchema, data);
+    return new SentencePiece(model);
+  }
+
+  /** Insert a piece into the Unigram trie. */
   #insertIntoTrie(piece: string, id: number, score: number): void {
-    let node = this.#trie;
+    const root = this.#trie;
+    if (!root) return;
+
+    let node = root;
     for (const char of piece) {
       let child = node.children.get(char);
       if (!child) {
@@ -611,16 +633,17 @@ export class Unigram {
   }
 
   /**
-   * Find all pieces in the vocabulary that start at position `start` in `text`.
-   * Returns array of [endPosition, tokenId, score] tuples.
+   * Find all Unigram pieces in the vocabulary that start at position `start` in
+   * `text`. Returns array of [endPosition, tokenId, score] tuples.
    */
   #findPiecesAt(text: string, start: number): Array<[number, number, number]> {
     const results: Array<[number, number, number]> = [];
     let node = this.#trie;
+    if (!node) return results;
 
     for (let i = start; i < text.length; i++) {
       const char = text[i];
-      const child = node.children.get(char);
+      const child: TrieNode | undefined = node.children.get(char);
       if (!child) break;
       node = child;
       if (node.token) {
@@ -640,18 +663,63 @@ export class Unigram {
     if (this.#addDummyPrefix) {
       text = " " + text;
     }
-    // Replace spaces with the SentencePiece meta-symbol
-    text = text.replace(/ /g, SPIECE_UNDERLINE);
-    return text;
+    return text.replace(/ /g, SPIECE_UNDERLINE);
+  }
+
+  #byteFallbackIds(char: string): number[] {
+    const bytes = new TextEncoder().encode(char);
+    const tokens: number[] = [];
+    for (const byte of bytes) {
+      const hex = byte.toString(16).padStart(2, "0");
+      tokens.push(this.#byteFallback.get(hex) ?? this.#unkId);
+    }
+    return tokens;
+  }
+
+  #byteFallbackPieces(char: string): string[] {
+    return this.#byteFallbackIds(char).map(
+      (id) => this.#pieces[id] ?? this.#pieces[this.#unkId] ?? "<unk>",
+    );
+  }
+
+  #encodeWithSpecialTokens(
+    text: string,
+    encodeFragment: (fragment: string) => number[],
+  ): number[] {
+    const tokens: number[] = [];
+    let pos = 0;
+
+    while (pos < text.length) {
+      let nextIdx = -1;
+      let nextToken = "";
+      for (const special of this.#specialTokens.keys()) {
+        const idx = text.indexOf(special, pos);
+        if (idx !== -1 && (nextIdx === -1 || idx < nextIdx)) {
+          nextIdx = idx;
+          nextToken = special;
+        }
+      }
+
+      if (nextIdx === -1) {
+        tokens.push(...encodeFragment(text.slice(pos)));
+        break;
+      }
+
+      tokens.push(...encodeFragment(text.slice(pos, nextIdx)));
+      tokens.push(this.#specialTokens.get(nextToken)!);
+      pos = nextIdx + nextToken.length;
+    }
+
+    return tokens;
   }
 
   /**
-   * Encode text into token IDs using Viterbi algorithm.
+   * Encode a fragment with the SentencePiece Unigram algorithm.
    *
-   * Finds the most likely segmentation by computing the best path through
-   * all possible segmentations, where scores are log probabilities.
+   * Finds the most likely segmentation by computing the best path through all
+   * possible segmentations, where scores are log probabilities.
    */
-  encode(text: string): number[] {
+  #encodeUnigramFragment(text: string): number[] {
     text = this.#normalize(text);
     if (text.length === 0) return [];
 
@@ -680,20 +748,7 @@ export class Unigram {
       // Byte fallback: only use if no vocabulary piece covers position i+1
       // This ensures vocabulary matches are always preferred over byte fallback
       if (prev[i + 1] === null) {
-        const char = text[i];
-        const bytes = new TextEncoder().encode(char);
-        const byteTokens: number[] = [];
-
-        for (const byte of bytes) {
-          const hex = byte.toString(16).padStart(2, "0");
-          const byteId = this.#byteFallback.get(hex);
-          if (byteId !== undefined) {
-            byteTokens.push(byteId);
-          } else {
-            byteTokens.push(this.#unkId);
-          }
-        }
-
+        const byteTokens = this.#byteFallbackIds(text[i]);
         if (byteTokens.length > 0) {
           best[i + 1] = best[i]; // Byte fallback has score 0
           prev[i + 1] = [i, byteTokens];
@@ -706,14 +761,7 @@ export class Unigram {
     let pos = n;
     while (pos > 0) {
       if (prev[pos] === null) {
-        // Should not happen if algorithm is correct, but fallback just in case
-        const char = text[pos - 1];
-        const bytes = new TextEncoder().encode(char);
-        for (let j = bytes.length - 1; j >= 0; j--) {
-          const hex = bytes[j].toString(16).padStart(2, "0");
-          const byteId = this.#byteFallback.get(hex);
-          tokens.push(byteId ?? this.#unkId);
-        }
+        tokens.push(...this.#byteFallbackIds(text[pos - 1]).reverse());
         pos--;
       } else {
         const [start, tokenIds] = prev[pos];
@@ -729,56 +777,89 @@ export class Unigram {
     return tokens;
   }
 
+  /**
+   * Encode a fragment with the SentencePiece BPE algorithm.
+   *
+   * SentencePiece stores BPE merges as normal pieces with scores representing
+   * merge priority. Encoding starts from Unicode characters (falling back to
+   * byte tokens) and repeatedly merges the highest priority adjacent pair that
+   * appears in the vocabulary.
+   */
+  #encodeBpeFragment(text: string): number[] {
+    text = this.#normalize(text);
+    if (text.length === 0) return [];
+
+    const pieces: string[] = [];
+    for (const char of text) {
+      if (this.#pieceToId.has(char)) {
+        pieces.push(char);
+      } else {
+        pieces.push(...this.#byteFallbackPieces(char));
+      }
+    }
+
+    while (pieces.length > 1) {
+      let bestIdx = -1;
+      let bestScore = -Infinity;
+      for (let i = 0; i < pieces.length - 1; i++) {
+        const merged = pieces[i] + pieces[i + 1];
+        const score = this.#pieceScore.get(merged);
+        if (score !== undefined && score > bestScore) {
+          bestScore = score;
+          bestIdx = i;
+        }
+      }
+      if (bestIdx === -1) break;
+      pieces.splice(bestIdx, 2, pieces[bestIdx] + pieces[bestIdx + 1]);
+    }
+
+    return pieces.map((piece) => this.#pieceToId.get(piece) ?? this.#unkId);
+  }
+
+  /** Encode text into token IDs. */
+  encode(text: string): number[] {
+    if (this.#modelType === TrainerSpec_ModelType.BPE) {
+      return this.#encodeWithSpecialTokens(text, (fragment) =>
+        this.#encodeBpeFragment(fragment),
+      );
+    }
+    return this.#encodeUnigramFragment(text);
+  }
+
   /** Decode token IDs back to text. */
   decode(tokens: number[]): string {
-    const pieces: string[] = [];
+    let result = "";
+    let bytes: number[] = [];
 
-    let i = 0;
-    while (i < tokens.length) {
-      const tokenId = tokens[i];
-      const piece = this.#decoder.get(tokenId);
+    const flushBytes = () => {
+      if (bytes.length > 0) {
+        result += new TextDecoder().decode(new Uint8Array(bytes));
+        bytes = [];
+      }
+    };
 
+    for (const token of tokens) {
+      const piece = this.#pieces[token];
       if (piece === undefined) {
-        // Unknown token
-        pieces.push("�");
-        i++;
+        flushBytes();
+        result += "�";
         continue;
       }
 
-      // Check if this is a byte token
       const byteMatch = piece.match(/^<0x([0-9A-Fa-f]{2})>$/);
       if (byteMatch) {
-        // Collect consecutive byte tokens
-        const bytes: number[] = [parseInt(byteMatch[1], 16)];
-        i++;
-
-        while (i < tokens.length) {
-          const nextPiece = this.#decoder.get(tokens[i]);
-          const nextByteMatch = nextPiece?.match(/^<0x([0-9A-Fa-f]{2})>$/);
-          if (nextByteMatch) {
-            bytes.push(parseInt(nextByteMatch[1], 16));
-            i++;
-          } else {
-            break;
-          }
-        }
-        pieces.push(new TextDecoder().decode(new Uint8Array(bytes)));
+        bytes.push(parseInt(byteMatch[1], 16));
       } else {
-        pieces.push(piece);
-        i++;
+        flushBytes();
+        result += piece;
       }
     }
+    flushBytes();
 
-    // Join and convert meta-symbol back to space
-    let result = pieces
-      .join("")
-      .replace(new RegExp(SPIECE_UNDERLINE, "g"), " ");
-
-    // Remove leading space if dummy prefix was added
+    result = result.replace(new RegExp(SPIECE_UNDERLINE, "g"), " ");
     if (this.#addDummyPrefix && result.startsWith(" ")) {
       result = result.slice(1);
     }
-
     return result;
   }
 
@@ -799,12 +880,12 @@ export class Unigram {
 
   /** Get vocabulary size. */
   get vocabSize(): number {
-    return this.#decoder.size;
+    return this.#pieces.length;
   }
 }
 
 /** Load a SentencePiece model from a URL. */
-export async function loadSentencePiece(url: string): Promise<Unigram> {
+export async function loadSentencePiece(url: string): Promise<SentencePiece> {
   const data = await cachedFetch(url);
-  return Unigram.fromBinary(data);
+  return SentencePiece.fromBinary(data);
 }

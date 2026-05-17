@@ -184,3 +184,34 @@ suite("SentencePiece Unigram tokenizer", async () => {
     expect(decoded).toBe("你好世界");
   });
 });
+
+suite("SentencePiece BPE tokenizer", async () => {
+  const tokenizer = await loadSentencePiece(
+    "https://huggingface.co/ekzhang/jax-js-models/resolve/main/gemma-3-270m/tokenizer.model",
+  );
+
+  test("should have correct special token IDs", () => {
+    expect(tokenizer.bosToken).toBe(2);
+    expect(tokenizer.eosToken).toBe(1);
+    expect(tokenizer.unkToken).toBe(3);
+    expect(tokenizer.vocabSize).toBe(262144);
+  });
+
+  test("should encode Gemma chat control tokens", () => {
+    const text =
+      "<start_of_turn>user\nhello<end_of_turn>\n<start_of_turn>model\n";
+    const tokens = tokenizer.encode(text);
+    expect(tokens).toEqual([105, 2364, 107, 23391, 106, 107, 105, 4368, 107]);
+    expect(tokenizer.decode(tokens)).toBe(text);
+  });
+
+  test("should encode regular text", () => {
+    expect(tokenizer.encode("Hello world")).toEqual([9259, 1902]);
+    expect(tokenizer.encode("write me a story")).toEqual([
+      5986, 786, 496, 3925,
+    ]);
+    expect(tokenizer.encode("Okay, how can I help you today?")).toEqual([
+      19058, 236764, 1217, 740, 564, 1601, 611, 3124, 236881,
+    ]);
+  });
+});
