@@ -16,10 +16,10 @@ Other features just aren't implemented yet. But those can probably be added easi
 
 In the tables below, we use a color legend to refer to functions in JAX:
 
-- 🟢 = supported **(~54%)**
+- 🟢 = supported **(~58%)**
 - 🟡 = supported, with API limitations **(~2%)**
-- 🟠 = not supported, easy to add (<1 day) **(~32%)**
-- 🔴 = not supported **(~12%)**
+- 🟠 = not supported, easy to add (<1 day) **(~29%)**
+- 🔴 = not supported **(~11%)**
 - ⚪️ = not applicable, will not be supported (see notes)
 
 ## [`jax`](https://docs.jax.dev/en/latest/jax.html)
@@ -567,49 +567,49 @@ jax-js implements the same PRNG, with bitwise identical outputs. However, most s
 | `clone`         | ⚪️      | use `.ref`                    |
 | `PRNGKey`       | ⚪️      | legacy                        |
 
-**Samplers:** These are all 🟠 assuming that sampling from distributions is usually easier than
-modeling their transcendental CDFs (e.g., normal via Box-Muller).
+**Samplers:** Many samplers are implemented via transformations of simpler distributions rather than
+bitwise-identical JAX algorithms (e.g., normal via Box-Muller).
 
-| API                    | Support | Notes |
-| ---------------------- | ------- | ----- |
-| `ball`                 | 🟠      |       |
-| `bernoulli`            | 🟢      |       |
-| `beta`                 | 🟠      |       |
-| `binomial`             | 🟠      |       |
-| `bits`                 | 🟢      |       |
-| `categorical`          | 🟢      |       |
-| `cauchy`               | 🟢      |       |
-| `chisquare`            | 🟠      |       |
-| `choice`               | 🟠      |       |
-| `dirichlet`            | 🟠      |       |
-| `double_sided_maxwell` | 🟠      |       |
-| `exponential`          | 🟢      |       |
-| `f`                    | 🟠      |       |
-| `gamma`                | 🟠      |       |
-| `generalized_normal`   | 🟠      |       |
-| `geometric`            | 🟠      |       |
-| `gumbel`               | 🟢      |       |
-| `laplace`              | 🟢      |       |
-| `loggamma`             | 🟠      |       |
-| `logistic`             | 🟠      |       |
-| `lognormal`            | 🟠      |       |
-| `maxwell`              | 🟠      |       |
-| `multinomial`          | 🟠      |       |
-| `multivariate_normal`  | 🟢      |       |
-| `normal`               | 🟢      |       |
-| `orthogonal`           | 🟠      |       |
-| `pareto`               | 🟠      |       |
-| `permutation`          | 🟠      |       |
-| `poisson`              | 🟠      |       |
-| `rademacher`           | 🟠      |       |
-| `randint`              | 🟠      |       |
-| `rayleigh`             | 🟠      |       |
-| `t`                    | 🟠      |       |
-| `triangular`           | 🟠      |       |
-| `truncated_normal`     | 🟠      |       |
-| `uniform`              | 🟢      |       |
-| `wald`                 | 🟠      |       |
-| `weibull_min`          | 🟠      |       |
+| API                    | Support | Notes                   |
+| ---------------------- | ------- | ----------------------- |
+| `ball`                 | 🟢      | p=2 only                |
+| `bernoulli`            | 🟢      |                         |
+| `beta`                 | 🟠      |                         |
+| `binomial`             | 🟠      |                         |
+| `bits`                 | 🟢      |                         |
+| `categorical`          | 🟢      |                         |
+| `cauchy`               | 🟢      |                         |
+| `chisquare`            | 🟠      |                         |
+| `choice`               | 🟢      | basic replacement cases |
+| `dirichlet`            | 🟠      |                         |
+| `double_sided_maxwell` | 🟢      |                         |
+| `exponential`          | 🟢      |                         |
+| `f`                    | 🟠      |                         |
+| `gamma`                | 🟠      |                         |
+| `generalized_normal`   | 🟠      |                         |
+| `geometric`            | 🟢      |                         |
+| `gumbel`               | 🟢      |                         |
+| `laplace`              | 🟢      |                         |
+| `loggamma`             | 🟠      |                         |
+| `logistic`             | 🟢      |                         |
+| `lognormal`            | 🟢      |                         |
+| `maxwell`              | 🟢      |                         |
+| `multinomial`          | 🟠      |                         |
+| `multivariate_normal`  | 🟢      |                         |
+| `normal`               | 🟢      |                         |
+| `orthogonal`           | 🟠      |                         |
+| `pareto`               | 🟢      |                         |
+| `permutation`          | 🟢      |                         |
+| `poisson`              | 🟠      |                         |
+| `rademacher`           | 🟢      |                         |
+| `randint`              | 🟢      | uses modulo reduction   |
+| `rayleigh`             | 🟢      |                         |
+| `t`                    | 🟠      |                         |
+| `triangular`           | 🟢      |                         |
+| `truncated_normal`     | 🟠      |                         |
+| `uniform`              | 🟢      |                         |
+| `wald`                 | 🟠      |                         |
+| `weibull_min`          | 🟢      |                         |
 
 ## [`jax.nn` module](https://docs.jax.dev/en/latest/jax.nn.html)
 
