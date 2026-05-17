@@ -77,6 +77,7 @@ Demos on the jax-js website:
 - [Fluid simulation (Navier-Stokes)](https://jax-js.com/fluid-sim)
 - [In-browser REPL](https://jax-js.com/repl)
 - [Matmul benchmark](https://jax-js.com/bench/matmul)
+- [Matvec benchmark](https://jax-js.com/bench/matvec)
 - [Conv2d benchmark](https://jax-js.com/bench/conv2d)
 - [Mandelbrot set](https://jax-js.com/mandelbrot)
 

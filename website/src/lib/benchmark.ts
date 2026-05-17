@@ -1,5 +1,29 @@
 import type tf from "@tensorflow/tfjs";
 
+export interface Strategy {
+  name: string;
+  run(): Promise<number>;
+}
+
+export function createRandomBuffer(length: number, centered = false) {
+  const buffer = new Float32Array(length);
+  for (let i = 0; i < buffer.length; i++) {
+    buffer[i] = centered ? Math.random() - 0.5 : Math.random();
+  }
+  return buffer;
+}
+
+export function logSampleBuffer(buf: Float32Array | Float16Array) {
+  console.log(
+    buf[0],
+    buf[1],
+    buf[2],
+    buf[3],
+    buf[Math.floor(buf.length / 2)],
+    buf[buf.length - 1],
+  );
+}
+
 export async function runBenchmark(
   name: string,
   fn: () => Promise<void>,
