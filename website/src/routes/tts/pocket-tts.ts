@@ -601,6 +601,7 @@ export function runMimiEncode(
 export type MimiDecodeState = {
   kvCaches: KVCache[];
   kvCacheLen: number;
+  offset: number;
   initialConvState: np.Array;
   seanetStates: SEANetDecoderState;
 };
@@ -618,6 +619,7 @@ export function createMimiDecodeState(mimi: MimiModel): MimiDecodeState {
   return {
     kvCaches: mimi.decoderTransformer.map(() => emptyKVCache()),
     kvCacheLen: 0,
+    offset: 0,
     initialConvState: createConvTranspose1dState(mimi.upsample.convtr, 16, 512),
     seanetStates: createSEANetDecoderState(mimi.decoder),
   };
@@ -633,9 +635,14 @@ export function runMimiDecode(
     downsample,
     upsample,
   }: MimiModel,
-  { kvCaches, kvCacheLen, initialConvState, seanetStates }: MimiDecodeState,
+  {
+    kvCaches,
+    kvCacheLen,
+    offset,
+    initialConvState,
+    seanetStates,
+  }: MimiDecodeState,
   latent: np.Array, // [T, 32] - bottleneck representation
-  offset: number, // scalar, position offset
 ): [np.Array, MimiDecodeState] {
   tree.dispose([encoder, encoderTransformer, downsample]);
 
@@ -662,7 +669,7 @@ export function runMimiDecode(
       layer,
       kvCaches[i],
       x,
-      offset * 16,
+      offset,
       kvCacheLen,
       { context: 250, numHeads: 8 },
     );
@@ -674,6 +681,7 @@ export function runMimiDecode(
 
   // Maintain and update KV caches as needed.
   kvCacheLen += 16;
+  offset += 16;
   if (kvCaches[0].key.shape[0] !== 272) {
     // Pad it to a constant [272] in length, more than 250 context + 16 for next pass.
     const padAmount = 272 - kvCaches[0].key.shape[0];
@@ -695,7 +703,8 @@ export function runMimiDecode(
     x,
     {
       kvCaches,
-      kvCacheLen: kvCacheLen,
+      kvCacheLen,
+      offset,
       initialConvState,
       seanetStates,
     },

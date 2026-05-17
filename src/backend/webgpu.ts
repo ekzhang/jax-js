@@ -1,32 +1,17 @@
-import { AluExp, AluGroup, AluOp, DType, isFloatDtype, Kernel } from "../alu";
-import {
-  Backend,
-  Device,
-  Executable,
-  Slot,
-  SlotError,
-  UnsupportedOpError,
-} from "../backend";
+import { AluExp, AluOp, DType, Kernel } from "../alu";
+import { Backend, Device, Executable, Slot, SlotError } from "../backend";
 import { Routine } from "../routine";
 import { tuneWebgpu } from "../tuner";
-import {
-  DEBUG,
-  findPow2,
-  FpHash,
-  mapSetUnion,
-  prod,
-  range,
-  strip1,
-} from "../utils";
-import { erfSrc, threefrySrc } from "./webgpu/builtins";
+import { DEBUG, findPow2, FpHash, prod, range, strip1 } from "../utils";
 import {
   calculateGrid,
   constToWgsl,
   dtypeToWgsl,
-  headerWgsl,
-  maxValueWgsl,
   ShaderInfo,
+  WgslBuilder,
+  WgslExpCodegen,
 } from "./webgpu/codegen";
+import { nullaryKernelSource } from "./webgpu/nullaryKernel";
 import { SyncReader } from "./webgpu/reader";
 import { createRoutineShader } from "./webgpu/routines";
 import { maybeAcquireTracingSlot, recordTrace } from "./webgpu/tracing";
@@ -276,6 +261,9 @@ export class WebGPUBackend implements Backend {
  * and y axes, to run the kernel.
  */
 function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
+  const nullaryKernel = nullaryKernelSource(device, kernel);
+  if (nullaryKernel) return nullaryKernel;
+
   const tune = tuneWebgpu(kernel);
   if (DEBUG >= 3) {
     console.info(`kernel.exp: ${kernel.exp}\ntune.exp: ${tune.exp}`);
@@ -284,46 +272,8 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
   const { nargs, reduction: re } = kernel;
   const args = Array.from({ length: nargs }, (_, i) => `in${i}`);
 
-  // binding(0..n-1): input buffers
-  // binding(n): output buffer
-
-  const shader: string[] = []; // line-separated
-  let indent = "";
-  const pushIndent = Symbol("pushIndent");
-  const popIndent = Symbol("popIndent");
-  const emit = (...lines: (string | symbol)[]) => {
-    for (const line of lines) {
-      if (line === pushIndent) indent += "  ";
-      else if (line === popIndent) indent = indent.slice(0, -2);
-      else shader.push(line ? indent + (line as string) : line);
-    }
-  };
-
-  if (
-    tune.exp.some((exp) => exp.dtype === DType.Float16) ||
-    tune.epilogue?.some((exp) => exp.dtype === DType.Float16)
-  ) {
-    if (!device.features.has("shader-f16"))
-      throw new Error("WebGPU device does not support shader-f16 feature");
-    emit("enable f16;");
-  }
-
-  emit(headerWgsl);
-
-  // Global functions at the start of the shader.
-  const distinctOps = mapSetUnion(
-    tune.exp.distinctOps(),
-    tune.epilogue?.distinctOps(),
-  );
-  if (distinctOps.has(AluOp.Threefry2x32)) {
-    emit(threefrySrc);
-  }
-  if (distinctOps.has(AluOp.Erf) || distinctOps.has(AluOp.Erfc)) {
-    emit(erfSrc);
-  }
-
-  // End global function definitions.
-  emit("");
+  const wb = new WgslBuilder();
+  wb.emitPreamble(device, [tune.exp, tune.epilogue]);
 
   const usedArgs: (DType | null)[] = Array.from({ length: nargs }, () => null);
   tune.exp.fold((exp) => {
@@ -333,16 +283,18 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
     if (exp.op === AluOp.GlobalIndex) usedArgs[exp.arg[0]] = exp.dtype;
   });
 
+  // binding(0..n-1): input buffers
+  // binding(n): output buffer
   for (let i = 0; i < nargs; i++) {
     // If not used, just assume float32, all that matters is size / alignment.
     const ty = dtypeToWgsl(usedArgs[i] ?? DType.Float32, true);
-    emit(
+    wb.emit(
       `@group(0) @binding(${i}) var<storage, read> ${args[i]} : array<${ty}>;`,
     );
   }
 
   const resultTy = dtypeToWgsl(kernel.dtype, true);
-  emit(
+  wb.emit(
     `@group(0) @binding(${nargs}) var<storage, read_write> result : array<${resultTy}>;`,
   );
 
@@ -353,185 +305,33 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
   const gridSize = Math.ceil(tune.threadCount / workgroupSize);
   const [gridX, gridY] = calculateGrid(gridSize);
 
-  emit(
+  wb.emit(
     "",
     `@compute @workgroup_size(${workgroupSize})`,
     "fn main(@builtin(global_invocation_id) id : vec3<u32>) {",
-    pushIndent,
+    wb.pushIndent,
   );
   if (gridY === 1) {
-    emit(
+    wb.emit(
       `if (id.x >= ${tune.threadCount}) { return; }`,
       "let gidx: i32 = i32(id.x);",
     );
   } else {
     const sizeX = gridX * workgroupSize;
-    emit(
+    wb.emit(
       `if (${sizeX} * id.y + id.x >= ${tune.threadCount}) { return; }`,
       `let gidx: i32 = i32(${sizeX} * id.y + id.x);`,
     );
   }
 
-  // Generate code for each AluExp operation.
-  // Some expressions may be used twice, so we keep track of them.
-  let gensymCount = 0;
-  const gensym = () => `alu${gensymCount++}`;
-  const isGensym = (text: string) => text.match(/^alu[0-9]+$/);
+  wb.emitPhonyAssignments(args);
 
-  // Insert phony assignments, in case some inputs are not in use.
-  // https://github.com/gpuweb/gpuweb/discussions/4582#discussioncomment-9146686
-  if (args.length > 0) {
-    emit(args.map((arg) => `_ = &${arg};`).join(" "));
-  }
-
-  const references = new Map<AluExp, number>();
-  const seen = new Set<AluExp>();
-  const countReferences = (exp: AluExp) => {
-    references.set(exp, (references.get(exp) ?? 0) + 1);
-    if (!seen.has(exp)) {
-      seen.add(exp);
-      for (const src of exp.src) countReferences(src);
-    }
-  };
-
-  const expContext = new Map<AluExp, string>();
-  const gen = (exp: AluExp): string => {
-    if (expContext.has(exp)) return expContext.get(exp)!;
-    const { op, src, dtype, arg } = exp;
-
-    // Some of these cases early `return` to force-inline them.
-    let source = "";
-    if (AluGroup.Binary.has(op) || AluGroup.Compare.has(op)) {
-      const a = gen(src[0]);
-      const b = gen(src[1]);
-      if (op === AluOp.Add) {
-        if (dtype === DType.Bool) source = `(${a} || ${b})`;
-        else source = `(${a} + ${b})`;
-      } else if (op === AluOp.Sub) source = `(${a} - ${b})`;
-      else if (op === AluOp.Mul) {
-        if (dtype === DType.Bool) source = `(${a} && ${b})`;
-        else source = `(${a} * ${b})`;
-      } else if (op === AluOp.Idiv)
-        source = isFloatDtype(dtype) ? `trunc(${a} / ${b})` : `(${a} / ${b})`;
-      else if (op === AluOp.Mod) source = `(${a} % ${b})`;
-      else if (op === AluOp.Min) {
-        if (dtype === DType.Bool) source = `(${a} && ${b})`;
-        else source = `min(${strip1(a)}, ${strip1(b)})`;
-      } else if (op === AluOp.Max) {
-        if (dtype === DType.Bool) source = `(${a} || ${b})`;
-        else source = `max(${strip1(a)}, ${strip1(b)})`;
-      } else if (op === AluOp.BitCombine) {
-        if (arg === "and") source = `(${a} & ${b})`;
-        else if (arg === "or") source = `(${a} | ${b})`;
-        else source = dtype === DType.Bool ? `(${a} != ${b})` : `(${a} ^ ${b})`;
-      } else if (op === AluOp.BitShift) {
-        if (arg === "shl") source = `(${a} << ${b})`;
-        else source = `(${a} >> ${b})`;
-      } else if (op === AluOp.Cmplt) source = `(${a} < ${b})`;
-      else if (op === AluOp.Cmpne) {
-        // Edge case: WebGPU doesn't handle NaN correctly, it's unspecified.
-        // This is a reliable way I found to detect NaNs, since the spec says
-        // for `max()`: if one operand is a NaN, the other is returned.
-        if (isFloatDtype(src[0].dtype)) {
-          const x = isGensym(a) ? a : gensym();
-          if (x !== a) emit(`let ${x} = ${a};`);
-          source = `(${x} != ${b} || min(${x}, ${dtypeToWgsl(src[0].dtype)}(inf())) != ${x})`;
-        } else {
-          source = `(${a} != ${b})`;
-        }
-      }
-    } else if (AluGroup.Unary.has(op)) {
-      if (op === AluOp.Reciprocal && src[0].op === AluOp.Sqrt) {
-        // Special case: 1/sqrt(x) is optimized as rsqrt(x)
-        const a = gen(src[0].src[0]);
-        source = `inverseSqrt(${a})`;
-      } else {
-        const a = gen(src[0]);
-        if (op === AluOp.Sin) source = `sin(${strip1(a)})`;
-        else if (op === AluOp.Cos) source = `cos(${strip1(a)})`;
-        else if (op === AluOp.Asin) source = `asin(${strip1(a)})`;
-        else if (op === AluOp.Atan) source = `atan(${strip1(a)})`;
-        else if (op === AluOp.Exp) source = `exp(${strip1(a)})`;
-        else if (op === AluOp.Log) source = `log(${strip1(a)})`;
-        else if (op === AluOp.Erf || op === AluOp.Erfc) {
-          const funcName = op === AluOp.Erf ? "erf" : "erfc";
-          if (dtype !== DType.Float32) {
-            // Always compute special functions in f32 for precision.
-            source = `${dtypeToWgsl(dtype)}(${funcName}(f32(${strip1(a)})))`;
-          } else {
-            source = `${funcName}(${strip1(a)})`;
-          }
-        } else if (op === AluOp.Sqrt) source = `sqrt(${strip1(a)})`;
-        else if (op === AluOp.Reciprocal) source = `(1.0 / ${a})`;
-        else if (op === AluOp.Floor) source = `floor(${strip1(a)})`;
-        else if (op === AluOp.Ceil) source = `ceil(${strip1(a)})`;
-        else if (op === AluOp.Cast) {
-          const srcTy = dtypeToWgsl(src[0].dtype);
-          const dstTy = dtypeToWgsl(dtype);
-          if (
-            isFloatDtype(src[0].dtype) &&
-            !(isFloatDtype(dtype) || dtype === DType.Bool)
-          ) {
-            // Edge case: Float->Int conversion with saturating upper bound.
-            //
-            // Because of the [WGSL spec](https://www.w3.org/TR/WGSL/#floating-point-conversion),
-            // we need to work around strange type conversion behaviors for correctness when
-            // converting large floats to integers. Hopefully the compiler understands.
-            //
-            // - 1e20f converted to u32 is the largest float value representable in u32, 4294967040u
-            //   Note this is smaller than the maximum u32 value 4294967295u
-            // - 1e20f converted to i32 is the maximum i32 value, 2147483520i
-            //   Note this is smaller than the maximum i32 value 2147483647i
-            const maxVal = maxValueWgsl(dtype);
-            const x = isGensym(a) ? a : gensym();
-            if (x !== a) emit(`let ${x}: ${srcTy} = ${strip1(a)};`);
-            source = `select(${dstTy}(${x}), ${maxVal}, ${x} >= ${srcTy}(${maxVal}))`;
-          } else {
-            source = `${dstTy}(${strip1(a)})`;
-          }
-        } else if (op === AluOp.Bitcast)
-          source = `bitcast<${dtypeToWgsl(dtype)}>(${strip1(a)})`;
-      }
-    } else if (op === AluOp.Where) {
-      // select(f, t, cond) -> cond ? t : f
-      source = `select(${strip1(gen(src[2]))}, ${strip1(gen(src[1]))}, ${strip1(gen(src[0]))})`;
-    } else if (op === AluOp.Threefry2x32) {
-      const x = gensym(); // temporary to hold the `vec2<u32>(x0, x1)`
-      const [k0, k1, c0, c1] = src.map((x) => strip1(gen(x)));
-      emit(`let ${x} = threefry2x32(vec2(${k0}, ${k1}), vec2(${c0}, ${c1}));`);
-      if (arg === "xor") source = `(${x}.x ^ ${x}.y)`;
-      else if (arg === 0) source = `${x}.x`;
-      else if (arg === 1) source = `${x}.y`;
-      else throw new UnsupportedOpError(op, dtype, "webgpu", arg);
-    } else if (op === AluOp.Const) {
-      return constToWgsl(dtype, arg);
-    } else if (op === AluOp.Special) {
-      return arg[0] as string;
-    } else if (op === AluOp.Variable) {
-      return arg as string;
-    } else if (op === AluOp.GlobalIndex) {
-      source = `${args[arg[0]]}[${strip1(gen(src[0]))}]`;
-      if (dtype === DType.Bool) source = `(${source} != 0)`; // bool is represented as i32
-    }
-
-    if (!source) throw new UnsupportedOpError(op, dtype, "webgpu", arg);
-    const typeName = dtypeToWgsl(dtype);
-    if ((references.get(exp) ?? 0) > 1) {
-      const name = gensym();
-      expContext.set(exp, name);
-      emit(`let ${name}: ${typeName} = ${strip1(source)};`);
-      return name;
-    } else {
-      expContext.set(exp, source);
-      return source;
-    }
-  };
-
+  const gen = new WgslExpCodegen(wb, args);
   if (!re) {
-    countReferences(tune.exp);
-    let rhs = strip1(gen(tune.exp));
+    gen.countReferences(tune.exp);
+    let rhs = strip1(gen.run(tune.exp));
     if (resultTy !== dtypeToWgsl(tune.exp.dtype)) rhs = `${resultTy}(${rhs})`;
-    emit(`result[gidx] = ${rhs};`);
+    wb.emit(`result[gidx] = ${rhs};`);
   } else {
     if ((tune.size.groups ?? 1) > 1) {
       throw new Error("WebGPU backend does not support group optimization yet");
@@ -541,14 +341,14 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
 
     const acc = [...Array(upcast)].map((_, i) => `acc${i}`);
     for (let i = 0; i < upcast; i++) {
-      emit(
+      wb.emit(
         `var ${acc[i]}: ${dtypeToWgsl(re.dtype)} = ${constToWgsl(re.dtype, re.identity)};`,
       ); // Initialize accumulators.
     }
 
-    emit(
+    wb.emit(
       `for (var ridx: i32 = 0; ridx < ${tune.size.reduce}; ridx++) {`,
-      pushIndent,
+      wb.pushIndent,
     );
 
     // Now generate (shared) expressions for each accumulator and unroll value.
@@ -562,12 +362,12 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
           unroll: AluExp.i32(un),
         });
         exps[up].push(exp.simplify(cache));
-        countReferences(exps[up][un]);
+        gen.countReferences(exps[up][un]);
       }
     }
 
     // After references are counted, we can generate the code.
-    const items = exps.map((ar) => ar.map(gen).map(strip1));
+    const items = exps.map((ar) => ar.map((x) => gen.run(x)).map(strip1));
     for (let i = 0; i < upcast; i++) {
       let rhs = items[i][0];
       for (let j = 1; j < unroll; j++) {
@@ -587,31 +387,31 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
               : `max(${rhs}, ${items[i][j]})`;
         } else throw new Error(`Unsupported reduction op: ${re.op}`);
       }
-      if (re.op === AluOp.Add) emit(`${acc[i]} += ${rhs};`);
-      else if (re.op === AluOp.Mul) emit(`${acc[i]} *= ${rhs};`);
+      if (re.op === AluOp.Add) wb.emit(`${acc[i]} += ${rhs};`);
+      else if (re.op === AluOp.Mul) wb.emit(`${acc[i]} *= ${rhs};`);
       else if (re.op === AluOp.Min) {
         // For booleans, min is AND; for numerics, use min()
-        if (re.dtype === DType.Bool) emit(`${acc[i]} = ${acc[i]} && ${rhs};`);
-        else emit(`${acc[i]} = min(${acc[i]}, ${rhs});`);
+        if (re.dtype === DType.Bool)
+          wb.emit(`${acc[i]} = ${acc[i]} && ${rhs};`);
+        else wb.emit(`${acc[i]} = min(${acc[i]}, ${rhs});`);
       } else if (re.op === AluOp.Max) {
         // For booleans, max is OR; for numerics, use max()
-        if (re.dtype === DType.Bool) emit(`${acc[i]} = ${acc[i]} || ${rhs};`);
-        else emit(`${acc[i]} = max(${acc[i]}, ${rhs});`);
+        if (re.dtype === DType.Bool)
+          wb.emit(`${acc[i]} = ${acc[i]} || ${rhs};`);
+        else wb.emit(`${acc[i]} = max(${acc[i]}, ${rhs});`);
       } else throw new Error(`Unsupported reduction op: ${re.op}`);
     }
-    emit(popIndent, "}");
+    wb.emit(wb.popIndent, "}");
 
     // Exited the reduction loop scope. Erase any local variables.
-    expContext.clear();
-    references.clear();
-    seen.clear();
+    gen.reset();
 
     const outputIdxExps: AluExp[] = [];
     const fusionExps: AluExp[] = [];
     for (let i = 0; i < upcast; i++) {
       const exp = tune.outputIdxExp.substitute({ upcast: AluExp.i32(i) });
       outputIdxExps.push(exp.simplify(cache));
-      countReferences(outputIdxExps[i]);
+      gen.countReferences(outputIdxExps[i]);
       fusionExps.push(
         tune
           .epilogue!.substitute({
@@ -620,20 +420,20 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
           })
           .simplify(cache),
       );
-      countReferences(fusionExps[i]);
+      gen.countReferences(fusionExps[i]);
     }
     for (let i = 0; i < upcast; i++) {
-      const index = strip1(gen(outputIdxExps[i]));
-      let rhs = strip1(gen(fusionExps[i]));
+      const index = strip1(gen.run(outputIdxExps[i]));
+      let rhs = strip1(gen.run(fusionExps[i]));
       if (resultTy !== dtypeToWgsl(fusionExps[i].dtype))
         rhs = `${resultTy}(${rhs})`;
-      emit(`result[${index}] = ${rhs};`);
+      wb.emit(`result[${index}] = ${rhs};`);
     }
   }
 
-  emit(popIndent, "}");
+  wb.emit(wb.popIndent, "}");
   return {
-    code: shader.join("\n"),
+    code: wb.toString(),
     numInputs: nargs,
     numOutputs: 1,
     hasUniform: false,
