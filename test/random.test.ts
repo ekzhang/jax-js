@@ -401,6 +401,184 @@ suite.each(devices)("device:%s", (device) => {
       expect(variance).toBeCloseTo(Math.PI ** 2 / 6, 1);
     });
 
+    test("randint distribution", () => {
+      const samples: number[] = random
+        .randint(random.key(1201), { minval: -3, maxval: 7, shape: [5000] })
+        .js();
+      const counts = Array(10).fill(0);
+      for (const x of samples) {
+        expect(Number.isInteger(x)).toBe(true);
+        expect(x).toBeGreaterThanOrEqual(-3);
+        expect(x).toBeLessThan(7);
+        counts[x + 3]++;
+      }
+      for (const count of counts)
+        expect(count / samples.length).toBeCloseTo(0.1, 1);
+    });
+
+    test("rademacher distribution", () => {
+      const count = 5000;
+      const samples: number[] = random
+        .rademacher(random.key(1202), { shape: [count] })
+        .js();
+      const mean = samples.reduce((a, b) => a + b, 0) / count;
+      for (const x of samples) expect([-1, 1]).toContain(x);
+      expect(mean).toBeWithinRange(-0.08, 0.08);
+    });
+
+    test("logistic distribution", () => {
+      const count = 10000;
+      const samples: number[] = random.logistic(random.key(1203), [count]).js();
+      const mean = samples.reduce((a, b) => a + b, 0) / count;
+      const variance =
+        samples.reduce((a, b) => a + (b - mean) ** 2, 0) / (count - 1);
+      expect(mean).toBeWithinRange(-0.1, 0.1);
+      expect(variance).toBeWithinRange(3.0, 3.6); // pi^2 / 3
+    });
+
+    test("lognormal distribution", () => {
+      const count = 10000;
+      const samples: number[] = random
+        .lognormal(random.key(1204), 1, [count])
+        .js();
+      const mean = samples.reduce((a, b) => a + b, 0) / count;
+      expect(samples.every((x) => x > 0)).toBe(true);
+      expect(mean).toBeWithinRange(1.45, 1.85); // exp(1/2)
+    });
+
+    test("rayleigh distribution", () => {
+      const count = 10000;
+      const scale = 2;
+      const samples: number[] = random
+        .rayleigh(random.key(1205), scale, [count])
+        .js();
+      const mean = samples.reduce((a, b) => a + b, 0) / count;
+      expect(samples.every((x) => x >= 0)).toBe(true);
+      expect(mean).toBeWithinRange(2.35, 2.65); // scale * sqrt(pi / 2)
+    });
+
+    test("pareto distribution", () => {
+      const count = 10000;
+      const samples: number[] = random
+        .pareto(random.key(1206), 3, [count])
+        .js();
+      const mean = samples.reduce((a, b) => a + b, 0) / count;
+      expect(samples.every((x) => x >= 1)).toBe(true);
+      expect(mean).toBeWithinRange(1.35, 1.65); // b / (b - 1)
+    });
+
+    test("weibullMin distribution", () => {
+      const count = 10000;
+      const samples: number[] = random
+        .weibullMin(random.key(1207), 2, 1, [count])
+        .js();
+      const mean = samples.reduce((a, b) => a + b, 0) / count;
+      expect(samples.every((x) => x >= 0)).toBe(true);
+      expect(mean).toBeWithinRange(1.8, 2.2); // concentration=1 => exponential(scale)
+    });
+
+    test("geometric distribution", () => {
+      const count = 10000;
+      const samples: number[] = random
+        .geometric(random.key(1208), 0.25, { shape: [count] })
+        .js();
+      const mean = samples.reduce((a, b) => a + b, 0) / count;
+      for (const x of samples) {
+        expect(Number.isInteger(x)).toBe(true);
+        expect(x).toBeGreaterThanOrEqual(1);
+      }
+      expect(mean).toBeWithinRange(3.7, 4.3); // 1 / p
+    });
+
+    test("triangular distribution", () => {
+      const count = 10000;
+      const samples: number[] = random
+        .triangular(random.key(1209), -1, 0, 2, [count])
+        .js();
+      const mean = samples.reduce((a, b) => a + b, 0) / count;
+      expect(samples.every((x) => x >= -1 && x <= 2)).toBe(true);
+      expect(mean).toBeWithinRange(0.23, 0.43); // (left + mode + right) / 3
+    });
+
+    test("maxwell distribution", () => {
+      const count = 10000;
+      const samples: number[] = random.maxwell(random.key(1210), [count]).js();
+      const mean = samples.reduce((a, b) => a + b, 0) / count;
+      expect(samples.every((x) => x >= 0)).toBe(true);
+      expect(mean).toBeWithinRange(1.45, 1.75); // 2 * sqrt(2 / pi)
+    });
+
+    test("doubleSidedMaxwell distribution", () => {
+      const count = 10000;
+      const samples: number[] = random
+        .doubleSidedMaxwell(random.key(1211), 0, 1, [count])
+        .js();
+      const mean = samples.reduce((a, b) => a + b, 0) / count;
+      const absMean = samples.reduce((a, b) => a + Math.abs(b), 0) / count;
+      expect(mean).toBeWithinRange(-0.12, 0.12);
+      expect(absMean).toBeWithinRange(1.45, 1.75);
+    });
+
+    test("ball distribution", () => {
+      const count = 5000;
+      const d = 3;
+      const samples: number[][] = random
+        .ball(random.key(1212), d, { shape: [count] })
+        .js();
+      expect(samples).toHaveLength(count);
+      expect(samples[0]).toHaveLength(d);
+      let meanRadius2 = 0;
+      for (const x of samples) {
+        const r2 = x.reduce((a, b) => a + b * b, 0);
+        expect(r2).toBeLessThanOrEqual(1.0001);
+        meanRadius2 += r2;
+      }
+      meanRadius2 /= count;
+      expect(meanRadius2).toBeWithinRange(0.55, 0.65); // d / (d + 2)
+    });
+
+    test("choice with replacement", () => {
+      const samples: number[] = random
+        .choice(random.key(1213), 5, { shape: [200] })
+        .js();
+      for (const x of samples) {
+        expect(Number.isInteger(x)).toBe(true);
+        expect(x).toBeGreaterThanOrEqual(0);
+        expect(x).toBeLessThan(5);
+      }
+
+      const values = np.array([10, 20, 30, 40, 50]);
+      const picked: number[] = random
+        .choice(random.key(1214), values, { shape: [200] })
+        .js();
+      for (const x of picked) expect([10, 20, 30, 40, 50]).toContain(x);
+    });
+
+    // Permutation and sampling without replacement rely on argsort, unsupported on webgl.
+    if (device !== "webgl") {
+      test("permutation", () => {
+        const p: number[] = random.permutation(random.key(1215), 8).js();
+        expect(p.toSorted((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+
+        const values = np.array([10, 20, 30, 40]);
+        const permuted: number[] = random
+          .permutation(random.key(1216), values)
+          .js();
+        expect(permuted.toSorted((a, b) => a - b)).toEqual([10, 20, 30, 40]);
+      });
+
+      test("choice without replacement", () => {
+        const samples: number[] = random
+          .choice(random.key(1217), 6, { shape: [4], replace: false })
+          .js();
+        expect(new Set(samples).size).toBe(4);
+        for (const x of samples) {
+          expect(x).toBeGreaterThanOrEqual(0);
+          expect(x).toBeLessThan(6);
+        }
+      });
+    }
+
     if (device === "cpu" || device === "wasm") {
       // TODO: cholesky not yet supported on webgpu
       test("multivariate normal distribution", () => {
