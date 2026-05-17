@@ -424,7 +424,6 @@ Contributions are welcomed! Some fruitful areas to look into:
 - Adding support for more JAX functions and operations, see [compatibility table](./FEATURES.md).
 - Improving performance of the WebGPU and Wasm runtimes, generating better kernels, and using SIMD
   and multithreading. (Even single-threaded Wasm could be ~20x faster.)
-- Helping the JIT compiler to fuse operations in more cases, like `tanh` branches.
 - Making a fast transformer inference engine, comparing against onnxruntime-web.
 
 You may join our [Discord server](https://discord.gg/BW6YsCd4Tf) and chat with the community.
