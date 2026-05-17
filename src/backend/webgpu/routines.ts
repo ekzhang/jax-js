@@ -647,7 +647,10 @@ function createFlashAttention(
   const ty = dtypeToWgsl(dtype, true);
   const biasTy = dtypeToWgsl(type.inputDtypes[3], true);
   const maskTy = dtypeToWgsl(type.inputDtypes[4], true);
-  const [B, L, N, H] = type.inputShapes[0];
+  const [B, L, N, H] = type.outputShapes[0];
+  const Bq = type.inputShapes[0][0];
+  const Bk = type.inputShapes[1][0];
+  const Bv = type.inputShapes[2][0];
   const S = type.inputShapes[1][1];
   const K = type.inputShapes[1][2];
   const G = N / K;
@@ -694,6 +697,9 @@ function createFlashAttention(
     }
   }
   const validK = validKConditions.join(" && ");
+  const qBatchIdx = Bq === 1 ? "0u" : "batch_idx";
+  const kBatchIdx = Bk === 1 ? "0u" : "batch_idx";
+  const vBatchIdx = Bv === 1 ? "0u" : "batch_idx";
   const loadMask = hasMask ? `return mask[${maskIndex}] != 0;` : "return true;";
   const applyMask = hasMask
     ? "if (valid_score) {\n        valid_score = load_mask(batch_idx, head_idx, q_idx_global, k_idx_global);\n      }"
@@ -802,7 +808,7 @@ fn main(
   }
 
   if (valid_q) {
-    let q_offset = ((batch_idx * uniforms.L + q_idx_global) * uniforms.N + head_idx) * ${H}u;
+    let q_offset = (((${qBatchIdx}) * uniforms.L + q_idx_global) * uniforms.N + head_idx) * ${H}u;
     for (var i = 0u; i < ${headVec}u; i++) {
       let offset = q_offset + i * 4u;
       q_tile[i] = vec4<f32>(
@@ -826,18 +832,19 @@ fn main(
       var k_val = vec4<${ty}>(${ty}(0));
       var v_val = vec4<${ty}>(${ty}(0));
       if (k_idx_global < k_end) {
-        let offset = ((batch_idx * uniforms.S + k_idx_global) * ${K}u + kv_head_idx) * ${H}u + vec_idx * 4u;
+        let k_offset = (((${kBatchIdx}) * uniforms.S + k_idx_global) * ${K}u + kv_head_idx) * ${H}u + vec_idx * 4u;
+        let v_offset = (((${vBatchIdx}) * uniforms.S + k_idx_global) * ${K}u + kv_head_idx) * ${H}u + vec_idx * 4u;
         k_val = vec4<${ty}>(
-          key[offset],
-          key[offset + 1u],
-          key[offset + 2u],
-          key[offset + 3u]
+          key[k_offset],
+          key[k_offset + 1u],
+          key[k_offset + 2u],
+          key[k_offset + 3u]
         );
         v_val = vec4<${ty}>(
-          value[offset],
-          value[offset + 1u],
-          value[offset + 2u],
-          value[offset + 3u]
+          value[v_offset],
+          value[v_offset + 1u],
+          value[v_offset + 2u],
+          value[v_offset + 3u]
         );
       }
       k_tile[idx] = k_val;

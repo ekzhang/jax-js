@@ -5,6 +5,7 @@ import {
   init,
   nn,
   numpy as np,
+  vmap,
 } from "@jax-js/jax";
 import { beforeEach, expect, suite, test } from "vitest";
 
@@ -450,6 +451,35 @@ suite.each(devices)("device:%s", (device) => {
           mask,
           implementation: "flash",
         });
+        expect(flash).toBeAllclose(naive, { atol: 1e-4 });
+      });
+
+      test("vmapped flash attention matches vmapped naive attention", () => {
+        const query = np.arange(24).astype(np.float32).reshape([2, 3, 1, 4]);
+        const key = np.arange(12).astype(np.float32).reshape([3, 1, 4]);
+        const value = np
+          .arange(12)
+          .astype(np.float32)
+          .reshape([3, 1, 4])
+          .add(1);
+        const mask = np.array([
+          [true, false, true],
+          [true, true, false],
+          [false, true, true],
+        ]);
+
+        const naive = vmap((q: np.Array) =>
+          nn.dotProductAttention(q, key.ref, value.ref, {
+            mask: mask.ref,
+            implementation: "naive",
+          }),
+        )(query.ref);
+        const flash = vmap((q: np.Array) =>
+          nn.dotProductAttention(q, key, value, {
+            mask,
+            implementation: "flash",
+          }),
+        )(query);
         expect(flash).toBeAllclose(naive, { atol: 1e-4 });
       });
 

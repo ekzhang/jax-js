@@ -1038,15 +1038,11 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
         `flash_attention: mask must have boolean dtype, got ${mask.dtype}`,
       );
     }
-    const [B, L, N, H] = query.shape;
+    const [Bq, L, N, H] = query.shape;
     const [Bk, S, K, Hk] = key.shape;
-    if (
-      !deepEqual(value.shape, key.shape) ||
-      B !== Bk ||
-      H !== Hk ||
-      N < K ||
-      N % K !== 0
-    ) {
+    const [Bv, Sv, Kv, Hv] = value.shape;
+    const [B] = generalBroadcast(generalBroadcast([Bq], [Bk]), [Bv]);
+    if (S !== Sv || K !== Kv || H !== Hk || H !== Hv || N < K || N % K !== 0) {
       throw new TypeError(
         `flash_attention: shape mismatch Q=${query}, K=${key}, V=${value}`,
       );

@@ -133,6 +133,7 @@ export function runMultiHeadAttention(
       q.reshape([seqLen, numHeads, headDim]),
       k.reshape([seqLen, numHeads, headDim]),
       v.reshape([seqLen, numHeads, headDim]),
+      { implementation: "flash" },
     )
     .reshape([seqLen, embed]);
 

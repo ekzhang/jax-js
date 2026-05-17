@@ -1,4 +1,13 @@
-import { assertNonNull, checkAxis, range, rep, unzip2, zip } from "../utils";
+import {
+  assertNonNull,
+  checkAxis,
+  deepEqual,
+  generalBroadcast,
+  range,
+  rep,
+  unzip2,
+  zip,
+} from "../utils";
 import { arange, eye, pureArray } from "./array";
 import {
   AbstractValue,
@@ -236,6 +245,87 @@ function lastDimsBatcher<P extends Primitive>(
   };
 }
 
+function logicalShape(x: Tracer, bdim: number | null): number[] {
+  const shape = [...x.shape];
+  if (bdim !== null) shape.splice(bdim, 1);
+  return shape;
+}
+
+function alignRank(shape: number[], ndim: number): number[] {
+  if (shape.length > ndim) {
+    throw new TypeError(
+      `vmap flash_attention: cannot align shape [${shape}] to rank ${ndim}`,
+    );
+  }
+  return [...rep(ndim - shape.length, 1), ...shape];
+}
+
+function vmapFlashAttentionTensor(
+  axisSize: number,
+  x: Tracer,
+  bdim: number | null,
+  batchSize: number,
+  name: string,
+): Tracer {
+  const shape = logicalShape(x, bdim);
+  if (shape.length !== 4) {
+    throw new TypeError(
+      `vmap flash_attention: expected rank-4 ${name} input, got shape [${shape}]`,
+    );
+  }
+  const [B, ...rest] = shape;
+  if (B !== 1 && B !== batchSize) {
+    throw new TypeError(
+      `vmap flash_attention: ${name} batch ${B} is not broadcastable to ${batchSize}`,
+    );
+  }
+
+  if (bdim === null) {
+    if (B === 1) return x;
+    x = broadcast(x, [axisSize, B, ...rest], [0]);
+  } else {
+    x = moveBatchAxis(axisSize, bdim, 0, x);
+    if (B === 1 && batchSize !== 1) {
+      x = broadcast(x, [axisSize, batchSize, ...rest], []);
+    }
+  }
+  return reshape(x, [axisSize * batchSize, ...rest]);
+}
+
+function vmapFlashAttentionBroadcastArg(
+  axisSize: number,
+  x: Tracer,
+  bdim: number | null,
+  targetShape: number[],
+  name: string,
+): Tracer {
+  const shape = logicalShape(x, bdim);
+  const paddedShape = alignRank(shape, targetShape.length);
+  if (!deepEqual(generalBroadcast(shape, targetShape), targetShape)) {
+    throw new TypeError(
+      `vmap flash_attention: ${name} shape [${shape}] is not broadcastable to [${targetShape}]`,
+    );
+  }
+
+  const [B] = targetShape;
+  if (bdim === null) {
+    if (paddedShape[0] === 1) return x;
+    if (!deepEqual(x.shape, paddedShape)) x = reshape(x, paddedShape);
+    x = broadcast(x, [axisSize, ...paddedShape], [0]);
+  } else {
+    x = moveBatchAxis(axisSize, bdim, 0, x);
+    const withLeadingBatch = [axisSize, ...paddedShape];
+    if (!deepEqual(x.shape, withLeadingBatch)) {
+      x = reshape(x, withLeadingBatch);
+    }
+    if (paddedShape[0] === 1 && B !== 1) {
+      x = broadcast(x, [axisSize, B, ...paddedShape.slice(1)], []);
+    }
+  }
+
+  return reshape(x, [axisSize * B, ...paddedShape.slice(1)]);
+}
+
 const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
   [Primitive.Add]: broadcastBatcher(Primitive.Add),
   [Primitive.Mul]: broadcastBatcher(Primitive.Mul),
@@ -402,6 +492,62 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
   },
   [Primitive.Cholesky]: lastDimsBatcher(Primitive.Cholesky, 2),
   [Primitive.LU]: lastDimsBatcher(Primitive.LU, 2, 3),
+  [Primitive.FlashAttention](
+    axisSize,
+    [query, key, value, bias, mask],
+    [qBdim, kBdim, vBdim, biasBdim, maskBdim],
+    params,
+  ) {
+    const qShape = logicalShape(query, qBdim);
+    const kShape = logicalShape(key, kBdim);
+    const vShape = logicalShape(value, vBdim);
+    if (qShape.length !== 4 || kShape.length !== 4 || vShape.length !== 4) {
+      throw new TypeError(
+        `vmap flash_attention: expected rank-4 Q/K/V inputs, got ` +
+          `[${qShape}], [${kShape}], [${vShape}]`,
+      );
+    }
+    const batchSize = generalBroadcast(
+      generalBroadcast([qShape[0]], [kShape[0]]),
+      [vShape[0]],
+    )[0];
+    const [_, L, N, H] = qShape;
+    const S = kShape[1];
+    const targetShape = [batchSize, N, L, S];
+
+    const q = vmapFlashAttentionTensor(
+      axisSize,
+      query,
+      qBdim,
+      batchSize,
+      "query",
+    );
+    const k = vmapFlashAttentionTensor(axisSize, key, kBdim, batchSize, "key");
+    const v = vmapFlashAttentionTensor(
+      axisSize,
+      value,
+      vBdim,
+      batchSize,
+      "value",
+    );
+    const b = vmapFlashAttentionBroadcastArg(
+      axisSize,
+      bias,
+      biasBdim,
+      targetShape,
+      "bias",
+    );
+    const m = vmapFlashAttentionBroadcastArg(
+      axisSize,
+      mask,
+      maskBdim,
+      targetShape,
+      "mask",
+    );
+
+    const out = bind1(Primitive.FlashAttention, [q, k, v, b, m], params);
+    return [[reshape(out, [axisSize, batchSize, L, N, H])], [0]];
+  },
   [Primitive.Jit](axisSize, args, dims, { name, jaxpr }) {
     const newJaxpr = vmapJaxpr(jaxpr, axisSize, dims);
     const outs = bind(
