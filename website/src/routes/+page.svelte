@@ -58,6 +58,11 @@
       description: "Demo of training a neural network on MNIST.",
     },
     {
+      title: "Tiny Shakespeare Char-RNN",
+      href: resolve("/char-rnn"),
+      description: "Train a 2-layer LSTM on Shakespeare text in your browser.",
+    },
+    {
       title: "Benchmarks",
       href: resolve("/bench/matmul"),
       description: "Micro-benchmarks of jax-js versus other libraries.",

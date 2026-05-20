@@ -71,6 +71,7 @@ Community usage:
 Demos on the jax-js website:
 
 - [Training neural networks on MNIST](https://jax-js.com/mnist)
+- [Training a char-RNN on Tiny Shakespeare](https://jax-js.com/char-rnn)
 - [Voice cloning: Kyutai Pocket TTS](https://jax-js.com/tts)
 - [CLIP embeddings for books in-browser](https://jax-js.com/mobileclip)
 - [Object detection: DETR ResNet-50 (ONNX)](https://jax-js.com/detr-resnet-50)
