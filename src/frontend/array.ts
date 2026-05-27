@@ -680,6 +680,21 @@ export class Array extends Tracer {
     this.#check();
     const indices = unravelAlu(this.#st.shape, AluVar.gidx);
     if (this.#source instanceof AluExp) {
+      // Fast-path: constant expression, small array, just fill it.
+      let resolvedSource: number | undefined;
+      if (
+        this.#st.contiguous &&
+        this.#st.size < inlineArrayLimit &&
+        (resolvedSource = this.#source.resolve()) !== undefined
+      ) {
+        const byteLength = this.#st.size * byteWidth(this.#dtype);
+        const initialData = new Uint8Array(byteLength);
+        dtypedArray(this.#dtype, initialData).fill(resolvedSource);
+        this.#source = this.#backend.malloc(byteLength, initialData);
+        this.#st = ShapeTracker.fromShape(this.shape);
+        return;
+      }
+
       const exp = accessorAluExp(this.#source, this.#st, indices);
       const kernel = new Kernel(0, this.#st.size, exp);
       const output = this.#backend.malloc(kernel.bytes);

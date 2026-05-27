@@ -1657,6 +1657,8 @@ export function accessorGlobal(
 ): AluExp {
   const [index, valid] = st.toAluExp(indices);
   const [, len] = st.views[0].dataRange();
+  // Fast path: If always valid, just ignore the condition.
+  if (valid.resolve()) return AluExp.globalIndex(dtype, gid, len, index);
   return AluExp.where(
     valid,
     AluExp.globalIndex(dtype, gid, len, index),
@@ -1671,6 +1673,8 @@ export function accessorAluExp(
   indices: AluExp[],
 ): AluExp {
   const [index, valid] = st.toAluExp(indices);
+  // Fast path: If always valid, just ignore the condition.
+  if (valid.resolve()) return exp.substitute({ idx: index });
   return AluExp.where(
     valid,
     exp.substitute({ idx: index }),
