@@ -2,7 +2,7 @@
   import { defaultDevice, init, numpy as np, tree } from "@jax-js/jax";
   import { safetensors, tokenizers } from "@jax-js/loaders";
   import { GithubIcon } from "@lucide/svelte";
-  import { tick } from "svelte";
+  import { onMount, tick } from "svelte";
 
   import DownloadManager from "$lib/common/DownloadManager.svelte";
   import MarkdownMessage from "./MarkdownMessage.svelte";
@@ -30,7 +30,16 @@
     content: string;
   };
 
+  type ChatBackend = "webgpu" | "wasm";
+
+  const BACKEND_LABEL: Record<ChatBackend, string> = {
+    webgpu: "WebGPU",
+    wasm: "Wasm",
+  };
+  const CHAT_BACKENDS: ChatBackend[] = ["webgpu", "wasm"];
+
   let _model: GemmaModel | null = null;
+  let _modelBackend: ChatBackend | null = null;
   let _tokenizer: tokenizers.SentencePiece | null = null;
 
   let downloadManager: DownloadManager;
@@ -51,6 +60,11 @@
   let temperature = $state(0.8);
   let topK = $state(64);
   let topP = $state(0.95);
+  let backend = $state<ChatBackend>("webgpu");
+  let availableBackends = $state<ChatBackend[]>([]);
+  let checkedBackends = $state(false);
+  let optionsOpen = $state(false);
+  let optionsDetails: HTMLDetailsElement | undefined;
 
   const prefillTps = $derived(
     prefillElapsedMs > 0 ? prefillCount / (prefillElapsedMs / 1000) : 0,
@@ -67,15 +81,55 @@
     });
   }
 
-  async function setupDevice() {
-    status = "Initializing WebGPU…";
-    const devices = await init("webgpu");
-    if (!devices.includes("webgpu")) {
-      throw new Error(
-        "WebGPU is required for this demo. Try Chrome, Edge, or Safari/iOS 26+.",
-      );
+  onMount(() => {
+    void initializeBackendOptions().catch((error) => {
+      console.warn("Failed to initialize chat backends", error);
+    });
+  });
+
+  async function initializeBackendOptions() {
+    const devices = await init(...CHAT_BACKENDS);
+    availableBackends = CHAT_BACKENDS.filter((device) =>
+      devices.includes(device),
+    );
+    checkedBackends = true;
+    if (availableBackends.length > 0 && !availableBackends.includes(backend)) {
+      backend = availableBackends.includes("webgpu") ? "webgpu" : "wasm";
     }
-    defaultDevice("webgpu");
+  }
+
+  function disposeModel() {
+    if (_model) tree.dispose(_model);
+    _model = null;
+    _modelBackend = null;
+    hasModel = false;
+  }
+
+  function handleBackendChange(event: Event) {
+    const nextBackend = (event.currentTarget as HTMLSelectElement)
+      .value as ChatBackend;
+    if (nextBackend === backend) return;
+    backend = nextBackend;
+    disposeModel();
+  }
+
+  async function setupDevice() {
+    status = `Initializing ${BACKEND_LABEL[backend]}…`;
+    if (!checkedBackends) await initializeBackendOptions();
+
+    let selectedBackend = backend;
+    if (!availableBackends.includes(selectedBackend)) {
+      if (selectedBackend === "webgpu" && availableBackends.includes("wasm")) {
+        selectedBackend = "wasm";
+      } else {
+        throw new Error(
+          `${BACKEND_LABEL[selectedBackend]} is not available in this browser.`,
+        );
+      }
+    }
+
+    backend = selectedBackend;
+    defaultDevice(selectedBackend);
   }
 
   async function getTokenizer(): Promise<tokenizers.SentencePiece> {
@@ -87,7 +141,8 @@
   }
 
   async function getModel(): Promise<GemmaModel> {
-    if (_model) return _model;
+    if (_model && _modelBackend === backend) return _model;
+    if (_model) disposeModel();
 
     status = "Downloading model weights…";
     const data = await downloadManager.fetch(
@@ -98,8 +153,13 @@
     status = "Parsing checkpoint…";
     const weights = safetensors.parse(data);
 
-    status = "Uploading weights to WebGPU…";
-    _model = fromSafetensors(weights);
+    const weightDtype = backend === "wasm" ? np.float32 : np.float16;
+    status =
+      backend === "wasm"
+        ? "Preparing float32 weights for Wasm…"
+        : "Uploading weights to WebGPU…";
+    _model = await fromSafetensors(weights, weightDtype);
+    _modelBackend = backend;
     hasModel = true;
     return _model;
   }
@@ -231,7 +291,9 @@
       ...tokenizer.encode(formatPrompt(history)),
     ];
     const generatedTokens: number[] = [];
-    const state = createGemmaState();
+    const state = createGemmaState({
+      dtype: backend === "wasm" ? np.float32 : np.float16,
+    });
     const inputIds = np.array(promptTokens, { dtype: np.uint32 });
     let logits: np.Array | null = null;
     const startTime = performance.now();
@@ -335,6 +397,19 @@
 
 <title>jax-js model chat</title>
 
+<!-- Close options menu on outside click. -->
+<svelte:window
+  onclick={(event: MouseEvent) => {
+    if (
+      optionsOpen &&
+      event.target instanceof Node &&
+      !optionsDetails?.contains(event.target)
+    ) {
+      optionsOpen = false;
+    }
+  }}
+/>
+
 <DownloadManager bind:this={downloadManager} />
 
 <main class="h-dvh overflow-hidden bg-white text-gray-950 flex flex-col">
@@ -349,17 +424,47 @@
           >
         </h1>
         <p class="text-sm text-gray-500">
-          Running locally with jax-js + WebGPU
+          Running locally with jax-js + {BACKEND_LABEL[backend]}
         </p>
       </div>
 
       <div class="flex items-center gap-2">
-        <details class="relative">
+        <details
+          bind:this={optionsDetails}
+          bind:open={optionsOpen}
+          class="relative"
+        >
           <summary class="small-btn list-none cursor-pointer">Options</summary>
           <div
             class="absolute right-0 z-10 mt-2 w-72 rounded-2xl border border-gray-200 bg-white p-4 shadow-xl"
           >
             <div class="space-y-4 text-sm">
+              <div>
+                <label class="block text-gray-700">
+                  Backend
+                  <select
+                    class="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1"
+                    value={backend}
+                    onchange={handleBackendChange}
+                    disabled={running || !checkedBackends}
+                  >
+                    {#if checkedBackends}
+                      {#each availableBackends as device}
+                        <option value={device}>{BACKEND_LABEL[device]}</option>
+                      {/each}
+                    {:else}
+                      <option value={backend}>Initializing…</option>
+                    {/if}
+                  </select>
+                </label>
+
+                <p class="mt-2 text-xs text-gray-500">
+                  WebGPU uses fp16 weights. Wasm casts weights to fp32 on load.
+                </p>
+              </div>
+
+              <hr class="border-gray-200" />
+
               <label class="block text-gray-700">
                 Max new tokens
                 <input

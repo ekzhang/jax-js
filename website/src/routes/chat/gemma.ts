@@ -1,4 +1,4 @@
-import { jit, nn, numpy as np } from "@jax-js/jax";
+import { blockUntilReady, jit, nn, numpy as np } from "@jax-js/jax";
 import { safetensors, WeightMapper } from "@jax-js/loaders";
 
 export const GEMMA_CONFIG = {
@@ -106,8 +106,7 @@ const runEmbedding = jit(function runEmbedding(
   tokenIds: np.Array,
 ): np.Array {
   // Gemma is trained for bf16 activations; fp16 residuals overflow in this
-  // browser implementation, so keep the residual stream in fp32 while storing
-  // weights in fp16.
+  // browser implementation, so keep the residual stream in fp32.
   return weight.slice(tokenIds).astype(np.float32).mul(EMBED_SCALE);
 });
 
@@ -357,9 +356,10 @@ function roundCacheCapacity(requiredCapacity: number): number {
   );
 }
 
-export function createGemmaState(
-  capacity: number = KV_CACHE_BLOCK_SIZE,
-): GemmaState {
+export function createGemmaState({
+  capacity = KV_CACHE_BLOCK_SIZE,
+  dtype = np.float16,
+}: { capacity?: number; dtype?: np.DType } = {}): GemmaState {
   capacity = roundCacheCapacity(capacity);
   return {
     capacity,
@@ -367,11 +367,11 @@ export function createGemmaState(
     caches: Array.from({ length: GEMMA_CONFIG.numHiddenLayers }, () => ({
       key: np.zeros(
         [capacity, GEMMA_CONFIG.numKeyValueHeads, GEMMA_CONFIG.headDim],
-        { dtype: np.float16 },
+        { dtype },
       ),
       value: np.zeros(
         [capacity, GEMMA_CONFIG.numKeyValueHeads, GEMMA_CONFIG.headDim],
-        { dtype: np.float16 },
+        { dtype },
       ),
     })),
   };
@@ -474,23 +474,42 @@ const mapper = new WeightMapper({
   },
 });
 
-function tensorToArray(tensor: safetensors.Tensor): np.Array {
+function tensorToArray(
+  tensor: safetensors.Tensor,
+  dtype: np.DType = np.float16,
+): np.Array {
   if (tensor.dtype !== "F16") {
     throw new Error(
       `Expected fp16 Gemma weights, but tensor has dtype ${tensor.dtype}. ` +
         `Use model-fp16.safetensors.`,
     );
   }
-  return np.array(tensor.data as Float16Array<ArrayBuffer>, {
-    shape: tensor.shape,
-    dtype: np.float16,
-  });
+  switch (dtype) {
+    case np.float16:
+      return np.array(tensor.data as Float16Array<ArrayBuffer>, {
+        shape: tensor.shape,
+        dtype: np.float16,
+      });
+    case np.float32:
+      return np.array(
+        new Float32Array(tensor.data as Float16Array<ArrayBuffer>),
+        {
+          shape: tensor.shape,
+          dtype: np.float32,
+        },
+      );
+    default:
+      throw new Error(`Unsupported dtype ${dtype}`);
+  }
 }
 
-export function fromSafetensors(file: safetensors.File): GemmaModel {
+export async function fromSafetensors(
+  file: safetensors.File,
+  dtype: np.DType = np.float16,
+): Promise<GemmaModel> {
   const hydrated: Record<string, np.Array> = {};
   for (const [key, tensor] of Object.entries(file.tensors)) {
-    hydrated[mapper.mapKey(key)] = tensorToArray(tensor);
+    hydrated[mapper.mapKey(key)] = tensorToArray(tensor, dtype);
   }
 
   const model = safetensors.toNested(hydrated) as GemmaModel;
@@ -500,5 +519,5 @@ export function fromSafetensors(file: safetensors.File): GemmaModel {
         `found ${model.layers.length}`,
     );
   }
-  return model;
+  return blockUntilReady(model);
 }
