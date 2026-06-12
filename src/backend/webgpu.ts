@@ -496,16 +496,19 @@ function pipelineSubmit(
 
     for (let i = 0; i < filteredPasses.length; i++) {
       const { grid } = filteredPasses[i];
-      const passEncoder = commandEncoder.beginComputePass({
-        timestampWrites: slot
-          ? {
-              querySet: slot.batch.querySet,
-              beginningOfPassWriteIndex: i === 0 ? slot.beginIndex : undefined,
-              endOfPassWriteIndex:
-                i === filteredPasses.length - 1 ? slot.endIndex : undefined,
-            }
-          : undefined,
-      });
+      let timestampWrites: GPUComputePassTimestampWrites | undefined;
+      if (slot) {
+        const isFirst = i === 0;
+        const isLast = i === filteredPasses.length - 1;
+        if (isFirst || isLast) {
+          timestampWrites = {
+            querySet: slot.batch.querySet,
+            ...(isFirst ? { beginningOfPassWriteIndex: slot.beginIndex } : {}),
+            ...(isLast ? { endOfPassWriteIndex: slot.endIndex } : {}),
+          };
+        }
+      }
+      const passEncoder = commandEncoder.beginComputePass({ timestampWrites });
       passEncoder.setPipeline(pipeline);
       passEncoder.setBindGroup(0, bindGroup);
       if (uniformBindGroup)
