@@ -50,7 +50,6 @@ export default defineConfig({
           ]
         : []),
     ],
-    isolate: false,
     passWithNoTests: true,
     setupFiles: ["test/setup.ts"],
   },
