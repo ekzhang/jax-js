@@ -1,5 +1,5 @@
 import { create, toBinary } from "@bufbuild/protobuf";
-import { numpy as np } from "@jax-js/jax";
+import { defaultDevice, numpy as np } from "@jax-js/jax";
 import {
   AttributeProto_AttributeType,
   AttributeProtoSchema,
@@ -18,6 +18,8 @@ import {
 import { expect, onTestFinished, test } from "vitest";
 
 import { ONNXModel } from "./index";
+
+defaultDevice("wasm");
 
 /**
  * Helper to create a dimension proto.
