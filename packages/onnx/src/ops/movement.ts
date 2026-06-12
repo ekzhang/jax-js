@@ -1,13 +1,18 @@
 // Movement operations, changing shape and indexing.
 
-import { numpy as np } from "@jax-js/jax";
+import { type DType, numpy as np } from "@jax-js/jax";
 
+import { takeAlongAxis } from "../arrayHelpers";
 import {
   type Operand,
   operandToJax,
   operandToJs,
   StaticArray,
+  type StaticArrayData,
 } from "../tensor";
+
+const allocStatic = (dtype: DType, length: number): StaticArrayData =>
+  dtype === np.float32 ? new Float32Array(length) : new Int32Array(length);
 
 export function Reshape(
   [data, shapeArr]: Operand[],
@@ -105,7 +110,7 @@ export function Gather(
 
     // For 1D data with scalar or 1D indices (common case for shape ops)
     if (data.shape.length === 1) {
-      const result = new Int32Array(indices.data.length);
+      const result = allocStatic(data.dtype, indices.data.length);
       for (let i = 0; i < indices.data.length; i++) {
         const idx =
           indices.data[i] < 0
@@ -125,6 +130,13 @@ export function Gather(
   return [data.slice(...sliceArgs)];
 }
 
+export function GatherElements(
+  [dataOp, indicesOp]: Operand[],
+  { axis = 0 }: { axis?: number },
+): Operand[] {
+  return [takeAlongAxis(operandToJax(dataOp), operandToJax(indicesOp), axis)];
+}
+
 export function Concat(
   inputs: Operand[],
   { axis }: { axis: number },
@@ -141,10 +153,10 @@ export function Concat(
     // Concatenate data (only supports 1D arrays for simplicity - common for shapes)
     if (arrays[0].shape.length === 1 && axis === 0) {
       const totalLen = arrays.reduce((sum, arr) => sum + arr.data.length, 0);
-      const result = new Int32Array(totalLen);
+      const result = allocStatic(arrays[0].dtype, totalLen);
       let offset = 0;
       for (const arr of arrays) {
-        result.set(arr.data, offset);
+        result.set(arr.data as ArrayLike<number>, offset);
         offset += arr.data.length;
       }
       return [new StaticArray(result, outShape, arrays[0].dtype)];
@@ -271,7 +283,7 @@ export function Slice([
     }
     // Handle step != 1
     const len = Math.ceil((end - start) / step);
-    const result = new Int32Array(len);
+    const result = allocStatic(dataOp.dtype, len);
     for (let i = 0; i < len; i++) {
       result[i] = dataOp.data[start + i * step];
     }

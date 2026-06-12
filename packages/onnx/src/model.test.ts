@@ -1,6 +1,8 @@
 import { create, toBinary } from "@bufbuild/protobuf";
 import { numpy as np } from "@jax-js/jax";
 import {
+  AttributeProto_AttributeType,
+  AttributeProtoSchema,
   GraphProtoSchema,
   ModelProtoSchema,
   NodeProtoSchema,
@@ -27,16 +29,20 @@ function dim(value: number) {
 }
 
 /**
- * Helper to create a ValueInfoProto for a float tensor.
+ * Helper to create a ValueInfoProto for a tensor.
  */
-function floatTensorInfo(name: string, shape: number[]) {
+function tensorInfo(
+  name: string,
+  shape: number[],
+  elemType: TensorProto_DataType,
+) {
   return create(ValueInfoProtoSchema, {
     name,
     type: create(TypeProtoSchema, {
       value: {
         case: "tensorType",
         value: create(TypeProto_TensorSchema, {
-          elemType: TensorProto_DataType.FLOAT,
+          elemType,
           shape: create(TensorShapeProtoSchema, {
             dim: shape.map(dim),
           }),
@@ -44,6 +50,17 @@ function floatTensorInfo(name: string, shape: number[]) {
       },
     }),
   });
+}
+
+/**
+ * Helper to create a ValueInfoProto for a float tensor.
+ */
+function floatTensorInfo(name: string, shape: number[]) {
+  return tensorInfo(name, shape, TensorProto_DataType.FLOAT);
+}
+
+function intTensorInfo(name: string, shape: number[]) {
+  return tensorInfo(name, shape, TensorProto_DataType.INT32);
 }
 
 /**
@@ -55,6 +72,39 @@ function floatInitializer(name: string, shape: number[], data: number[]) {
     dims: shape.map(BigInt),
     dataType: TensorProto_DataType.FLOAT,
     floatData: data,
+  });
+}
+
+function int64Initializer(name: string, shape: number[], data: number[]) {
+  return create(TensorProtoSchema, {
+    name,
+    dims: shape.map(BigInt),
+    dataType: TensorProto_DataType.INT64,
+    int64Data: data.map(BigInt),
+  });
+}
+
+function intAttr(name: string, value: number) {
+  return create(AttributeProtoSchema, {
+    name,
+    type: AttributeProto_AttributeType.INT,
+    i: BigInt(value),
+  });
+}
+
+function floatAttr(name: string, value: number) {
+  return create(AttributeProtoSchema, {
+    name,
+    type: AttributeProto_AttributeType.FLOAT,
+    f: value,
+  });
+}
+
+function stringAttr(name: string, value: string) {
+  return create(AttributeProtoSchema, {
+    name,
+    type: AttributeProto_AttributeType.STRING,
+    s: new TextEncoder().encode(value) as Uint8Array<ArrayBuffer>,
   });
 }
 
@@ -306,4 +356,165 @@ test("should evaluate a chain: Add -> Relu -> MatMul", async () => {
 
   expect(result.Y.shape).toEqual([2, 1]);
   expect(await result.Y.data()).toEqual(new Float32Array([4, 1]));
+});
+
+test("should preserve float StaticArray constants for Resize scales", async () => {
+  const model = create(ModelProtoSchema, {
+    irVersion: 8n,
+    opsetImport: [create(OperatorSetIdProtoSchema, { version: 16n })],
+    graph: create(GraphProtoSchema, {
+      name: "resize_scales_graph",
+      input: [floatTensorInfo("X", [1, 1, 2, 2])],
+      output: [floatTensorInfo("Y", [1, 1, 3, 3])],
+      initializer: [floatInitializer("scales", [4], [1, 1, 1.5, 1.5])],
+      node: [
+        create(NodeProtoSchema, {
+          opType: "Resize",
+          input: ["X", "", "scales", ""],
+          output: ["Y"],
+          attribute: [
+            stringAttr("coordinate_transformation_mode", "asymmetric"),
+            stringAttr("mode", "nearest"),
+            stringAttr("nearest_mode", "floor"),
+          ],
+        }),
+      ],
+    }),
+  });
+
+  const onnxModel = new ONNXModel(toBinary(ModelProtoSchema, model));
+  onTestFinished(() => onnxModel.dispose());
+
+  const x = np.array([1, 2, 3, 4]).reshape([1, 1, 2, 2]);
+  const result = onnxModel.run({ X: x });
+
+  expect(result.Y.shape).toEqual([1, 1, 3, 3]);
+  expect(await result.Y.data()).toEqual(
+    new Float32Array([1, 1, 2, 1, 1, 2, 3, 3, 4]),
+  );
+});
+
+test("should evaluate GatherElements", async () => {
+  const model = create(ModelProtoSchema, {
+    irVersion: 8n,
+    opsetImport: [create(OperatorSetIdProtoSchema, { version: 16n })],
+    graph: create(GraphProtoSchema, {
+      name: "gather_elements_graph",
+      input: [floatTensorInfo("X", [2, 3])],
+      output: [floatTensorInfo("Y", [2, 2])],
+      initializer: [int64Initializer("indices", [2, 2], [2, 0, 1, 2])],
+      node: [
+        create(NodeProtoSchema, {
+          opType: "GatherElements",
+          input: ["X", "indices"],
+          output: ["Y"],
+          attribute: [intAttr("axis", 1)],
+        }),
+      ],
+    }),
+  });
+
+  const onnxModel = new ONNXModel(toBinary(ModelProtoSchema, model));
+  onTestFinished(() => onnxModel.dispose());
+
+  const x = np.array([1, 2, 3, 4, 5, 6]).reshape([2, 3]);
+  const result = onnxModel.run({ X: x });
+
+  expect(result.Y.shape).toEqual([2, 2]);
+  expect(await result.Y.data()).toEqual(new Float32Array([3, 1, 5, 6]));
+});
+
+test("should keep integer Div as truncating division", async () => {
+  const model = create(ModelProtoSchema, {
+    irVersion: 8n,
+    opsetImport: [create(OperatorSetIdProtoSchema, { version: 16n })],
+    graph: create(GraphProtoSchema, {
+      name: "integer_div_graph",
+      input: [intTensorInfo("X", [6])],
+      output: [intTensorInfo("Y", [6])],
+      initializer: [int64Initializer("denominator", [], [3])],
+      node: [
+        create(NodeProtoSchema, {
+          opType: "Div",
+          input: ["X", "denominator"],
+          output: ["Y"],
+        }),
+      ],
+    }),
+  });
+
+  const onnxModel = new ONNXModel(toBinary(ModelProtoSchema, model));
+  onTestFinished(() => onnxModel.dispose());
+
+  const x = np.array([-7, -5, -1, 1, 5, 7], { dtype: np.int32 });
+  const result = onnxModel.run({ X: x });
+
+  expect(result.Y.dtype).toBe(np.int32);
+  expect(await result.Y.data()).toEqual(new Int32Array([-2, -1, 0, 0, 1, 2]));
+});
+
+test("should evaluate TopK", async () => {
+  const model = create(ModelProtoSchema, {
+    irVersion: 8n,
+    opsetImport: [create(OperatorSetIdProtoSchema, { version: 16n })],
+    graph: create(GraphProtoSchema, {
+      name: "topk_graph",
+      input: [floatTensorInfo("X", [2, 4])],
+      output: [
+        floatTensorInfo("values", [2, 2]),
+        intTensorInfo("indices", [2, 2]),
+      ],
+      initializer: [int64Initializer("K", [1], [2])],
+      node: [
+        create(NodeProtoSchema, {
+          opType: "TopK",
+          input: ["X", "K"],
+          output: ["values", "indices"],
+          attribute: [intAttr("axis", 1)],
+        }),
+      ],
+    }),
+  });
+
+  const onnxModel = new ONNXModel(toBinary(ModelProtoSchema, model));
+  onTestFinished(() => onnxModel.dispose());
+
+  const x = np.array([1, 4, 2, 3, 9, 7, 8, 6]).reshape([2, 4]);
+  const result = onnxModel.run({ X: x });
+
+  expect(await result.values.data()).toEqual(new Float32Array([4, 3, 9, 8]));
+  expect(await result.indices.data()).toEqual(new Int32Array([1, 3, 0, 2]));
+});
+
+test("should evaluate LayerNormalization", async () => {
+  const model = create(ModelProtoSchema, {
+    irVersion: 8n,
+    opsetImport: [create(OperatorSetIdProtoSchema, { version: 17n })],
+    graph: create(GraphProtoSchema, {
+      name: "layer_normalization_graph",
+      input: [floatTensorInfo("X", [1, 2, 2])],
+      output: [floatTensorInfo("Y", [1, 2, 2])],
+      initializer: [
+        floatInitializer("scale", [2], [1, 1]),
+        floatInitializer("bias", [2], [0, 0]),
+      ],
+      node: [
+        create(NodeProtoSchema, {
+          opType: "LayerNormalization",
+          input: ["X", "scale", "bias"],
+          output: ["Y"],
+          attribute: [floatAttr("epsilon", 0), intAttr("axis", -1)],
+        }),
+      ],
+    }),
+  });
+
+  const onnxModel = new ONNXModel(toBinary(ModelProtoSchema, model));
+  onTestFinished(() => onnxModel.dispose());
+
+  const x = np.array([1, 3, 2, 4]).reshape([1, 2, 2]);
+  const result = onnxModel.run({ X: x });
+
+  expect(result.Y.shape).toEqual([1, 2, 2]);
+  expect(await result.Y.data()).toEqual(new Float32Array([-1, 1, -1, 1]));
 });

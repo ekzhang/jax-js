@@ -1,6 +1,12 @@
 // Element-wise operations, mostly simple to wrap directly.
 
-import { DType, nn, numpy as np, scipySpecial as special } from "@jax-js/jax";
+import {
+  DType,
+  jit,
+  nn,
+  numpy as np,
+  scipySpecial as special,
+} from "@jax-js/jax";
 
 import {
   onnxDtypeToJax,
@@ -9,14 +15,26 @@ import {
   StaticArray,
 } from "../tensor";
 
+function isIntegerDtype(dtype: DType): boolean {
+  return dtype === np.int32 || dtype === np.uint32 || dtype === np.bool;
+}
+
 function wrapFn(
   fn: (...args: np.Array[]) => np.Array,
   staticFn?: (...args: number[]) => number,
   outDtype?: DType,
 ): (inputs: Operand[]) => Operand[] {
   return (inputs: Operand[]) => {
-    // If staticFn provided and all inputs are StaticArray, compute on CPU
-    if (staticFn && inputs.every((op) => op instanceof StaticArray)) {
+    // Static elementwise math stores outputs in Int32Array. Float constants
+    // should take the normal path so shape-control values are not rounded.
+    if (
+      staticFn &&
+      inputs.every(
+        (op) =>
+          op instanceof StaticArray &&
+          (op.dtype === np.int32 || op.dtype === np.bool),
+      )
+    ) {
       const arrays = inputs as StaticArray[];
       // Compute broadcast shape across all inputs
       let outShape = arrays[0].shape;
@@ -43,7 +61,6 @@ function wrapFn(
 export const Add = wrapFn(np.add, (a, b) => a + b);
 export const Sub = wrapFn(np.subtract, (a, b) => a - b);
 export const Mul = wrapFn(np.multiply, (a, b) => a * b);
-export const Div = wrapFn(np.divide, (a, b) => Math.floor(a / b));
 export const Neg = wrapFn(np.negative, (a) => -a);
 export const Abs = wrapFn(np.abs, Math.abs);
 export const Sqrt = wrapFn(np.sqrt);
@@ -130,6 +147,73 @@ export function LeakyRelu(
 ): Operand[] {
   const [x] = inputs.map(operandToJax);
   return [nn.leakyRelu(x, alpha)];
+}
+
+const integerDiv = wrapFn(
+  (a, b) => a.div(b),
+  (a, b) => Math.trunc(a / b),
+);
+
+export function Div(inputs: Operand[]): Operand[] {
+  if (inputs.every((op) => isIntegerDtype(op.dtype))) {
+    return integerDiv(inputs);
+  }
+  const [a, b] = inputs.map(operandToJax);
+  return [np.divide(a, b)];
+}
+
+function layerNormalizationCore(
+  x: np.Array,
+  scale: np.Array,
+  axis: number,
+  epsilon: number,
+): np.Array {
+  const ndim = x.ndim;
+  const normAxis = axis < 0 ? ndim + axis : axis;
+  const reduceAxes: number[] = [];
+  for (let i = normAxis; i < ndim; i++) reduceAxes.push(i);
+
+  const mean = np.mean(x.ref, reduceAxes, { keepdims: true });
+  const diff = np.subtract(x, mean);
+  const variance = np.mean(np.square(diff.ref), reduceAxes, {
+    keepdims: true,
+  });
+  const invStd = np.reciprocal(np.sqrt(np.add(variance, epsilon)));
+  const normalized = np.multiply(diff, invStd);
+
+  return np.multiply(normalized, scale);
+}
+
+const layerNormalizationNoBias = jit(layerNormalizationCore, {
+  staticArgnums: [2, 3],
+});
+
+const layerNormalizationWithBias = jit(
+  function layerNormalizationWithBias(
+    x: np.Array,
+    scale: np.Array,
+    bias: np.Array,
+    axis: number,
+    epsilon: number,
+  ): np.Array {
+    return np.add(layerNormalizationCore(x, scale, axis, epsilon), bias);
+  },
+  { staticArgnums: [3, 4] },
+);
+
+export function LayerNormalization(
+  [xOp, scaleOp, biasOp]: Operand[],
+  { axis = -1, epsilon = 1e-5 }: { axis?: number; epsilon?: number },
+): Operand[] {
+  const x = operandToJax(xOp);
+  const scale = operandToJax(scaleOp);
+
+  if (!biasOp) {
+    return [layerNormalizationNoBias(x, scale, axis, epsilon)];
+  }
+
+  const bias = operandToJax(biasOp);
+  return [layerNormalizationWithBias(x, scale, bias, axis, epsilon)];
 }
 
 export function Cast([xOp]: Operand[], { to }: { to: number }): Operand[] {

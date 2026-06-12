@@ -73,6 +73,7 @@ Demos on the jax-js website:
 - [Training neural networks on MNIST](https://jax-js.com/mnist)
 - [Voice cloning: Kyutai Pocket TTS](https://jax-js.com/tts)
 - [CLIP embeddings for books in-browser](https://jax-js.com/mobileclip)
+- [Object detection: D-FINE (ONNX)](https://jax-js.com/d-fine)
 - [Object detection: DETR ResNet-50 (ONNX)](https://jax-js.com/detr-resnet-50)
 - [Fluid simulation (Navier-Stokes)](https://jax-js.com/fluid-sim)
 - [In-browser REPL](https://jax-js.com/repl)

@@ -14,20 +14,28 @@ export type Operand = np.Array | StaticArray;
  * manipulation within the graph. This allows us to make more graphs traceable
  * by JIT when operations like `Reshape` depend on the _values_ of operands,
  * and those operands are `StaticArray` instead of `np.Array`.
+ *
+ * Int32 holds int32/bool values. Float32 is used for small shape-control
+ * constants like Resize scales that need to stay readable during tracing.
  */
+export type StaticArrayData =
+  | Int32Array<ArrayBuffer>
+  | Float32Array<ArrayBuffer>;
+
 export class StaticArray {
-  readonly data: Int32Array<ArrayBuffer>;
+  readonly data: StaticArrayData;
   readonly shape: number[];
   readonly dtype: DType;
 
-  constructor(data: number[] | Int32Array, shape: number[], dtype: DType) {
-    this.data = new Int32Array(data);
+  constructor(data: number[] | StaticArrayData, shape: number[], dtype: DType) {
+    this.data =
+      dtype === np.float32 ? new Float32Array(data) : new Int32Array(data);
     this.shape = shape;
     this.dtype = dtype;
   }
 
   toJax() {
-    return np.array(this.data, { shape: this.shape, dtype: np.int32 });
+    return np.array(this.data, { shape: this.shape, dtype: this.dtype });
   }
 
   /**
@@ -67,7 +75,10 @@ export class StaticArray {
 
     // Build the new data array
     const newSize = newShape.reduce((a, b) => a * b, 1);
-    const newData = new Int32Array(newSize);
+    const newData =
+      this.dtype === np.float32
+        ? new Float32Array(newSize)
+        : new Int32Array(newSize);
 
     for (let i = 0; i < newSize; i++) {
       // Convert flat index to multi-dimensional indices
@@ -100,10 +111,7 @@ export function operandToJs(op: Operand): any {
     : op.js();
 }
 
-function makeShapedJsArray(
-  data: Int32Array<ArrayBuffer>,
-  shape: number[],
-): any {
+function makeShapedJsArray(data: StaticArrayData, shape: number[]): any {
   if (shape.length === 0) return data[0];
   const ret = [];
   for (let i = 0; i < shape[0]; i++) {
@@ -272,6 +280,13 @@ export function tensorToOperand(tensor: TensorProto): Operand {
   if (
     (dtype === np.int32 || dtype === np.bool) &&
     data instanceof Int32Array &&
+    data.length < 16
+  ) {
+    return new StaticArray(data, shape, dtype);
+  }
+  if (
+    dtype === np.float32 &&
+    data instanceof Float32Array &&
     data.length < 16
   ) {
     return new StaticArray(data, shape, dtype);

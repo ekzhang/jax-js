@@ -48,6 +48,11 @@
         "Compute embeddings for book passages and search through them.",
     },
     {
+      title: "D-FINE Detection",
+      href: resolve("/d-fine"),
+      description: "Run an ONNX object detector locally with WebGPU.",
+    },
+    {
       title: "Kyutai Pocket TTS",
       href: resolve("/tts"),
       description: "Voice cloning AI model that runs in your browser.",

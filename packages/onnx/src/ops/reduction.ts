@@ -2,6 +2,7 @@
 
 import { nn, numpy as np } from "@jax-js/jax";
 
+import { takeAlongAxis } from "../arrayHelpers";
 import { type Operand, operandToJax, operandToJs } from "../tensor";
 
 function wrapReduction(
@@ -121,4 +122,39 @@ export function LogSoftmax(
   { axis = -1 }: { axis?: number },
 ): Operand[] {
   return [nn.logSoftmax(operandToJax(x), axis)];
+}
+
+export function TopK(
+  [xOp, kOp]: Operand[],
+  {
+    axis = -1,
+    largest = 1,
+  }: { axis?: number; largest?: number; sorted?: number },
+): Operand[] {
+  const x = operandToJax(xOp);
+  const kRaw = operandToJs(kOp);
+  const k: number = Array.isArray(kRaw) ? kRaw[0] : kRaw;
+  const normAxis = axis < 0 ? x.ndim + axis : axis;
+  const size = x.shape[normAxis];
+  if (k < 0 || k > size) {
+    throw new Error(`TopK: k must be in the range [0, ${size}], got ${k}`);
+  }
+
+  const sortedIndices = np.argsort(x.ref, normAxis);
+  const sliceArgs: ([] | [number] | [number, number])[] = new Array(
+    x.ndim,
+  ).fill([]);
+  if (k === 0) {
+    sliceArgs[normAxis] = [0, 0];
+  } else if (largest) {
+    sliceArgs[normAxis] = [-k];
+  } else {
+    sliceArgs[normAxis] = [0, k];
+  }
+  let indices = sortedIndices.slice(...sliceArgs);
+  if (largest) {
+    indices = np.flip(indices, normAxis);
+  }
+  const values = takeAlongAxis(x, indices.ref, normAxis);
+  return [values, indices];
 }
