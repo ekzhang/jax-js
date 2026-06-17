@@ -20,6 +20,9 @@ interface ShaderDispatch extends ShaderInfo {
   pipeline: GPUComputePipeline; // Compiled pipeline for the shader.
 }
 
+const MAX_REUSABLE_BUFFER_BYTES = 16 * 1024 * 1024;
+const MAX_REUSABLE_BUFFERS_PER_SIZE = 64;
+
 /** Implementation of `Backend` that uses WebGPU in browsers. */
 export class WebGPUBackend implements Backend {
   readonly type: Device = "webgpu";
@@ -71,21 +74,28 @@ export class WebGPUBackend implements Backend {
   }
 
   malloc(size: number, initialData?: Uint8Array<ArrayBuffer>): Slot {
-    let buffer: GPUBuffer;
-    let allocatedSize: number;
     // All GPUBuffer must be a multiple of 4 bytes in length, to support copy
     // operations. Pad it to a multiple of 4.
-    const paddedSize = Math.ceil(size / 4) * 4;
-    if (size === 0) {
-      buffer = this.#reusableZsb;
-      allocatedSize = 4;
-    } else {
-      if (initialData && initialData.byteLength !== size) {
-        throw new Error("initialData size does not match buffer size");
+    if (initialData && initialData.byteLength !== size) {
+      throw new Error("initialData size does not match buffer size");
+    }
+    const allocatedSize = Math.ceil(size / 4) * 4 || 4;
+    const buffer =
+      size === 0 ? this.#reusableZsb : this.#acquireBuffer(allocatedSize);
+
+    if (initialData && size > 0) {
+      if (initialData.byteLength % 4 === 0) {
+        this.device.queue.writeBuffer(buffer, 0, initialData);
+      } else {
+        // Copy all but the last few bytes, then copy 4 bytes as remainder.
+        const aligned = initialData.byteLength - (initialData.byteLength % 4);
+        if (aligned > 0) {
+          this.device.queue.writeBuffer(buffer, 0, initialData, 0, aligned);
+        }
+        const remainder = new Uint8Array(4);
+        remainder.set(initialData.subarray(aligned));
+        this.device.queue.writeBuffer(buffer, aligned, remainder);
       }
-      allocatedSize = paddedSize;
-      buffer = this.#acquireBuffer(allocatedSize);
-      if (initialData) this.#writeInitialData(buffer, initialData);
     }
 
     const slot = this.nextSlot++;
@@ -210,6 +220,7 @@ export class WebGPUBackend implements Backend {
   }
 
   #acquireBuffer(size: number): GPUBuffer {
+    if (size > MAX_REUSABLE_BUFFER_BYTES) return this.#createBuffer(size);
     const bucket = this.#bufferPool.get(size);
     const buffer = bucket?.pop();
     if (bucket && bucket.length === 0) this.#bufferPool.delete(size);
@@ -217,31 +228,20 @@ export class WebGPUBackend implements Backend {
   }
 
   #releaseBuffer(buffer: GPUBuffer, size: number): void {
-    let bucket = this.#bufferPool.get(size);
-    if (!bucket) {
-      bucket = [];
-      this.#bufferPool.set(size, bucket);
-    }
-    bucket.push(buffer);
-  }
-
-  #writeInitialData(
-    buffer: GPUBuffer,
-    initialData: Uint8Array<ArrayBuffer>,
-  ): void {
-    if (initialData.byteLength % 4 === 0) {
-      this.device.queue.writeBuffer(buffer, 0, initialData);
+    if (size > MAX_REUSABLE_BUFFER_BYTES) {
+      buffer.destroy();
       return;
     }
-
-    // Copy all but the last few bytes, then copy 4 bytes as remainder.
-    const aligned = initialData.byteLength - (initialData.byteLength % 4);
-    if (aligned > 0) {
-      this.device.queue.writeBuffer(buffer, 0, initialData, 0, aligned);
+    const bucket = this.#bufferPool.get(size);
+    if (!bucket) {
+      this.#bufferPool.set(size, [buffer]);
+      return;
     }
-    const remainder = new Uint8Array(4);
-    remainder.set(initialData.subarray(aligned));
-    this.device.queue.writeBuffer(buffer, aligned, remainder);
+    if (bucket.length >= MAX_REUSABLE_BUFFERS_PER_SIZE) {
+      buffer.destroy();
+      return;
+    }
+    bucket.push(buffer);
   }
 
   /**
