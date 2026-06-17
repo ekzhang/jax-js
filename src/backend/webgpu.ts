@@ -20,7 +20,7 @@ interface ShaderDispatch extends ShaderInfo {
   pipeline: GPUComputePipeline; // Compiled pipeline for the shader.
 }
 
-const MAX_REUSABLE_BUFFER_BYTES = 16 * 1024 * 1024;
+const MAX_REUSABLE_BUFFER_BYTES = 64 * 1024 * 1024;
 const MAX_REUSABLE_BUFFERS_PER_SIZE = 64;
 
 /** Implementation of `Backend` that uses WebGPU in browsers. */
