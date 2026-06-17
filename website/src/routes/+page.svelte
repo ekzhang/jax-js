@@ -63,6 +63,11 @@
       description: "Demo of training a neural network on MNIST.",
     },
     {
+      title: "Neural Cellular Automata",
+      href: resolve("/nca-growing"),
+      description: "Grow image patterns with a tiny NCA running in jax-js.",
+    },
+    {
       title: "Benchmarks",
       href: resolve("/bench/matmul"),
       description: "Micro-benchmarks of jax-js versus other libraries.",

@@ -76,6 +76,7 @@ Demos on the jax-js website:
 - [Object detection: D-FINE (ONNX)](https://jax-js.com/d-fine)
 - [Object detection: DETR ResNet-50 (ONNX)](https://jax-js.com/detr-resnet-50)
 - [Fluid simulation (Navier-Stokes)](https://jax-js.com/fluid-sim)
+- [Neural cellular automata](https://jax-js.com/nca-growing)
 - [In-browser REPL](https://jax-js.com/repl)
 - [Matmul benchmark](https://jax-js.com/bench/matmul)
 - [Matvec benchmark](https://jax-js.com/bench/matvec)
