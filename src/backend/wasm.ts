@@ -575,7 +575,7 @@ export class WasmBackend implements Backend {
     const buffer = this.#getBuffer(slot);
     if (start === undefined) start = 0;
     if (count === undefined) count = buffer.byteLength - start;
-    if (buffer.buffer instanceof SharedArrayBuffer) {
+    if (hasSharedArrayBuffer() && buffer.buffer instanceof SharedArrayBuffer) {
       // For SharedArrayBuffer, we need to copy the data to ArrayBuffer.
       return new Uint8Array(buffer.slice(start, start + count));
     } else {
