@@ -1,5 +1,6 @@
 import { expect, suite, test } from "vitest";
 
+import { hasRelaxedMadd } from "./featureProbe";
 import { CodeGenerator } from "./wasmblr";
 
 suite("CodeGenerator", () => {
@@ -137,6 +138,79 @@ suite("CodeGenerator", () => {
     new Float32Array(memory.buffer).set([1, 2, 3, 4, 5, 6, 7, 8]);
     const result = vectorSum(8);
     expect(result).toBe(36);
+  });
+
+  test("assembles exported memory with min and max pages", () => {
+    const cg = new CodeGenerator();
+    cg.memory.pages(1, 2).export("memory");
+
+    const noopFunc = cg.function([], [], () => {});
+    cg.export(noopFunc, "noop");
+
+    const wasmBytes = cg.finish();
+    expect(WebAssembly.validate(wasmBytes)).toBe(true);
+
+    const instance = new WebAssembly.Instance(
+      new WebAssembly.Module(wasmBytes),
+    );
+    const { memory, noop } = instance.exports as {
+      memory: WebAssembly.Memory;
+      noop: () => void;
+    };
+    expect(memory.buffer.byteLength).toBe(65536);
+    expect(noop()).toBeUndefined();
+  });
+
+  test("can run relaxed SIMD madd and nmadd on f32x4", async () => {
+    if (!hasRelaxedMadd()) return;
+
+    const cg = new CodeGenerator();
+    cg.memory.pages(1).export("memory");
+
+    const maddFunc = cg.function([cg.i32, cg.i32, cg.i32, cg.i32], [], () => {
+      cg.local.get(3); // dst
+      cg.local.get(0); // a
+      cg.f32x4.load(4);
+      cg.local.get(1); // b
+      cg.f32x4.load(4);
+      cg.local.get(2); // c
+      cg.f32x4.load(4);
+      cg.f32x4.relaxed_madd();
+      cg.v128.store(4);
+    });
+    cg.export(maddFunc, "madd");
+
+    const nmaddFunc = cg.function([cg.i32, cg.i32, cg.i32, cg.i32], [], () => {
+      cg.local.get(3); // dst
+      cg.local.get(0); // a
+      cg.f32x4.load(4);
+      cg.local.get(1); // b
+      cg.f32x4.load(4);
+      cg.local.get(2); // c
+      cg.f32x4.load(4);
+      cg.f32x4.relaxed_nmadd();
+      cg.v128.store(4);
+    });
+    cg.export(nmaddFunc, "nmadd");
+
+    const wasmBytes = cg.finish();
+    const { instance } = await WebAssembly.instantiate(wasmBytes);
+    const { memory, madd, nmadd } = instance.exports as {
+      memory: WebAssembly.Memory;
+      madd: (a: number, b: number, c: number, dst: number) => void;
+      nmadd: (a: number, b: number, c: number, dst: number) => void;
+    };
+
+    const values = new Float32Array(memory.buffer);
+    values.set([2, 3, 4, 5], 0);
+    values.set([10, 20, 30, 40], 4);
+    values.set([1, 2, 3, 5], 8);
+
+    madd(0, 16, 32, 48);
+    nmadd(0, 16, 32, 64);
+
+    expect([...values.slice(12, 16)]).toEqual([21, 62, 123, 205]);
+    expect([...values.slice(16, 20)]).toEqual([-19, -58, -117, -195]);
   });
 
   test("select() wasm operation", () => {

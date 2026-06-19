@@ -70,8 +70,9 @@ function encodeOpcode(opcode: number | [number, number]): number[] {
   return [opcode[0], ...encodeUnsigned(opcode[1])];
 }
 
-function concat(out: number[], inp: number[]): void {
-  out.push(...inp);
+function appendLengthEncodedBlock(out: number[], inp: number[]): void {
+  out.push(...encodeUnsigned(inp.length));
+  for (const b of inp) out.push(b); // avoid RangeError if inp is too large
 }
 
 class Function_ {
@@ -363,30 +364,29 @@ export class CodeGenerator {
   finish(): Uint8Array<ArrayBuffer> {
     this.#curBytes = [];
     const emittedBytes: number[] = [];
-    concat(emittedBytes, magicModuleHeader);
-    concat(emittedBytes, moduleVersion);
+    emittedBytes.push(...magicModuleHeader);
+    emittedBytes.push(...moduleVersion);
 
     // Type section
     const typeSectionBytes: number[] = [];
     const totalFunctionTypes =
       this.#importedFunctions.length + this.#functions.length;
-    concat(typeSectionBytes, encodeUnsigned(totalFunctionTypes));
+    typeSectionBytes.push(...encodeUnsigned(totalFunctionTypes));
 
     for (const f of [...this.#importedFunctions, ...this.#functions]) {
       typeSectionBytes.push(0x60);
-      concat(typeSectionBytes, encodeUnsigned(f.inputTypes.length));
+      typeSectionBytes.push(...encodeUnsigned(f.inputTypes.length));
       for (const t of f.inputTypes) {
         typeSectionBytes.push(t.typeId);
       }
-      concat(typeSectionBytes, encodeUnsigned(f.outputTypes.length));
+      typeSectionBytes.push(...encodeUnsigned(f.outputTypes.length));
       for (const t of f.outputTypes) {
         typeSectionBytes.push(t.typeId);
       }
     }
 
     emittedBytes.push(0x01);
-    concat(emittedBytes, encodeUnsigned(typeSectionBytes.length));
-    concat(emittedBytes, typeSectionBytes);
+    appendLengthEncodedBlock(emittedBytes, typeSectionBytes);
 
     // Import section (for function and memory imports)
     const importSectionBytes: number[] = [];
@@ -394,21 +394,21 @@ export class CodeGenerator {
       this.#importedFunctions.length + (this.memory.isImport ? 1 : 0);
 
     if (numImports > 0) {
-      concat(importSectionBytes, encodeUnsigned(numImports));
+      importSectionBytes.push(...encodeUnsigned(numImports));
 
       // Add function imports first
       for (let i = 0; i < this.#importedFunctions.length; i++) {
         const f = this.#importedFunctions[i];
-        concat(importSectionBytes, encodeString(f.module));
-        concat(importSectionBytes, encodeString(f.name));
+        importSectionBytes.push(...encodeString(f.module));
+        importSectionBytes.push(...encodeString(f.name));
         importSectionBytes.push(0x00); // function import flag
-        concat(importSectionBytes, encodeUnsigned(i)); // type index
+        importSectionBytes.push(...encodeUnsigned(i)); // type index
       }
 
       // Add memory import if present
       if (this.memory.isImport) {
-        concat(importSectionBytes, encodeString(this.memory.aString));
-        concat(importSectionBytes, encodeString(this.memory.bString));
+        importSectionBytes.push(...encodeString(this.memory.aString));
+        importSectionBytes.push(...encodeString(this.memory.bString));
         importSectionBytes.push(0x02); // memory flag
         if (this.memory.max) {
           if (this.memory.isShared) {
@@ -416,30 +416,28 @@ export class CodeGenerator {
           } else {
             importSectionBytes.push(0x01);
           }
-          concat(importSectionBytes, encodeUnsigned(this.memory.min));
-          concat(importSectionBytes, encodeUnsigned(this.memory.max));
+          importSectionBytes.push(...encodeUnsigned(this.memory.min));
+          importSectionBytes.push(...encodeUnsigned(this.memory.max));
         } else {
           assert(!this.memory.isShared, "shared memory must have a max size");
           importSectionBytes.push(0x00);
-          concat(importSectionBytes, encodeUnsigned(this.memory.min));
+          importSectionBytes.push(...encodeUnsigned(this.memory.min));
         }
       }
 
       emittedBytes.push(0x02);
-      concat(emittedBytes, encodeUnsigned(importSectionBytes.length));
-      concat(emittedBytes, importSectionBytes);
+      appendLengthEncodedBlock(emittedBytes, importSectionBytes);
     }
 
     // Function section
     const functionSectionBytes: number[] = [];
-    concat(functionSectionBytes, encodeUnsigned(this.#functions.length));
+    functionSectionBytes.push(...encodeUnsigned(this.#functions.length));
     for (let i = 0; i < this.#functions.length; i++) {
       const typeIndex = this.#importedFunctions.length + i;
-      concat(functionSectionBytes, encodeUnsigned(typeIndex));
+      functionSectionBytes.push(...encodeUnsigned(typeIndex));
     }
     emittedBytes.push(0x03);
-    concat(emittedBytes, encodeUnsigned(functionSectionBytes.length));
-    concat(emittedBytes, functionSectionBytes);
+    appendLengthEncodedBlock(emittedBytes, functionSectionBytes);
 
     // Memory section (if defined locally)
     const memorySectionBytes: number[] = [];
@@ -451,40 +449,38 @@ export class CodeGenerator {
         } else {
           memorySectionBytes.push(0x01);
         }
-        concat(memorySectionBytes, encodeUnsigned(this.memory.min));
-        concat(memorySectionBytes, encodeUnsigned(this.memory.max));
+        memorySectionBytes.push(...encodeUnsigned(this.memory.min));
+        memorySectionBytes.push(...encodeUnsigned(this.memory.max));
       } else {
         assert(!this.memory.isShared, "shared memory must have a max size");
         memorySectionBytes.push(0x00);
-        concat(memorySectionBytes, encodeUnsigned(this.memory.min));
+        memorySectionBytes.push(...encodeUnsigned(this.memory.min));
       }
       emittedBytes.push(0x05);
-      concat(emittedBytes, encodeUnsigned(memorySectionBytes.length));
-      concat(emittedBytes, memorySectionBytes);
+      appendLengthEncodedBlock(emittedBytes, memorySectionBytes);
     }
 
     // Export section
     const exportSectionBytes: number[] = [];
     const numExports =
       this.#exportedFunctions.size + (this.memory.isExport ? 1 : 0);
-    concat(exportSectionBytes, encodeUnsigned(numExports));
+    exportSectionBytes.push(...encodeUnsigned(numExports));
     if (this.memory.isExport) {
-      concat(exportSectionBytes, encodeString(this.memory.aString));
+      exportSectionBytes.push(...encodeString(this.memory.aString));
       exportSectionBytes.push(0x02);
       exportSectionBytes.push(0x00); // one memory at index 0
     }
     for (const [key, name] of this.#exportedFunctions.entries()) {
-      concat(exportSectionBytes, encodeString(name));
+      exportSectionBytes.push(...encodeString(name));
       exportSectionBytes.push(0x00);
-      concat(exportSectionBytes, encodeUnsigned(key));
+      exportSectionBytes.push(...encodeUnsigned(key));
     }
     emittedBytes.push(0x07);
-    concat(emittedBytes, encodeUnsigned(exportSectionBytes.length));
-    concat(emittedBytes, exportSectionBytes);
+    appendLengthEncodedBlock(emittedBytes, exportSectionBytes);
 
     // Code section
     const codeSectionBytes: number[] = [];
-    concat(codeSectionBytes, encodeUnsigned(this.#functions.length));
+    codeSectionBytes.push(...encodeUnsigned(this.#functions.length));
     for (const f of this.#functions) {
       this.#typeStack = [];
       this.#blockFrames = [{ idx: 0, ty: f.outputTypes }];
@@ -492,25 +488,21 @@ export class CodeGenerator {
       this.#curBytes = [];
       f.emit();
       this.end();
-      const bodyBytes = [...this.#curBytes];
+      const bodyBytes = this.#curBytes;
       this.#curBytes = [];
       // Header: local declarations
-      concat(this.#curBytes, encodeUnsigned(f.locals.length));
+      this.#curBytes.push(...encodeUnsigned(f.locals.length));
       for (const l of f.locals) {
         this._emit(0x01);
         this._emit(l.typeId);
       }
-      const headerBytes = [...this.#curBytes];
-      const fnSize = headerBytes.length + bodyBytes.length;
-      concat(codeSectionBytes, encodeUnsigned(fnSize));
-      concat(codeSectionBytes, headerBytes);
-      concat(codeSectionBytes, bodyBytes);
+      const fnBytes = this.#curBytes.concat(bodyBytes);
+      appendLengthEncodedBlock(codeSectionBytes, fnBytes);
     }
     this.#curFunction = null;
 
     emittedBytes.push(0x0a);
-    concat(emittedBytes, encodeUnsigned(codeSectionBytes.length));
-    concat(emittedBytes, codeSectionBytes);
+    appendLengthEncodedBlock(emittedBytes, codeSectionBytes);
 
     return new Uint8Array(emittedBytes);
   }
@@ -979,4 +971,17 @@ class F32x4 extends V128 {
   pmax = VECTOR_OP("pmax", 0xeb, ["v128", "v128"], "v128");
   convert_i32x4_s = VECTOR_OP("convert_i32x4_s", 0xfa, ["v128"], "v128");
   convert_i32x4_u = VECTOR_OP("convert_i32x4_u", 0xfb, ["v128"], "v128");
+
+  relaxed_madd = VECTOR_OP(
+    "relaxed_madd",
+    0x105,
+    ["v128", "v128", "v128"],
+    "v128",
+  );
+  relaxed_nmadd = VECTOR_OP(
+    "relaxed_nmadd",
+    0x106,
+    ["v128", "v128", "v128"],
+    "v128",
+  );
 }
