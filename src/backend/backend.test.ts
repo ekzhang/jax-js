@@ -303,4 +303,102 @@ suite.each(devices)("device:%s", (device) => {
       backend.decRef(b);
     }
   });
+
+  test("performs non-square matmul", async () => {
+    const backend = getBackend(device);
+
+    const M = 16;
+    const N = 48;
+    const K = 24;
+    const aArray = new Float32Array(M * K).fill(1.0);
+    const bArray = new Float32Array(K * N).fill(1.0);
+
+    const a = backend.malloc(M * K * 4, new Uint8Array(aArray.buffer));
+    const b = backend.malloc(K * N * 4, new Uint8Array(bArray.buffer));
+    const c = backend.malloc(M * N * 4);
+    try {
+      const stA = ShapeTracker.fromShape([M, K])
+        .reshape([M, 1, K])
+        .expand([M, N, K]);
+      const stB = ShapeTracker.fromShape([K, N])
+        .permute([1, 0])
+        .reshape([1, N, K])
+        .expand([M, N, K]);
+      const indices = [...unravelAlu([M, N], AluVar.gidx), AluVar.ridx];
+      const exp = AluExp.mul(
+        AluExp.globalView(DType.Float32, 0, stA, indices),
+        AluExp.globalView(DType.Float32, 1, stB, indices),
+      );
+      const reduction = new Reduction(DType.Float32, AluOp.Add, K);
+      const kernel = new Kernel(2, M * N, exp, reduction);
+
+      const exe = await backend.prepareKernel(kernel);
+      backend.dispatch(exe, [a, b], [c]);
+
+      const result = new Float32Array((await backend.read(c)).buffer);
+      for (let i = 0; i < result.length; i++) {
+        expect(result[i]).toBeCloseTo(K);
+      }
+
+      const swappedExp = AluExp.mul(
+        AluExp.globalView(DType.Float32, 1, stB, indices),
+        AluExp.globalView(DType.Float32, 0, stA, indices),
+      );
+      const swappedKernel = new Kernel(2, M * N, swappedExp, reduction);
+      const swappedExe = await backend.prepareKernel(swappedKernel);
+      backend.dispatch(swappedExe, [a, b], [c]);
+
+      const swappedResult = new Float32Array((await backend.read(c)).buffer);
+      for (let i = 0; i < swappedResult.length; i++) {
+        expect(swappedResult[i]).toBeCloseTo(K);
+      }
+    } finally {
+      backend.decRef(a);
+      backend.decRef(b);
+      backend.decRef(c);
+    }
+  });
+
+  test("keeps row-dependent contiguous reduction loads distinct", async () => {
+    const backend = getBackend(device);
+
+    const M = 32;
+    const N = 128;
+    const K = 5;
+    const inputArray = new Float32Array(M * K * N);
+    for (let m = 0; m < M; m++) {
+      for (let k = 0; k < K; k++) {
+        for (let n = 0; n < N; n++) {
+          inputArray[(m * K + k) * N + n] = m * 1000 + k * 10 + n;
+        }
+      }
+    }
+
+    const input = backend.malloc(
+      inputArray.byteLength,
+      new Uint8Array(inputArray.buffer),
+    );
+    const output = backend.malloc(M * N * 4);
+    try {
+      const [m, n] = unravelAlu([M, N], AluVar.gidx);
+      const st = ShapeTracker.fromShape([M, K, N]);
+      const exp = AluExp.globalView(DType.Float32, 0, st, [m, AluVar.ridx, n]);
+      const reduction = new Reduction(DType.Float32, AluOp.Add, K);
+      const kernel = new Kernel(1, M * N, exp, reduction);
+
+      const exe = await backend.prepareKernel(kernel);
+      backend.dispatch(exe, [input], [output]);
+
+      const result = new Float32Array((await backend.read(output)).buffer);
+      for (let m = 0; m < M; m++) {
+        for (let n = 0; n < N; n++) {
+          const expected = K * (m * 1000 + n) + (10 * K * (K - 1)) / 2;
+          expect(result[m * N + n]).toBeCloseTo(expected);
+        }
+      }
+    } finally {
+      backend.decRef(input);
+      backend.decRef(output);
+    }
+  });
 });
