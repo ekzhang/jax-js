@@ -1,6 +1,6 @@
 import { expect, suite, test } from "vitest";
 
-import { hasRelaxedMadd } from "./featureProbe";
+import { hasWasmFeature } from "./featureProbe";
 import { CodeGenerator } from "./wasmblr";
 
 suite("CodeGenerator", () => {
@@ -162,7 +162,7 @@ suite("CodeGenerator", () => {
   });
 
   test("can run relaxed SIMD madd and nmadd on f32x4", async () => {
-    if (!hasRelaxedMadd()) return;
+    if (!hasWasmFeature("relaxed-madd")) return;
 
     const cg = new CodeGenerator();
     cg.memory.pages(1).export("memory");

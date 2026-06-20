@@ -1,26 +1,40 @@
-// Minimal module that validates `f32x4.relaxed_madd` support:
-// (func (param v128 v128 v128) (result v128)
-//   local.get 0
-//   local.get 1
-//   local.get 2
-//   f32x4.relaxed_madd)
-const RELAXED_MADD_TEST_BYTES = new Uint8Array([
-  0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x01, 0x60, 0x03,
-  0x7b, 0x7b, 0x7b, 0x01, 0x7b, 0x03, 0x02, 0x01, 0x00, 0x0a, 0x0d, 0x01, 0x0b,
-  0x00, 0x20, 0x00, 0x20, 0x01, 0x20, 0x02, 0xfd, 0x85, 0x02, 0x0b,
-]);
+export type WasmFeature = "relaxed-madd" | string;
 
-let relaxedMaddSupported: boolean | undefined;
+// Minimal modules that validate individual Wasm CPU features.
+const featureProbes: Record<WasmFeature, string> = {
+  // (func (param v128 v128 v128) (result v128)
+  //   local.get 0
+  //   local.get 1
+  //   local.get 2
+  //   f32x4.relaxed_madd)
+  "relaxed-madd":
+    "0061736d0100000001080160037b7b7b017b030201000a0d010b00200020012002fd85020b",
+};
 
-/** Detects if this environment supports `f32x4.relaxed_madd` (Relaxed SIMD). */
-export function hasRelaxedMadd(): boolean {
-  if (relaxedMaddSupported !== undefined) return relaxedMaddSupported;
+const featureSupportCache = new Map<WasmFeature, boolean>();
+
+/** Detects whether this environment supports a probed Wasm CPU feature. */
+export function hasWasmFeature(feature: WasmFeature): boolean {
+  const cached = featureSupportCache.get(feature);
+  if (cached !== undefined) return cached;
+
+  const testHex = featureProbes[feature];
+  let supported = false;
   try {
-    relaxedMaddSupported =
+    supported =
       typeof WebAssembly !== "undefined" &&
-      WebAssembly.validate(RELAXED_MADD_TEST_BYTES);
+      WebAssembly.validate(decodeHex(testHex));
   } catch {
-    relaxedMaddSupported = false;
+    supported = false;
   }
-  return relaxedMaddSupported;
+  featureSupportCache.set(feature, supported);
+  return supported;
+}
+
+function decodeHex(hex: string): Uint8Array<ArrayBuffer> {
+  const bytes = new Uint8Array(new ArrayBuffer(hex.length / 2));
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
 }
