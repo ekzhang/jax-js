@@ -6,6 +6,7 @@ const watchMode = process.env.TSDOWN_WATCH_MODE === "1";
 
 // Common options for all packages.
 const opts: UserConfig = {
+  target: "es2025",
   deps: {
     neverBundle: (id: string) => {
       // Externalize all imports by default, except for runtime helpers generated

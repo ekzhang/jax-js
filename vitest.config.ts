@@ -5,7 +5,7 @@ const BROWSER = process.env.BROWSER || "chromium";
 
 export default defineConfig({
   oxc: {
-    target: "es2024",
+    target: "es2025",
   },
   server: {
     headers: {
