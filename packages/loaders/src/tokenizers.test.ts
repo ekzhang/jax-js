@@ -107,7 +107,7 @@ suite("tiktoken encodings", () => {
 
 // Expected outputs generated with Python sentencepiece library:
 // uv run --with sentencepiece python3 -c "from sentencepiece import SentencePieceProcessor; ..."
-suite("SentencePiece Unigram tokenizer", async () => {
+suite("SentencePiece Unigram tokenizer", { retry: 2 }, async () => {
   const tokenizer = await loadSentencePiece(
     "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning/resolve/678309e/tokenizer.model",
   );
@@ -185,7 +185,7 @@ suite("SentencePiece Unigram tokenizer", async () => {
   });
 });
 
-suite("SentencePiece BPE tokenizer", async () => {
+suite("SentencePiece BPE tokenizer", { retry: 2 }, async () => {
   const tokenizer = await loadSentencePiece(
     "https://huggingface.co/ekzhang/jax-js-models/resolve/main/gemma-3-270m/tokenizer.model",
   );
