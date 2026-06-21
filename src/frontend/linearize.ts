@@ -361,7 +361,7 @@ class PartialEvalTrace extends Trace {
 
     const outs1Res = bind(
       Primitive.Jit,
-      knownTracers.map((t) => t.ref.fullLower()),
+      knownTracers.map((t) => t.fullLower()),
       { name: `${name}_peval`, jaxpr: jaxpr1, numConsts: 0 },
     );
     const outs1 = outs1Res.slice(0, jaxpr1.outs.length - numRes);
