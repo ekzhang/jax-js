@@ -46,6 +46,14 @@ export class WebGPUBackend implements Backend {
   #reusableZsb: GPUBuffer;
   #bufferPool = new Map<number, GPUBuffer[]>();
 
+  // Dispatches are recorded into one shared encoder and submitted lazily (next
+  // microtask, or before a readback), so a frame's many submits collapse to one.
+  // Each submit is an IPC round-trip to the GPU process on Firefox.
+  #batchEncoder: GPUCommandEncoder | null = null;
+  // Buffers freed while a batch is open; recycled once it's submitted, since
+  // recorded commands may still reference them.
+  #deferredReleases: { buffer: GPUBuffer; size: number }[] = [];
+
   constructor(readonly device: GPUDevice) {
     if (DEBUG >= 3 && device.adapterInfo) {
       console.info(
@@ -132,6 +140,8 @@ export class WebGPUBackend implements Backend {
     if (start === undefined) start = 0;
     if (count === undefined) count = size - start;
 
+    this.flush(); // flush batched compute so the copy sees current data
+
     // Need a GPUBuffer with MAP_READ usage when transfering data to host.
     const paddedSize = Math.ceil(count / 4) * 4;
     const staging = this.#createBuffer(paddedSize, { read: true });
@@ -157,6 +167,7 @@ export class WebGPUBackend implements Backend {
     if (buffer === this.#reusableZsb) return new Uint8Array();
     if (start === undefined) start = 0;
     if (count === undefined) count = size - start;
+    this.flush();
     return this.syncReader.read(buffer, start, count);
   }
 
@@ -211,7 +222,32 @@ export class WebGPUBackend implements Backend {
   ): void {
     const inputBuffers = inputs.map((slot) => this.#getBuffer(slot).buffer);
     const outputBuffers = outputs.map((slot) => this.#getBuffer(slot).buffer);
-    pipelineSubmit(this.device, exe, inputBuffers, outputBuffers);
+    if (!this.#batchEncoder) {
+      this.#batchEncoder = this.device.createCommandEncoder();
+      queueMicrotask(() => this.flush());
+    }
+    const traced = pipelineRecord(
+      this.device,
+      this.#batchEncoder,
+      exe,
+      inputBuffers,
+      outputBuffers,
+    );
+    // Tracing needs a timestamp per dispatch, so don't batch.
+    if (traced) this.flush();
+  }
+
+  /** Submit any recorded-but-unflushed compute to the queue. */
+  flush(): void {
+    if (this.#batchEncoder) {
+      this.device.queue.submit([this.#batchEncoder.finish()]);
+      this.#batchEncoder = null;
+    }
+    // mid batch buffers safe to reuse
+    for (const { buffer, size } of this.#deferredReleases) {
+      this.#releaseBufferNow(buffer, size);
+    }
+    this.#deferredReleases.length = 0;
   }
 
   #getBuffer(slot: Slot): { buffer: GPUBuffer; size: number } {
@@ -229,6 +265,15 @@ export class WebGPUBackend implements Backend {
   }
 
   #releaseBuffer(buffer: GPUBuffer, size: number): void {
+    // deffering the recycle here cause an open batch may still reference it
+    if (this.#batchEncoder) {
+      this.#deferredReleases.push({ buffer, size });
+      return;
+    }
+    this.#releaseBufferNow(buffer, size);
+  }
+
+  #releaseBufferNow(buffer: GPUBuffer, size: number): void {
     if (size > MAX_REUSABLE_BUFFER_BYTES) {
       buffer.destroy();
       return;
@@ -528,14 +573,17 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
   };
 }
 
-function pipelineSubmit(
+// Record an executable's passes into `commandEncoder`. Returns true if any
+// tracing timestamps were written, so the caller can flush right away.
+function pipelineRecord(
   device: GPUDevice,
+  commandEncoder: GPUCommandEncoder,
   exe: Executable<ShaderDispatch[]>,
   inputs: GPUBuffer[],
   outputs: GPUBuffer[],
-) {
+): boolean {
   const { data: pipelines, source } = exe;
-  const commandEncoder = device.createCommandEncoder();
+  let traced = false;
   for (const { pipeline, ...shader } of pipelines) {
     if (
       inputs.length !== shader.numInputs ||
@@ -551,6 +599,7 @@ function pipelineSubmit(
     if (filteredPasses.length === 0) continue; // No work to do.
 
     const slot = maybeAcquireTracingSlot(device);
+    if (slot) traced = true;
     const bindGroup = device.createBindGroup({
       layout: pipeline.getBindGroupLayout(0),
       entries: [
@@ -609,7 +658,7 @@ function pipelineSubmit(
     }
   }
 
-  device.queue.submit([commandEncoder.finish()]);
+  return traced;
 }
 
 function combineUniforms(
