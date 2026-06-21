@@ -227,10 +227,12 @@ class TfjsStrategy implements Strategy {
 class OnnxStrategy implements Strategy {
   name: string;
   dtype: "fp16" | "fp32";
+  wasm: boolean;
 
-  constructor(fp16: boolean = false) {
-    this.name = fp16 ? "onnx-fp16" : "onnx";
+  constructor(fp16: boolean = false, wasm: boolean = false) {
+    this.name = wasm ? "onnx-wasm" : fp16 ? "onnx-fp16" : "onnx";
     this.dtype = fp16 ? "fp16" : "fp32";
+    this.wasm = wasm;
   }
 
   // Helper function to create a simple ONNX model with a Conv operation
@@ -370,14 +372,15 @@ class OnnxStrategy implements Strategy {
   }
 
   async run(): Promise<number> {
-    const ort = await import("onnxruntime-web/webgpu");
-    let session: import("onnxruntime-web/webgpu").InferenceSession | null =
-      null;
+    const ort = this.wasm
+      ? await import("onnxruntime-web/wasm")
+      : await import("onnxruntime-web/webgpu");
+    let session: import("onnxruntime-web").InferenceSession | null = null;
 
     try {
       const model = await this.createConvModel();
       session = await ort.InferenceSession.create(model, {
-        executionProviders: ["webgpu"],
+        executionProviders: [this.wasm ? "wasm" : "webgpu"],
       });
 
       // Prepare input tensors
@@ -473,6 +476,7 @@ export const strategies: Strategy[] = [
   new NaiveStrategy(32),
   new OnnxStrategy(),
   new OnnxStrategy(true),
+  new OnnxStrategy(false, true),
   new TfjsStrategy(),
   new TfjsStrategy(true),
   new JaxJsStrategy("webgpu"),
