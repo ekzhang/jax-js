@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "strict": true,
-    "target": "ESNext",
+    "target": "ES2024",
     "lib": ["ESNext", "DOM", "DOM.AsyncIterable", "ESNext.Disposable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
