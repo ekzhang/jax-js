@@ -183,6 +183,14 @@
   let learningRate = $state(0.005);
   let logLearningRate = $state(Math.log10(0.005));
   let showSettings = $state(false);
+  const MNIST_BACKENDS = ["webgpu", "wasm"] as const;
+  type MnistBackend = (typeof MNIST_BACKENDS)[number];
+  const BACKEND_LABEL: Record<MnistBackend, string> = {
+    webgpu: "WebGPU",
+    wasm: "WebAssembly",
+  };
+  let selectedBackend = $state<MnistBackend>("wasm");
+  let backendOptions = $state<MnistBackend[]>([]);
 
   $effect(() => {
     learningRate = parseFloat(Math.pow(10, logLearningRate).toFixed(6));
@@ -198,6 +206,12 @@
   // svelte-ignore state_referenced_locally
   changeModelType(selectedModel);
 
+  function clearTrainedModel() {
+    tree.dispose(latestParams);
+    latestParams = null;
+    probs = [];
+  }
+
   function changeModelType(modelType: string) {
     if (running) return;
     switch (modelType) {
@@ -212,8 +226,14 @@
       default:
         throw new Error(`Unknown model type: ${modelType}`);
     }
-    tree.dispose(latestParams);
-    latestParams = null;
+    clearTrainedModel();
+  }
+
+  function changeBackend(backend: MnistBackend) {
+    if (running || backend === selectedBackend) return;
+    defaultDevice(backend);
+    selectedBackend = backend;
+    clearTrainedModel();
   }
 
   async function run() {
@@ -330,8 +350,17 @@
   }
 
   onMount(async () => {
-    const devices = await init("webgpu");
-    if (devices.includes("webgpu")) defaultDevice("webgpu");
+    const devices = await init(...MNIST_BACKENDS);
+    backendOptions = MNIST_BACKENDS.filter((backend) =>
+      devices.includes(backend),
+    );
+    const backend = backendOptions.includes("webgpu")
+      ? "webgpu"
+      : backendOptions[0];
+    if (backend) {
+      defaultDevice(backend);
+      selectedBackend = backend;
+    }
 
     ctx = canvas.getContext("2d", { willReadFrequently: true })!;
     ctx.fillStyle = "white";
@@ -499,6 +528,22 @@
 
       {#if showSettings}
         <div class="mt-2 p-3 border rounded bg-gray-50">
+          <div class="flex items-center gap-3 mb-2">
+            <label for="backend-select" class="font-semibold text-sm">
+              Backend:
+            </label>
+            <select
+              id="backend-select"
+              value={selectedBackend}
+              onchange={(event) =>
+                changeBackend(event.currentTarget.value as MnistBackend)}
+              disabled={running || backendOptions.length <= 1}
+            >
+              {#each backendOptions as backend}
+                <option value={backend}>{BACKEND_LABEL[backend]}</option>
+              {/each}
+            </select>
+          </div>
           <div class="flex items-center gap-3 mb-2">
             <label for="learning-rate-slider" class="font-semibold text-sm"
               >Learning rate:</label
