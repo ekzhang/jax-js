@@ -68,14 +68,9 @@
     "typescript-eslint": "^8.61.1",
     "vitest": "^4.1.9"
   },
-  "packageManager": "pnpm@10.32.1",
+  "packageManager": "pnpm@11.8.0",
   "engines": {
     "pnpm": ">=10.0.0"
-  },
-  "pnpm": {
-    "overrides": {
-      "@tensorflow/tfjs-core>@webgpu/types": "^0.1.68"
-    }
   },
   "prettier": {
     "plugins": [
