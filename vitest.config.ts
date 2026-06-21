@@ -4,11 +4,6 @@ import { configDefaults, defineConfig } from "vitest/config";
 const BROWSER = process.env.BROWSER || "chromium";
 
 export default defineConfig({
-  esbuild: {
-    supported: {
-      using: false, // Needed to lower 'using' statements in tests.
-    },
-  },
   server: {
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",
