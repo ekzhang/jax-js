@@ -4,6 +4,9 @@ import { configDefaults, defineConfig } from "vitest/config";
 const BROWSER = process.env.BROWSER || "chromium";
 
 export default defineConfig({
+  oxc: {
+    target: "es2024",
+  },
   server: {
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",
