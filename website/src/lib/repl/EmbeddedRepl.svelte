@@ -81,6 +81,7 @@
       class="hover:bg-gray-100 rounded text-sm pt-[3px] py-0.5"
     >
       <option value="webgpu">WebGPU</option>
+      <option value="webgl">WebGL</option>
       <option value="wasm">Wasm</option>
     </select>
   </div>
