@@ -42,20 +42,14 @@
       description: "Run a small language model locally in your browser.",
     },
     {
-      title: "MobileCLIP2 Inference",
-      href: resolve("/mobileclip"),
-      description:
-        "Compute embeddings for book passages and search through them.",
-    },
-    {
-      title: "D-FINE Detection",
-      href: resolve("/d-fine"),
-      description: "Run an ONNX object detector locally with WebGPU.",
-    },
-    {
       title: "Kyutai Pocket TTS",
       href: resolve("/tts"),
       description: "Voice cloning AI model that runs in your browser.",
+    },
+    {
+      title: "Whisper ASR",
+      href: resolve("/whisper"),
+      description: "Transcribe audio locally with OpenAI Whisper.",
     },
     {
       title: "MNIST Training",
@@ -65,7 +59,17 @@
     {
       title: "Neural Cellular Automata",
       href: resolve("/nca-growing"),
-      description: "Grow image patterns with a tiny NCA running in jax-js.",
+      description: "Grow image patterns with a tiny NCA.",
+    },
+    {
+      title: "MobileCLIP2 Inference",
+      href: resolve("/mobileclip"),
+      description: "Compute embeddings for book passages.",
+    },
+    {
+      title: "D-FINE Detection",
+      href: resolve("/d-fine"),
+      description: "Run an ONNX object detector locally with WebGPU.",
     },
     {
       title: "Benchmarks",
@@ -228,7 +232,7 @@ console.log(vmap(grad(np.square))(x));
       {#each links as { title, href, description }}
         <a
           {href}
-          class="bg-primary/5 hover:bg-primary/15 transition-colors p-4 rounded-lg"
+          class="bg-primary/5 hover:bg-primary/15 transition-colors px-4 py-3 rounded-lg"
         >
           <h3 class="mb-1">
             {title}

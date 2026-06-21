@@ -38,6 +38,26 @@ export type File = {
   totalSize: number;
 };
 
+type TensorDataConstructor = {
+  readonly BYTES_PER_ELEMENT: number;
+  new (buffer: ArrayBuffer, byteOffset: number, length: number): TensorData;
+};
+
+function alignedData(
+  ctor: TensorDataConstructor,
+  buffer: ArrayBuffer,
+  byteOffset: number,
+  length: number,
+): TensorData {
+  if (byteOffset % ctor.BYTES_PER_ELEMENT === 0) {
+    return new ctor(buffer, byteOffset, length);
+  }
+  // Slow path: If the array is not aligned, we need to make a copy.
+  const byteLength = length * ctor.BYTES_PER_ELEMENT;
+  const aligned = new Uint8Array(buffer, byteOffset, byteLength).slice();
+  return new ctor(aligned.buffer, 0, length);
+}
+
 /** Load data from a safetensors file. */
 export function parse(data: Uint8Array<ArrayBuffer> | ArrayBuffer): File {
   let buffer: ArrayBuffer;
@@ -83,37 +103,37 @@ export function parse(data: Uint8Array<ArrayBuffer> | ArrayBuffer): File {
     let data: TensorData;
     switch (dtype) {
       case "F16":
-        data = new Float16Array(buffer, byteOffset, byteLength / 2);
+        data = alignedData(Float16Array, buffer, byteOffset, byteLength / 2);
         break;
       case "F32":
-        data = new Float32Array(buffer, byteOffset, byteLength / 4);
+        data = alignedData(Float32Array, buffer, byteOffset, byteLength / 4);
         break;
       case "F64":
-        data = new Float64Array(buffer, byteOffset, byteLength / 8);
+        data = alignedData(Float64Array, buffer, byteOffset, byteLength / 8);
         break;
       case "I8":
         data = new Int8Array(buffer, byteOffset, byteLength);
         break;
       case "I16":
-        data = new Int16Array(buffer, byteOffset, byteLength / 2);
+        data = alignedData(Int16Array, buffer, byteOffset, byteLength / 2);
         break;
       case "I32":
-        data = new Int32Array(buffer, byteOffset, byteLength / 4);
+        data = alignedData(Int32Array, buffer, byteOffset, byteLength / 4);
         break;
       case "I64":
-        data = new BigInt64Array(buffer, byteOffset, byteLength / 8);
+        data = alignedData(BigInt64Array, buffer, byteOffset, byteLength / 8);
         break;
       case "U8":
         data = new Uint8Array(buffer, byteOffset, byteLength);
         break;
       case "U16":
-        data = new Uint16Array(buffer, byteOffset, byteLength / 2);
+        data = alignedData(Uint16Array, buffer, byteOffset, byteLength / 2);
         break;
       case "U32":
-        data = new Uint32Array(buffer, byteOffset, byteLength / 4);
+        data = alignedData(Uint32Array, buffer, byteOffset, byteLength / 4);
         break;
       case "U64":
-        data = new BigUint64Array(buffer, byteOffset, byteLength / 8);
+        data = alignedData(BigUint64Array, buffer, byteOffset, byteLength / 8);
         break;
       case "BOOL":
         data = new Uint8Array(buffer, byteOffset, byteLength);
