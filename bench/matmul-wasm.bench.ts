@@ -2,7 +2,7 @@ import { blockUntilReady, defaultDevice, init, numpy as np } from "@jax-js/jax";
 import { afterAll, bench, suite } from "vitest";
 
 const devices = await init("wasm");
-const MATMUL_SIZES = [512, 1024, 2048, 4096] as const;
+const MATMUL_SIZES = [64, 128, 256, 512, 1024, 2048, 4096] as const;
 
 function makeMatrix(n: number): np.Array {
   const data = new Float32Array(n * n);
@@ -18,7 +18,7 @@ suite.skipIf(!devices.includes("wasm"))("wasm fp32 matmul", async () => {
     a: makeMatrix(n),
     b: makeMatrix(n),
   }));
-  await blockUntilReady(matrices.flatMap(({ a, b }) => [a, b]));
+  await blockUntilReady(matrices);
 
   afterAll(() => {
     for (const { a, b } of matrices) {
@@ -30,6 +30,12 @@ suite.skipIf(!devices.includes("wasm"))("wasm fp32 matmul", async () => {
   for (const { n, a, b } of matrices) {
     bench(`${n}x${n}`, async () => {
       const c = np.matmul(a.ref, b.ref);
+      await c.blockUntilReady();
+      c.dispose();
+    });
+
+    bench(`${n}x${n} @ transpose`, async () => {
+      const c = np.matmul(a.ref, b.ref.transpose());
       await c.blockUntilReady();
       c.dispose();
     });

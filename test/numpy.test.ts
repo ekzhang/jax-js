@@ -897,6 +897,54 @@ suite.each(devices)("device:%s", (device) => {
         new Float32Array(Array.from({ length: 10 }, () => (784 * 783) / 2)),
       );
     });
+
+    // This caught a past regression in Wasm codegen.
+    test("jitted dot with bias", async () => {
+      const rows = 16;
+      const depth = 64;
+      const cols = 4;
+      const aData = new Float32Array(rows * depth);
+      const wData = new Float32Array(depth * cols);
+      const biasData = new Float32Array(cols);
+      const expectedData = new Float32Array(rows * cols);
+
+      for (let i = 0; i < aData.length; i++) {
+        aData[i] =
+          Math.sin(i * 0.17) * 0.7 + (Math.floor(i / depth) % 7) * 0.03;
+      }
+      for (let i = 0; i < wData.length; i++) {
+        wData[i] = Math.cos(i * 0.11) * 0.2;
+      }
+      for (let i = 0; i < biasData.length; i++) {
+        biasData[i] = (i - 2) * 0.1;
+      }
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+          let sum = biasData[col];
+          for (let k = 0; k < depth; k++) {
+            sum += aData[row * depth + k] * wData[k * cols + col];
+          }
+          expectedData[row * cols + col] = sum;
+        }
+      }
+
+      const affine = jit((a: np.Array, w: np.Array, b: np.Array) =>
+        np.dot(a, w).add(b),
+      );
+      const actual = affine(
+        np.array(aData).reshape([rows, depth]),
+        np.array(wData).reshape([depth, cols]),
+        np.array(biasData),
+      );
+      expect(actual.shape).toEqual([rows, cols]);
+
+      const actualData = await actual.data();
+      let maxDiff = 0;
+      for (let i = 0; i < expectedData.length; i++) {
+        maxDiff = Math.max(maxDiff, Math.abs(actualData[i] - expectedData[i]));
+      }
+      expect(maxDiff).toBeLessThan(1e-4);
+    });
   });
 
   suite("jax.numpy.tensordot()", () => {

@@ -117,7 +117,7 @@
 
     return {
       flops: {
-        Wasm: await benchFlops(512, "wasm", "float32"),
+        Wasm: await benchFlops(isMobile ? 512 : 1024, "wasm", "float32"),
         WebGPU: await benchFlops(gpuDim, "webgpu", "float32"),
         "WebGPU-fp16": hasF16
           ? await benchFlops(gpuDim, "webgpu", "float16")
@@ -142,7 +142,8 @@
   }
 
   onMount(() => {
-    measurementTask();
+    // Delay the benchmark start to not interfere with page load.
+    setTimeout(measurementTask, 1000);
   });
 
   // Bar chart configuration

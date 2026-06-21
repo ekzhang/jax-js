@@ -110,11 +110,17 @@ export class WasmWorkerPool {
    * Returns an epoch that can be used to wait for the ongoing work to complete,
    * which is guaranteed to be monotonically increasing.
    */
-  dispatch(module: WebAssembly.Module, ptrs: number[], size: number): bigint {
+  dispatch(
+    module: WebAssembly.Module,
+    ptrs: number[],
+    size: number,
+    chunkAlignment: number = 16,
+    minWorkPerWorker: number = MIN_ELEMS_PER_THREAD,
+  ): bigint {
     this.#ensureInit();
     this.#epochEnd++;
     const result = this.#queue.then(() =>
-      this.#dispatchNow(module, ptrs, size),
+      this.#dispatchNow(module, ptrs, size, chunkAlignment, minWorkPerWorker),
     );
     this.#queue = result
       .then(
@@ -136,13 +142,15 @@ export class WasmWorkerPool {
     module: WebAssembly.Module,
     ptrs: number[],
     size: number,
+    chunkAlignment: number,
+    minWorkPerWorker: number,
   ): Promise<void> {
     if (size === 0) return;
     const n = Math.min(
       this.#workers.length,
-      Math.ceil(size / MIN_ELEMS_PER_THREAD),
+      Math.ceil(size / minWorkPerWorker),
     );
-    const chunkSize = Math.ceil(size / n / 16) * 16; // Align to cache line.
+    const chunkSize = Math.ceil(size / n / chunkAlignment) * chunkAlignment;
     const promises: Promise<void>[] = [];
     for (let i = 0; i < n; i++) {
       const begin = i * chunkSize;

@@ -338,14 +338,18 @@
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   });
 
-  function normalizeImage(X: np.Array): np.Array {
+  async function normalizeImage(X: np.Array): Promise<np.Array> {
     // X.shape === [28, 28]
     const [xgrid, ygrid] = np.meshgrid(
       [np.arange(28).astype(np.float32), np.arange(28).astype(np.float32)],
       { indexing: "ij" },
     );
-    const dx = Math.round(13.5 - X.ref.mul(xgrid).sum().div(X.ref.sum()).js());
-    const dy = Math.round(13.5 - X.ref.mul(ygrid).sum().div(X.ref.sum()).js());
+    const dx = Math.round(
+      13.5 - (await X.ref.mul(xgrid).sum().div(X.ref.sum()).jsAsync()),
+    );
+    const dy = Math.round(
+      13.5 - (await X.ref.mul(ygrid).sum().div(X.ref.sum()).jsAsync()),
+    );
     if (dx > 0) X = np.pad(X, { 0: [dx, 0] }).slice([0, 28], []);
     if (dx < 0) X = np.pad(X, { 0: [0, -dx] }).slice([-dx], []);
     if (dy > 0) X = np.pad(X, { 1: [dy, 0] }).slice([], [0, 28]);
@@ -378,7 +382,7 @@
     }
     const params = tree.ref(latestParams);
     let image = np.array(ar).reshape([28, 28]);
-    image = normalizeImage(image); // Mimic the MNIST train set preprocessing.
+    image = await normalizeImage(image); // Mimic the MNIST train set preprocessing.
     const logits = Model.predict(params, image.reshape([1, 28, 28]));
     probs = (await np.exp(logits).slice(0).jsAsync()) as number[];
   });

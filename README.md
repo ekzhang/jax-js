@@ -366,11 +366,14 @@ To see per-kernel traces in browser development tools, call `jax.profiler.startT
 
 The WebGPU runtime includes an ML compiler with tile-aware optimizations, tuned for indiidual
 browsers. Also, this library uniquely has the `jit()` feature that fuses operations together and
-records an execution graph. jax-js achieves **over 7000 GFLOP/s** for matrix multiplication on an
-Apple M4 Max chip ([try it](https://jax-js.com/bench/matmul)).
+records an execution graph.
 
-For that example, it's significantly faster than both
-[TensorFlow.js](https://github.com/tensorflow/tfjs) and
+- _On WebGPU:_ jax-js achieves **over 7000 GFLOP/s** for matrix multiplication on an Apple M4 Max
+  chip ([try it](https://jax-js.com/bench/matmul)).
+- _On WebAssembly (CPU):_ jax-js is the fastest multithreaded in-browser matrix multiplication, over
+  twice as fast as XNNPACK, and matches **OpenBLAS performance** on Apple Silicon.
+
+This is significantly faster than both [TensorFlow.js](https://github.com/tensorflow/tfjs) and
 [ONNX Runtime Web](https://www.npmjs.com/package/onnxruntime-web), which both use handwritten
 libraries of custom kernels.
 
@@ -424,8 +427,8 @@ pnpm check         # Run TypeScript type checking
 Contributions are welcomed! Some fruitful areas to look into:
 
 - Adding support for more JAX functions and operations, see [compatibility table](./FEATURES.md).
-- Improving performance of the WebGPU and Wasm runtimes, generating better kernels, and using SIMD
-  and multithreading. (Even single-threaded Wasm could be ~20x faster.)
-- Making a fast transformer inference engine, comparing against onnxruntime-web.
+- Improving performance of the WebGPU and Wasm runtimes and generating better kernels, especially
+  for convolutions.
+- Making a fast, general transformer inference engine or model library.
 
 You may join our [Discord server](https://discord.gg/BW6YsCd4Tf) and chat with the community.
