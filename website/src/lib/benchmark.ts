@@ -46,9 +46,8 @@ export async function importTfjs(
       alert("tfjs-wasm requires a secure context and cross-origin isolation.");
       throw new Error("Insecure context for tfjs-wasm backend.");
     }
-    const { setThreadsCount, setWasmPaths } = await import(
-      "@tensorflow/tfjs-backend-wasm"
-    );
+    const { setThreadsCount, setWasmPaths } =
+      await import("@tensorflow/tfjs-backend-wasm");
     setThreadsCount(navigator.hardwareConcurrency);
     setWasmPaths(
       `https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@${tf.version.tfjs}/wasm-out/`,
