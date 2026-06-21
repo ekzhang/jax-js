@@ -193,8 +193,7 @@
       class="border-2 rounded p-2 w-full max-w-md"
       rows={6}
       placeholder="Enter your prompt here…"
-      bind:value={prompt}
-    ></textarea>
+      bind:value={prompt}></textarea>
 
     <div class="flex gap-3 mt-1 h-9">
       <select class="border-2 rounded p-1" bind:value={selectedVoice}>

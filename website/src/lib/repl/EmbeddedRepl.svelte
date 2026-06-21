@@ -26,6 +26,7 @@
 
   let editor: ReplEditor;
   let runner = new ReplRunner();
+  // svelte-ignore state_referenced_locally
   let currentText = $state(initialText);
   let replLink = $derived(
     resolve("/repl") + `?content=${encodeContent(currentText)}`,

@@ -600,8 +600,7 @@
               event.preventDefault();
               void sendMessage();
             }
-          }}
-        ></textarea>
+          }}></textarea>
 
         <div
           class="flex items-center justify-between gap-3 border-t border-gray-100 pt-2"

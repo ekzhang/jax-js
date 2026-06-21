@@ -4,10 +4,8 @@ import { configDefaults, defineConfig } from "vitest/config";
 const BROWSER = process.env.BROWSER || "chromium";
 
 export default defineConfig({
-  esbuild: {
-    supported: {
-      using: false, // Needed to lower 'using' statements in tests.
-    },
+  oxc: {
+    target: "es2025",
   },
   server: {
     headers: {
