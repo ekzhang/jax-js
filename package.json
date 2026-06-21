@@ -60,7 +60,7 @@
     "playwright": "~1.58.2",
     "prettier": "3.8.4",
     "prettier-plugin-svelte": "4.1.1",
-    "tsdown": "^0.13.2",
+    "tsdown": "^0.22.3",
     "tsx": "^4.22.4",
     "typedoc": "^0.28.19",
     "typedoc-theme-fresh": "^0.2.3",
