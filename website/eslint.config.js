@@ -67,6 +67,7 @@ export default defineConfig(
           ],
         },
       ],
+      "no-undef": "off",
       "sort-imports": [
         "warn",
         {

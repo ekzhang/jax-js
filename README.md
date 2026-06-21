@@ -70,8 +70,10 @@ Community usage:
 
 Demos on the jax-js website:
 
+- [Chat with Gemma 3](https://jax-js.com/chat)
 - [Training neural networks on MNIST](https://jax-js.com/mnist)
 - [Voice cloning: Kyutai Pocket TTS](https://jax-js.com/tts)
+- [Speech recognition: OpenAI Whisper](https://jax-js.com/tts)
 - [CLIP embeddings for books in-browser](https://jax-js.com/mobileclip)
 - [Object detection: D-FINE (ONNX)](https://jax-js.com/d-fine)
 - [Object detection: DETR ResNet-50 (ONNX)](https://jax-js.com/detr-resnet-50)
