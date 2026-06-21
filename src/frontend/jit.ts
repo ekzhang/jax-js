@@ -885,6 +885,67 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
     }
   }
 
+  // If a computed value is broadcast into a dot-style reduction, materialize it
+  // before the reduction. Otherwise it gets recomputed once for each output
+  // element that reuses it, e.g. softmax(scores) inside attention @ V, or
+  // an activation function from previous MLP layer.
+  const viewPrimitives = [
+    Primitive.Transpose,
+    Primitive.Broadcast,
+    Primitive.Reshape,
+    Primitive.Flip,
+    Primitive.Shrink,
+    Primitive.Pad,
+  ];
+  const materializeForReusedReduction = new Set<Var>();
+  const reductionInputHasReuse = (
+    shape: number[],
+    promoted: number[],
+  ): boolean => {
+    const offset = promoted.length - shape.length;
+    for (let axis = 0; axis < promoted.length - 1; axis++) {
+      const dim = axis < offset ? 1 : shape[axis - offset];
+      if (dim === 1 && promoted[axis] > 1) return true;
+    }
+    return false;
+  };
+  const markNonViewProducer = (v: Var): void => {
+    let current = v;
+    while (true) {
+      const defn = varToDefn.get(current);
+      if (defn === undefined) return;
+      const eqn = jaxpr.eqns[defn];
+      if (!viewPrimitives.includes(eqn.primitive)) break;
+      const input = eqn.inputs.find((input) => input instanceof Var);
+      if (!input) return;
+      current = input;
+    }
+    materializeForReusedReduction.add(current);
+  };
+  for (const eqn of jaxpr.eqns) {
+    let inputShapes: [number[], number[]] | null = null;
+    if (eqn.primitive === Primitive.Dot) {
+      inputShapes = [eqn.inputs[0].aval.shape, eqn.inputs[1].aval.shape];
+    } else if (eqn.primitive === Primitive.Conv) {
+      const [lhs, rhs] = prepareConv(
+        ShapeTracker.fromShape(eqn.inputs[0].aval.shape),
+        ShapeTracker.fromShape(eqn.inputs[1].aval.shape),
+        eqn.params as PrimitiveParams<Primitive.Conv>,
+      );
+      inputShapes = [lhs.shape, rhs.shape];
+    }
+    if (!inputShapes) continue;
+    const promoted = generalBroadcast(inputShapes[0], inputShapes[1]);
+    for (const [i, input] of eqn.inputs.entries()) {
+      if (
+        input instanceof Var &&
+        reductionInputHasReuse(inputShapes[i], promoted)
+      ) {
+        markNonViewProducer(input);
+      }
+    }
+  }
+
   // Move backwards through the program and compute "black" endpoints.
   //
   // Black nodes are the endpoints where we dispatch a kernel to the backend
@@ -929,6 +990,7 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
       reductionEndpointEqns.has(i) ||
       heterogeneousViewPrimitives.includes(eqn.primitive) ||
       routinePrimitives.has(eqn.primitive) ||
+      eqn.outBinders.some((v) => materializeForReusedReduction.has(v)) ||
       eqn.outBinders.some((v) => blackNodes.has(v))
     ) {
       for (const v of eqn.outBinders) {

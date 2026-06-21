@@ -373,13 +373,13 @@ function encoderConv(
   let x = lax
     .conv(features, conv1.weight.ref, [1], [[1, 1]])
     .add(conv1.bias.ref.reshape([1, conv1.bias.shape[0], 1]));
-  x = nn.gelu(x);
+  x = nn.gelu(x, { approximate: false });
   x = lax
     .conv(x, conv2.weight.ref, [2], [[1, 1]])
     .add(conv2.bias.ref.reshape([1, conv2.bias.shape[0], 1]));
   const dtype = x.dtype;
   return nn
-    .gelu(x)
+    .gelu(x, { approximate: false })
     .slice(0)
     .transpose()
     .add(embedPositions.weight.ref.astype(dtype));
@@ -401,7 +401,9 @@ function encoderLayer(
   return x.ref.add(
     runLinear(
       layer.fc2,
-      nn.gelu(runLinear(layer.fc1, runLayerNorm(layer.finalLayerNorm, x))),
+      nn.gelu(runLinear(layer.fc1, runLayerNorm(layer.finalLayerNorm, x)), {
+        approximate: false,
+      }),
     ),
   );
 }
@@ -435,7 +437,9 @@ function decoderLayerStep(
     x.ref.add(
       runLinear(
         layer.fc2,
-        nn.gelu(runLinear(layer.fc1, runLayerNorm(layer.finalLayerNorm, x))),
+        nn.gelu(runLinear(layer.fc1, runLayerNorm(layer.finalLayerNorm, x)), {
+          approximate: false,
+        }),
       ),
     ),
     nextSelfCache,

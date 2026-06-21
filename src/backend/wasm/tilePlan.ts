@@ -1,4 +1,5 @@
 import { AluExp, AluOp, byteWidth, DType, Kernel } from "../../alu";
+import { findPow2, gcd } from "../../utils";
 
 export const simdLanes = 4;
 
@@ -41,8 +42,7 @@ const TILED_SIMD_MICRO_ROWS = 4;
 const TILED_SIMD_MICRO_VECTORS = 4;
 const K_SIMD_MICRO_ROWS = 4;
 const K_SIMD_MICRO_COLS = 4;
-const K_SIMD_UNROLL = 4;
-const TILE_AXIS_PARTS = 8;
+const K_SIMD_MAX_UNROLL = 4;
 
 function isSymbol(exp: AluExp, name: string): boolean {
   return (
@@ -120,13 +120,6 @@ function divisorAtMost(value: number, limit: number): number {
   return 1;
 }
 
-function tileAxisLimit(axisSize: number, maxTileSize: number): number {
-  return Math.min(
-    maxTileSize,
-    Math.max(1, Math.floor(axisSize / TILE_AXIS_PARTS)),
-  );
-}
-
 function commonTileSize(
   kernelSize: number,
   strideMap: Map<AluExp, StrideResult>,
@@ -152,18 +145,27 @@ function commonTileSize(
 }
 
 function tiledRows(kernelSize: number, tileSize: number): number {
-  const rowCount = kernelSize / tileSize;
-  return divisorAtMost(rowCount, tileAxisLimit(rowCount, TILED_SIMD_ROWS));
+  const rowCount = Math.floor(kernelSize / tileSize);
+  return findPow2(0, Math.max(1, Math.min(rowCount / 2, TILED_SIMD_ROWS)));
 }
 
-function tiledColumns(tileSize: number, laneWidth = 1): number {
-  return divisorAtMost(
-    tileSize / laneWidth,
+function tiledColumns(tileSize: number, laneWidth: number): number {
+  const columns = tileSize / laneWidth;
+  return findPow2(
+    0,
     Math.max(
       1,
-      Math.floor(tileAxisLimit(tileSize, TILED_SIMD_COLUMNS) / laneWidth),
+      Math.min(columns / 2, Math.floor(TILED_SIMD_COLUMNS / laneWidth)),
     ),
   );
+}
+
+function microTile(tile: number, axis: number, limit: number): number {
+  return divisorAtMost(gcd(tile, axis), limit);
+}
+
+function microTileWithTail(tile: number, limit: number): number {
+  return Math.max(1, Math.min(tile, limit));
 }
 
 function periodicStride(exp: AluExp, kind: "broadcast" | "contiguous") {
@@ -277,10 +279,11 @@ export function reductionPointerCandidates(
 export function reductionTilePlan(
   kernel: Kernel,
   strideMap: Map<AluExp, StrideResult>,
+  canStorePartial: boolean = true,
 ): ReductionTilePlan | null {
   if (!kernel.reduction) return null;
 
-  const tileSize = commonTileSize(kernel.size, strideMap, simdLanes);
+  const tileSize = commonTileSize(kernel.size, strideMap, simdLanes, simdLanes);
   if (tileSize === null) return null;
 
   const tileRows = tiledRows(kernel.size, tileSize);
@@ -289,9 +292,15 @@ export function reductionTilePlan(
     tileSize,
     tileRows,
     tileVectors,
-    tileK: divisorAtMost(kernel.reduction.size, TILED_SIMD_K),
-    microRows: divisorAtMost(tileRows, TILED_SIMD_MICRO_ROWS),
-    microVectors: divisorAtMost(tileVectors, TILED_SIMD_MICRO_VECTORS),
+    tileK: canStorePartial
+      ? divisorAtMost(kernel.reduction.size, TILED_SIMD_K)
+      : kernel.reduction.size,
+    microRows: microTile(
+      tileRows,
+      Math.floor(kernel.size / tileSize),
+      TILED_SIMD_MICRO_ROWS,
+    ),
+    microVectors: microTileWithTail(tileVectors, TILED_SIMD_MICRO_VECTORS),
   };
 }
 
@@ -300,20 +309,28 @@ export function reductionKTilePlan(
   strideMap: Map<AluExp, StrideResult>,
 ): ReductionKTilePlan | null {
   if (!kernel.reduction) return null;
-  if (kernel.reduction.size % (simdLanes * K_SIMD_UNROLL) !== 0) return null;
+  if (kernel.reduction.size % simdLanes !== 0) return null;
 
   const tileSize = commonTileSize(kernel.size, strideMap, 1, 1);
   if (tileSize === null) return null;
 
+  const kUnroll = divisorAtMost(
+    kernel.reduction.size / simdLanes,
+    K_SIMD_MAX_UNROLL,
+  );
   const tileRows = tiledRows(kernel.size, tileSize);
-  const tileCols = tiledColumns(tileSize);
+  const tileCols = tiledColumns(tileSize, 1);
   return {
     tileSize,
     tileRows,
     tileCols,
-    microRows: divisorAtMost(tileRows, K_SIMD_MICRO_ROWS),
-    microCols: divisorAtMost(tileCols, K_SIMD_MICRO_COLS),
-    kUnroll: K_SIMD_UNROLL,
+    microRows: microTile(
+      tileRows,
+      Math.floor(kernel.size / tileSize),
+      K_SIMD_MICRO_ROWS,
+    ),
+    microCols: microTile(tileCols, tileSize, K_SIMD_MICRO_COLS),
+    kUnroll,
   };
 }
 

@@ -302,9 +302,14 @@ export function codegenWasm(kernel: Kernel): WasmCodegenResult {
               : ({ kind: "contiguous", tileSize: Infinity } as const),
         }))
       : [];
+  const canStoreSimdPartials =
+    hasIdentityEpilogue ||
+    (re !== undefined &&
+      kernel.dtype === re.dtype &&
+      byteWidth(kernel.dtype) === 4);
   const simdTilePlan =
-    useSimd && re && hasIdentityEpilogue
-      ? reductionTilePlan(kernel, expStrides)
+    useSimd && re
+      ? reductionTilePlan(kernel, expStrides, canStoreSimdPartials)
       : null;
   const kSimdTilePlan =
     reductionHasLaneGather && useKSimdReduction
@@ -415,22 +420,87 @@ export function codegenWasm(kernel: Kernel): WasmCodegenResult {
       return local;
     };
 
-    const emitLoopWhileLt = (
-      index: number,
-      emitBound: () => void,
+    const emitLoopWithBreaks = (
+      emitBreaks: () => void,
       emitBody: () => void,
     ) => {
       cg.loop(cg.void);
       cg.block(cg.void);
-      cg.local.get(index);
-      emitBound();
-      cg.i32.ge_u();
-      cg.br_if(0);
+      emitBreaks();
       emitBody();
       cg.br(1);
       cg.end();
       cg.end();
     };
+
+    const emitLoopWhileLt = (
+      index: number,
+      emitBound: () => void,
+      emitBody: () => void,
+    ) =>
+      emitLoopWithBreaks(() => {
+        cg.local.get(index);
+        emitBound();
+        cg.i32.ge_u();
+        cg.br_if(0);
+      }, emitBody);
+
+    const emitLoopWhileLtAndConstLt = (
+      index: number,
+      emitBound: () => void,
+      constBound: number,
+      emitBody: () => void,
+    ) =>
+      emitLoopWithBreaks(() => {
+        cg.local.get(index);
+        emitBound();
+        cg.i32.ge_u();
+        cg.br_if(0);
+        cg.local.get(index);
+        cg.i32.const(constBound);
+        cg.i32.ge_u();
+        cg.br_if(0);
+      }, emitBody);
+
+    const emitLoopWhileBlockFits = (
+      index: number,
+      blockSize: number,
+      emitBound: () => void,
+      constBound: number,
+      emitBody: () => void,
+    ) =>
+      emitLoopWithBreaks(() => {
+        emitLocalPlusConst(index, blockSize);
+        emitBound();
+        cg.i32.gt_u();
+        cg.br_if(0);
+        emitLocalPlusConst(index, blockSize);
+        cg.i32.const(constBound);
+        cg.i32.gt_u();
+        cg.br_if(0);
+      }, emitBody);
+
+    const emitRowTileLoop = (
+      rowOffset: number,
+      rowTileBase: number,
+      tileRows: number,
+      tileSize: number,
+      emitBody: () => void,
+    ) =>
+      emitLoopWithBreaks(() => {
+        cg.local.get(rowOffset);
+        cg.i32.const(tileRows);
+        cg.i32.ge_u();
+        cg.br_if(0);
+        cg.local.get(rowTileBase);
+        cg.local.get(rowOffset);
+        cg.i32.const(tileSize);
+        cg.i32.mul();
+        cg.i32.add();
+        cg.local.get(paramEnd);
+        cg.i32.ge_u();
+        cg.br_if(0);
+      }, emitBody);
 
     const emitLoopWhileLocalLt = (
       index: number,
@@ -563,42 +633,63 @@ export function codegenWasm(kernel: Kernel): WasmCodegenResult {
         emitLoopWhileConstLt(ridx, re.size, emitReductionLoopBody);
       else emitLoopWhileLocalLt(ridx, ridxEnd, emitReductionLoopBody);
 
-      if (hasIdentityEpilogue) {
+      const storeRawAccumulators = () => {
         for (let i = 0; i < gidxs.length; i++) {
           emitOutputAddress(gidxs[i]);
           cg.local.get(vecAccs[i]);
           cg.v128.store(4);
         }
+      };
+
+      if (hasIdentityEpilogue) {
+        storeRawAccumulators();
         return;
       }
 
-      const laneGidx = cg.local.declare(cg.i32);
-      const laneAcc = cg.local.declare(reIsInt ? cg.i32 : cg.f32);
-      for (let i = 0; i < gidxs.length; i++) {
-        for (let lane = 0; lane < simdLanes; lane++) {
-          cg.local.get(kernel.nargs);
-          cg.local.get(gidxs[i]);
-          if (lane > 0) {
-            cg.i32.const(lane);
+      const storeEpilogueAccumulators = () => {
+        const laneGidx = cg.local.declare(cg.i32);
+        const laneAcc = cg.local.declare(reIsInt ? cg.i32 : cg.f32);
+        for (let i = 0; i < gidxs.length; i++) {
+          for (let lane = 0; lane < simdLanes; lane++) {
+            cg.local.get(kernel.nargs);
+            cg.local.get(gidxs[i]);
+            if (lane > 0) {
+              cg.i32.const(lane);
+              cg.i32.add();
+            }
+
+            cg.local.tee(laneGidx);
+            cg.i32.const(byteWidth(kernel.dtype));
+            cg.i32.mul();
             cg.i32.add();
+
+            cg.local.get(vecAccs[i]);
+            if (reIsInt) cg.i32x4.extract_lane(lane);
+            else cg.f32x4.extract_lane(lane);
+            cg.local.set(laneAcc);
+            translateExp(cg, funcs, tune.epilogue!, {
+              acc: laneAcc,
+              gidx: laneGidx,
+            });
+
+            dty(cg, null, kernel.dtype).store(
+              Math.log2(byteWidth(kernel.dtype)),
+            );
           }
-
-          cg.local.tee(laneGidx);
-          cg.i32.const(byteWidth(kernel.dtype));
-          cg.i32.mul();
-          cg.i32.add();
-
-          cg.local.get(vecAccs[i]);
-          if (reIsInt) cg.i32x4.extract_lane(lane);
-          else cg.f32x4.extract_lane(lane);
-          cg.local.set(laneAcc);
-          translateExp(cg, funcs, tune.epilogue!, {
-            acc: laneAcc,
-            gidx: laneGidx,
-          });
-
-          dty(cg, null, kernel.dtype).store(Math.log2(byteWidth(kernel.dtype)));
         }
+      };
+
+      if (ridxEnd !== undefined) {
+        cg.local.get(ridxEnd);
+        cg.i32.const(re.size);
+        cg.i32.lt_u();
+        cg.if(cg.void);
+        storeRawAccumulators();
+        cg.else();
+        storeEpilogueAccumulators();
+        cg.end();
+      } else {
+        storeEpilogueAccumulators();
       }
     };
 
@@ -641,20 +732,6 @@ export function codegenWasm(kernel: Kernel): WasmCodegenResult {
       }
 
       return { pointerMaps, uniquePointers };
-    };
-
-    const emitSimdReductionStep = () => {
-      const groups = [{ gidx, row: 0, vector: 0 }];
-      const { pointerMaps, uniquePointers } = initializePointerMaps(
-        groups,
-        simdReductionPointerCandidates,
-        (candidate, group, i) =>
-          pointerShareKey(candidate, group.row, group.vector, i),
-        (group) => ({ gidx: group.gidx }),
-      );
-      emitSimdReductionForGidxs([gidx], pointerMaps, uniquePointers);
-
-      bumpLocal(gidx, simdLanes);
     };
 
     const emitElementwiseSimdStep = () => {
@@ -768,19 +845,26 @@ export function codegenWasm(kernel: Kernel): WasmCodegenResult {
         setLocalConst(colTile, 0);
         emitLoopWhileConstLt(colTile, plan.tileSize, () => {
           setLocalConst(rowOffset, 0);
-          emitLoopWhileConstLt(rowOffset, plan.tileRows, () => {
-            copyLocal(col, colTile);
-            emitLoopWhileLt(
-              col,
-              () => emitLocalPlusConst(colTile, plan.tileCols),
-              () => {
-                setRowBase(rowBase, rowTileBase, rowOffset, plan.tileSize);
-                emitBlock();
-                bumpLocal(col, plan.microCols);
-              },
-            );
-            bumpLocal(rowOffset, plan.microRows);
-          });
+          emitRowTileLoop(
+            rowOffset,
+            rowTileBase,
+            plan.tileRows,
+            plan.tileSize,
+            () => {
+              copyLocal(col, colTile);
+              emitLoopWhileLtAndConstLt(
+                col,
+                () => emitLocalPlusConst(colTile, plan.tileCols),
+                plan.tileSize,
+                () => {
+                  setRowBase(rowBase, rowTileBase, rowOffset, plan.tileSize);
+                  emitBlock();
+                  bumpLocal(col, plan.microCols);
+                },
+              );
+              bumpLocal(rowOffset, plan.microRows);
+            },
+          );
           bumpLocal(colTile, plan.tileCols);
         });
         bumpLocal(gidx, plan.tileRows * plan.tileSize);
@@ -796,10 +880,10 @@ export function codegenWasm(kernel: Kernel): WasmCodegenResult {
       const rowOffset = cg.local.declare(cg.i32);
       const rowBase = cg.local.declare(cg.i32);
 
-      const emitRowBlock = () => {
+      const emitRowBlock = (microVectors: number) => {
         const groups: ReductionGroup[] = [];
         for (let row = 0; row < plan.microRows; row++) {
-          for (let vector = 0; vector < plan.microVectors; vector++) {
+          for (let vector = 0; vector < microVectors; vector++) {
             groups.push({
               gidx: declareTileGidx(
                 rowBase,
@@ -841,19 +925,39 @@ export function codegenWasm(kernel: Kernel): WasmCodegenResult {
             cg.local.set(tileEnd);
 
             setLocalConst(rowOffset, 0);
-            emitLoopWhileConstLt(rowOffset, plan.tileRows, () => {
-              copyLocal(col, colTile);
-              emitLoopWhileLt(
-                col,
-                () => emitLocalPlusConst(colTile, plan.tileVectors * simdLanes),
-                () => {
-                  setRowBase(rowBase, rowTileBase, rowOffset, plan.tileSize);
-                  emitRowBlock();
-                  bumpLocal(col, plan.microVectors * simdLanes);
-                },
-              );
-              bumpLocal(rowOffset, plan.microRows);
-            });
+            emitRowTileLoop(
+              rowOffset,
+              rowTileBase,
+              plan.tileRows,
+              plan.tileSize,
+              () => {
+                copyLocal(col, colTile);
+                emitLoopWhileBlockFits(
+                  col,
+                  plan.microVectors * simdLanes,
+                  () =>
+                    emitLocalPlusConst(colTile, plan.tileVectors * simdLanes),
+                  plan.tileSize,
+                  () => {
+                    setRowBase(rowBase, rowTileBase, rowOffset, plan.tileSize);
+                    emitRowBlock(plan.microVectors);
+                    bumpLocal(col, plan.microVectors * simdLanes);
+                  },
+                );
+                emitLoopWhileLtAndConstLt(
+                  col,
+                  () =>
+                    emitLocalPlusConst(colTile, plan.tileVectors * simdLanes),
+                  plan.tileSize,
+                  () => {
+                    setRowBase(rowBase, rowTileBase, rowOffset, plan.tileSize);
+                    emitRowBlock(1);
+                    bumpLocal(col, simdLanes);
+                  },
+                );
+                bumpLocal(rowOffset, plan.microRows);
+              },
+            );
             bumpLocal(kTile, plan.tileK);
           });
           bumpLocal(colTile, plan.tileVectors * simdLanes);
@@ -870,25 +974,25 @@ export function codegenWasm(kernel: Kernel): WasmCodegenResult {
     };
 
     if (kSimdTilePlan) {
-      emitGuardedFastPath(kSimdTilePlan.tileRows * kSimdTilePlan.tileSize, () =>
-        emitKSimdReductionLoop(kSimdTilePlan),
+      emitGuardedFastPath(
+        kSimdTilePlan.microRows * kSimdTilePlan.tileSize,
+        () => emitKSimdReductionLoop(kSimdTilePlan),
       );
     }
 
     if (useSimd) {
       if (simdTilePlan) {
-        emitGuardedFastPath(simdTilePlan.tileRows * simdTilePlan.tileSize, () =>
-          emitTiledSimdReductionLoop(simdTilePlan),
+        emitGuardedFastPath(
+          simdTilePlan.microRows * simdTilePlan.tileSize,
+          () => emitTiledSimdReductionLoop(simdTilePlan),
         );
       }
 
-      emitGuardedFastPath(simdLanes, () => {
-        emitLoopWhileLocalLt(
-          gidx,
-          paramEnd,
-          re ? emitSimdReductionStep : emitElementwiseSimdStep,
-        );
-      });
+      if (!re) {
+        emitGuardedFastPath(simdLanes, () => {
+          emitLoopWhileLocalLt(gidx, paramEnd, emitElementwiseSimdStep);
+        });
+      }
     }
 
     emitLoopWhileLocalLt(gidx, paramEnd, () => {
