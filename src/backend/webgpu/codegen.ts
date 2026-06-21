@@ -128,6 +128,21 @@ export function constToWgsl(dtype: DType, value: any): string {
   throw new Error(`Unsupported const dtype: ${dtype}`);
 }
 
+export function reduceOpWgsl(
+  op: AluOp,
+  dtype: DType,
+  a: string,
+  b: string,
+): string {
+  if (op === AluOp.Add) return `(${a} + ${b})`;
+  if (op === AluOp.Mul) return `(${a} * ${b})`;
+  if (op === AluOp.Min)
+    return dtype === DType.Bool ? `(${a} && ${b})` : `min(${a}, ${b})`;
+  if (op === AluOp.Max)
+    return dtype === DType.Bool ? `(${a} || ${b})` : `max(${a}, ${b})`;
+  throw new Error(`Unsupported reduction op: ${op}`);
+}
+
 /** Codegen for WebGPU expressions, linearizing AluOp into a kernel. */
 export class WgslExpCodegen {
   #gensymCount = 0;

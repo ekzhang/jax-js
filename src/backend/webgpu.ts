@@ -7,6 +7,7 @@ import {
   calculateGrid,
   constToWgsl,
   dtypeToWgsl,
+  reduceOpWgsl,
   ShaderInfo,
   WgslBuilder,
   WgslExpCodegen,
@@ -318,30 +319,74 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
     `@group(0) @binding(${nargs}) var<storage, read_write> result : array<${resultTy}>;`,
   );
 
-  const workgroupSize = findPow2(tune.threadCount, 256);
+  const groupCount = re ? (tune.size.groups ?? 1) : 1;
+  const groupedReduction = re && groupCount > 1;
+  if (groupedReduction && tune.threadCount % groupCount !== 0) {
+    throw new Error("WebGPU grouped reduction has invalid thread count");
+  }
+  if (groupedReduction && groupCount > device.limits.maxComputeWorkgroupSizeX) {
+    throw new Error("WebGPU grouped reduction exceeds workgroup size limit");
+  }
+  const workgroupSize = groupedReduction
+    ? groupCount
+    : findPow2(tune.threadCount, 256);
 
   // Determine grid size, may need to be 3D due to limits on X.
   // maxComputeWorkgroupsPerDimension ~ 65535, so we use 16384 when exceeded.
-  const gridSize = Math.ceil(tune.threadCount / workgroupSize);
+  const gridSize = groupedReduction
+    ? tune.threadCount / groupCount
+    : Math.ceil(tune.threadCount / workgroupSize);
   const [gridX, gridY] = calculateGrid(gridSize);
 
-  wb.emit(
-    "",
-    `@compute @workgroup_size(${workgroupSize})`,
-    "fn main(@builtin(global_invocation_id) id : vec3<u32>) {",
-    wb.pushIndent,
-  );
-  if (gridY === 1) {
+  if (groupedReduction) {
+    const partialTy = dtypeToWgsl(re.dtype);
+    for (let i = 0; i < (tune.size.upcast ?? 1); i++) {
+      wb.emit(
+        `var<workgroup> partial${i}: array<${partialTy}, ${groupCount}>;`,
+      );
+    }
+  }
+
+  wb.emit("", `@compute @workgroup_size(${workgroupSize})`);
+  if (groupedReduction) {
     wb.emit(
-      `if (id.x >= ${tune.threadCount}) { return; }`,
-      "let gidx: i32 = i32(id.x);",
+      "fn main(",
+      wb.pushIndent,
+      "@builtin(local_invocation_id) lid : vec3<u32>,",
+      "@builtin(workgroup_id) wg_id : vec3<u32>,",
+      wb.popIndent,
+      ") {",
+      wb.pushIndent,
     );
+    if (gridY === 1) {
+      wb.emit(
+        `if (wg_id.x >= ${gridSize}u) { return; }`,
+        "let gidx: i32 = i32(wg_id.x);",
+      );
+    } else {
+      wb.emit(
+        `if (${gridX}u * wg_id.y + wg_id.x >= ${gridSize}u) { return; }`,
+        `let gidx: i32 = i32(${gridX}u * wg_id.y + wg_id.x);`,
+      );
+    }
+    wb.emit("let group: i32 = i32(lid.x);");
   } else {
-    const sizeX = gridX * workgroupSize;
     wb.emit(
-      `if (${sizeX} * id.y + id.x >= ${tune.threadCount}) { return; }`,
-      `let gidx: i32 = i32(${sizeX} * id.y + id.x);`,
+      "fn main(@builtin(global_invocation_id) id : vec3<u32>) {",
+      wb.pushIndent,
     );
+    if (gridY === 1) {
+      wb.emit(
+        `if (id.x >= ${tune.threadCount}) { return; }`,
+        "let gidx: i32 = i32(id.x);",
+      );
+    } else {
+      const sizeX = gridX * workgroupSize;
+      wb.emit(
+        `if (${sizeX} * id.y + id.x >= ${tune.threadCount}) { return; }`,
+        `let gidx: i32 = i32(${sizeX} * id.y + id.x);`,
+      );
+    }
   }
 
   wb.emitPhonyAssignments(args);
@@ -353,9 +398,6 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
     if (resultTy !== dtypeToWgsl(tune.exp.dtype)) rhs = `${resultTy}(${rhs})`;
     wb.emit(`result[gidx] = ${rhs};`);
   } else {
-    if ((tune.size.groups ?? 1) > 1) {
-      throw new Error("WebGPU backend does not support group optimization yet");
-    }
     const unroll = tune.size.unroll ?? 1;
     const upcast = tune.size.upcast ?? 1;
 
@@ -423,6 +465,26 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
     }
     wb.emit(wb.popIndent, "}");
 
+    if (groupedReduction) {
+      for (let i = 0; i < upcast; i++)
+        wb.emit(`partial${i}[lid.x] = ${acc[i]};`);
+      wb.emit("workgroupBarrier();");
+      for (let stride = groupCount / 2; stride >= 1; stride /= 2) {
+        wb.emit(`if (lid.x < ${stride}u) {`, wb.pushIndent);
+        for (let i = 0; i < upcast; i++) {
+          wb.emit(
+            `partial${i}[lid.x] = ${reduceOpWgsl(
+              re.op,
+              re.dtype,
+              `partial${i}[lid.x]`,
+              `partial${i}[lid.x + ${stride}u]`,
+            )};`,
+          );
+        }
+        wb.emit(wb.popIndent, "}", "workgroupBarrier();");
+      }
+    }
+
     // Exited the reduction loop scope. Erase any local variables.
     gen.reset();
 
@@ -442,6 +504,10 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
       );
       gen.countReferences(fusionExps[i]);
     }
+    if (groupedReduction) {
+      wb.emit("if (lid.x == 0u) {", wb.pushIndent);
+      for (let i = 0; i < upcast; i++) wb.emit(`${acc[i]} = partial${i}[0u];`);
+    }
     for (let i = 0; i < upcast; i++) {
       const index = strip1(gen.run(outputIdxExps[i]));
       let rhs = strip1(gen.run(fusionExps[i]));
@@ -449,6 +515,7 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
         rhs = `${resultTy}(${rhs})`;
       wb.emit(`result[${index}] = ${rhs};`);
     }
+    if (groupedReduction) wb.emit(wb.popIndent, "}");
   }
 
   wb.emit(wb.popIndent, "}");

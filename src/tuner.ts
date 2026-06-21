@@ -187,6 +187,32 @@ class TuneDims {
       this.upcast++;
     }
   }
+
+  applyGroup(axis: number, amount: number) {
+    if (axis < this.reduce || axis >= this.unroll) {
+      throw new Error("Can only group reduction axes");
+    }
+    const length = this.st.shape[axis];
+    if (length % amount !== 0)
+      throw new Error(`Group by ${amount} on axis length ${length}`);
+
+    this.st = this.st
+      .reshape([
+        ...this.st.shape.slice(0, axis),
+        length / amount,
+        amount,
+        ...this.st.shape.slice(axis + 1),
+      ])
+      .permute([
+        ...range(this.reduce),
+        axis + 1,
+        ...range(this.reduce, axis + 1),
+        ...range(axis + 2, this.st.shape.length + 1),
+      ]);
+    this.reduce++;
+    this.unroll++;
+    this.upcast++;
+  }
 }
 
 /** Tuning step that does not apply any optimization. */
@@ -294,6 +320,28 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
     } else {
       break;
     }
+  }
+
+  // Group optimization for matvec, splitting k into multiple threads inside a
+  // workgroup to increase occupancy.
+  const groupCandidateSts = sts.map((st) => st.compose(dim.st));
+  const groupCandidateHasContiguousInputs = groupCandidateSts.every((st) => {
+    const hasOutputStride = st.lastStrides
+      .slice(0, dim.groups)
+      .some((stride) => stride !== 0);
+    return !hasOutputStride || Math.abs(st.lastStrides[dim.reduce]) <= 1;
+  });
+  if (
+    reduction.op === AluOp.Add &&
+    reduction.dtype === DType.Float32 &&
+    groupCandidateHasContiguousInputs &&
+    prod(dim.st.shape.slice(0, dim.groups)) < 4096 &&
+    prod(dim.st.shape.slice(dim.reduce, dim.unroll)) >= 512
+  ) {
+    const axis = dim.reduce;
+    let amount = 16;
+    while (amount > 1 && dim.st.shape[axis] % amount !== 0) amount /= 2;
+    if (amount > 1) dim.applyGroup(axis, amount);
   }
 
   // Try to do loop unrolling on the reduce axis, with an upcast limit.
