@@ -146,18 +146,17 @@ function commonTileSize(
 
 function tiledRows(kernelSize: number, tileSize: number): number {
   const rowCount = Math.floor(kernelSize / tileSize);
-  return findPow2(0, Math.max(1, Math.min(rowCount / 2, TILED_SIMD_ROWS)));
+  const maxRows = Math.max(1, Math.min(rowCount / 2, TILED_SIMD_ROWS));
+  return findPow2(0, maxRows);
 }
 
 function tiledColumns(tileSize: number, laneWidth: number): number {
   const columns = tileSize / laneWidth;
-  return findPow2(
-    0,
-    Math.max(
-      1,
-      Math.min(columns / 2, Math.floor(TILED_SIMD_COLUMNS / laneWidth)),
-    ),
+  const maxColumns = Math.max(
+    1,
+    Math.min(columns / 2, Math.floor(TILED_SIMD_COLUMNS / laneWidth)),
   );
+  return findPow2(0, maxColumns);
 }
 
 function microTile(tile: number, axis: number, limit: number): number {

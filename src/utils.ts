@@ -289,7 +289,7 @@ export function findPow2(hint: number, max: number): number {
     throw new Error("max must be a positive integer");
   }
   let ret = 1;
-  while (ret < hint && 2 * ret <= max) {
+  while ((hint === 0 || ret < hint) && 2 * ret <= max) {
     ret *= 2;
   }
   return ret;
