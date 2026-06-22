@@ -66,6 +66,7 @@ Community usage:
 - [**g9-jaxjs**: Automatically interactive graphics with forward-mode AD](https://srush.github.io/g9jax/)
 - [**autoresearch-webgpu**: autoresesarch, in the browser](https://autoresearch.lucasgelfond.online/)
 - [**tanh.xyz**: Interactive ML visualizations](https://tanh.xyz/)
+- [**handwritten**: Handwriting synthesis with LSTM-MDN](https://handwritten.henrlly.com/)
 - [**jax-js-bayes**: Declarative Bayesian modeling library](https://github.com/StefanSko/jax-js-bayes)
 
 Demos on the jax-js website:
