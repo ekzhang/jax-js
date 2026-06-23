@@ -4,6 +4,14 @@ import { configDefaults, defineConfig } from "vitest/config";
 const BROWSER = process.env.BROWSER || "chromium";
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@jax-js/jax": "/src/index.ts",
+      "@jax-js/loaders": "/packages/loaders/src/index.ts",
+      "@jax-js/onnx": "/packages/onnx/src/index.ts",
+      "@jax-js/optax": "/packages/optax/src/index.ts",
+    },
+  },
   oxc: {
     target: "es2025",
   },
