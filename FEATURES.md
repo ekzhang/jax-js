@@ -397,8 +397,8 @@ Most operations behave the same way as they do in JAX.
 | `result_type`         | 🟠      | see `promote_types`                     |
 | `right_shift`         | 🟢      |                                         |
 | `rint`                | 🟢      |                                         |
-| `roll`                | 🟠      |                                         |
-| `rollaxis`            | 🟠      |                                         |
+| `roll`                | 🟢      |                                         |
+| `rollaxis`            | ⚪️      | use `moveaxis`                          |
 | `roots`               | 🔴      |                                         |
 | `rot90`               | 🟠      |                                         |
 | `round`               | 🟢      |                                         |

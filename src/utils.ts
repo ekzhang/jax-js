@@ -166,6 +166,7 @@ export function checkAxis(axis: number, ndim: number): number {
 export function normalizeAxis(
   axis: number | number[] | null,
   ndim: number,
+  sort: boolean = true,
 ): number[] {
   if (axis === null) {
     return range(ndim); // default to all axes
@@ -179,7 +180,7 @@ export function normalizeAxis(
         throw new Error(`Duplicate axis ${ca} passed to function`);
       seen.add(ca);
     }
-    return sorted(seen);
+    return sort ? sorted(seen) : [...seen];
   }
 }
 
