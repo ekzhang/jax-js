@@ -4,6 +4,7 @@ dist/
 docs/
 docs-json/
 .svelte-kit/
+.worktrees/
 
 .vscode/
 .claude/
