@@ -2,7 +2,6 @@
 
 import { nn, numpy as np } from "@jax-js/jax";
 
-import { takeAlongAxis } from "../arrayHelpers";
 import { type Operand, operandToJax, operandToJs } from "../tensor";
 
 function wrapReduction(
@@ -155,6 +154,6 @@ export function TopK(
   if (largest) {
     indices = np.flip(indices, normAxis);
   }
-  const values = takeAlongAxis(x, indices.ref, normAxis);
+  const values = np.takeAlongAxis(x, indices.ref, normAxis);
   return [values, indices];
 }

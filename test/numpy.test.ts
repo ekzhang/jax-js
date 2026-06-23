@@ -2727,18 +2727,15 @@ suite.each(devices)("device:%s", (device) => {
         [10, 20, 30],
         [40, 50, 60],
       ]);
-      const indices = np.array([
-        [1],
-        [0],
-      ]);
+      const indices = np.array([[1], [0]]);
       const y = np.takeAlongAxis(x, indices);
       expect(y.js()).toEqual([[20], [40]]);
     });
 
     test("rejects rank mismatches", () => {
-      expect(() =>
-        np.takeAlongAxis(np.ones([2, 3]), np.ones([2]), 1),
-      ).toThrow("takeAlongAxis: input and indices must have the same rank");
+      expect(() => np.takeAlongAxis(np.ones([2, 3]), np.ones([2]), 1)).toThrow(
+        "takeAlongAxis: input and indices must have the same rank",
+      );
     });
 
     test("rejects unbroadcastable non-axis dimensions", () => {
