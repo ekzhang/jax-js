@@ -288,12 +288,6 @@ function runLU(
   }
 }
 
-function identityMatrix(n: number): number[] {
-  const out = new Array(n * n).fill(0);
-  for (let i = 0; i < n; i++) out[i * n + i] = 1;
-  return out;
-}
-
 function transposeMatrix(a: number[], rows: number, cols: number): number[] {
   const out = new Array(rows * cols);
   for (let i = 0; i < rows; i++) {
@@ -319,82 +313,6 @@ function multiplyMatrix(
     }
   }
   return out;
-}
-
-function symmetricJacobiEigen(
-  a: number[],
-  n: number,
-): { values: number[]; vectors: number[] } {
-  const work = a.slice();
-  const vectors = identityMatrix(n);
-  const maxIter = Math.max(50, 50 * n * n);
-
-  for (let iter = 0; iter < maxIter; iter++) {
-    let p = 0;
-    let q = 1;
-    let max = 0;
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        const value = Math.abs(work[i * n + j]);
-        if (value > max) {
-          max = value;
-          p = i;
-          q = j;
-        }
-      }
-    }
-
-    if (n < 2) break;
-    const scale = Math.max(
-      1,
-      Math.abs(work[p * n + p]),
-      Math.abs(work[q * n + q]),
-    );
-    if (max <= 1e-10 * scale) break;
-
-    const app = work[p * n + p];
-    const aqq = work[q * n + q];
-    const apq = work[p * n + q];
-    const tau = (aqq - app) / (2 * apq);
-    const t = Math.sign(tau || 1) / (Math.abs(tau) + Math.sqrt(1 + tau * tau));
-    const c = 1 / Math.sqrt(1 + t * t);
-    const s = t * c;
-
-    for (let k = 0; k < n; k++) {
-      const wkp = work[k * n + p];
-      const wkq = work[k * n + q];
-      work[k * n + p] = c * wkp - s * wkq;
-      work[k * n + q] = s * wkp + c * wkq;
-    }
-    for (let k = 0; k < n; k++) {
-      const wpk = work[p * n + k];
-      const wqk = work[q * n + k];
-      work[p * n + k] = c * wpk - s * wqk;
-      work[q * n + k] = s * wpk + c * wqk;
-    }
-    for (let k = 0; k < n; k++) {
-      const vkp = vectors[k * n + p];
-      const vkq = vectors[k * n + q];
-      vectors[k * n + p] = c * vkp - s * vkq;
-      vectors[k * n + q] = s * vkp + c * vkq;
-    }
-  }
-
-  return {
-    values: Array.from({ length: n }, (_, i) => work[i * n + i]),
-    vectors,
-  };
-}
-
-function normalizeColumns(a: number[], rows: number, cols: number) {
-  for (let col = 0; col < cols; col++) {
-    let norm = 0;
-    for (let row = 0; row < rows; row++) {
-      norm = Math.hypot(norm, a[row * cols + col]);
-    }
-    if (norm === 0) continue;
-    for (let row = 0; row < rows; row++) a[row * cols + col] /= norm;
-  }
 }
 
 function completeOrthonormalColumns(
