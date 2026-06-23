@@ -1572,6 +1572,24 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.logaddexp()", () => {
+    test("computes logaddexp", () => {
+      const x = np.array([1, 2, 3]);
+      const y = np.array([4, 5, 6]);
+      const z = np.logaddexp(x, y);
+      expect(z.js()).toBeAllclose([
+        Math.log(Math.exp(1) + Math.exp(4)),
+        Math.log(Math.exp(2) + Math.exp(5)),
+        Math.log(Math.exp(3) + Math.exp(6)),
+      ]);
+    });
+
+    test("avoids simple overflow", () => {
+      const x = np.logaddexp2(1000, 1000);
+      expect(x).toBeAllclose(1001);
+    });
+  });
+
   suite("jax.numpy.sqrt()", () => {
     test("computes element-wise square root", () => {
       const x = np.array([1, 4, 9]);

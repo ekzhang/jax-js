@@ -309,8 +309,8 @@ Most operations behave the same way as they do in JAX.
 | `log10`               | 🟢      |                                         |
 | `log1p`               | 🟡      | implemented as `log(1+x)`               |
 | `log2`                | 🟢      |                                         |
-| `logaddexp`           | 🟠      |                                         |
-| `logaddexp2`          | 🟠      |                                         |
+| `logaddexp`           | 🟢      |                                         |
+| `logaddexp2`          | 🟢      |                                         |
 | `logical_and`         | 🟢      |                                         |
 | `logical_not`         | 🟢      |                                         |
 | `logical_or`          | 🟢      |                                         |
