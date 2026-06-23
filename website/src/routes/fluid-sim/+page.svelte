@@ -47,18 +47,10 @@
   // --- Helper: shift a 2D field along an axis ---
   // Consumes `field`. Periodic (wrap) in Y, zero-pad in X.
   function shift2D(field: np.Array, axis: number, amount: number): np.Array {
-    const [h, w] = field.shape;
+    const [_h, w] = field.shape;
     if (axis === 0) {
       // Periodic in Y: wrap around
-      if (amount === 1) {
-        const body = field.ref.slice([1, h], []);
-        const wrap = field.slice([0, 1], []);
-        return np.concatenate([body, wrap], 0);
-      } else {
-        const wrap = field.ref.slice([h - 1, h], []);
-        const body = field.slice([0, h - 1], []);
-        return np.concatenate([wrap, body], 0);
-      }
+      return np.roll(field, -amount, 0);
     } else {
       // Zero-pad in X (inflow/outflow)
       if (amount === 1) {
