@@ -8,6 +8,7 @@
 
 export * from "./ops/convolution";
 export * from "./ops/elementwise";
+export * from "./ops/linalg";
 export * from "./ops/movement";
 export * from "./ops/reduction";
 export * from "./ops/utility";

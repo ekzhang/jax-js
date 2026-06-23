@@ -53,6 +53,23 @@ export const ReduceProd = wrapReduction(np.prod);
 export const ReduceSum = wrapReduction(np.sum);
 export const ReduceSumSquare = wrapReduction(np.sum, { prelude: np.square });
 
+export function MeanVarianceNormalization(
+  [xOp]: Operand[],
+  { axes = [0, 2, 3] }: { axes?: number[] },
+): Operand[] {
+  const x = operandToJax(xOp);
+  const mean = np.mean(x.ref, axes, { keepdims: true });
+  const centered = x.sub(mean);
+  const std = np
+    .sqrt(
+      np.mean(np.square(centered.ref), axes, {
+        keepdims: true,
+      }),
+    )
+    .add(1e-9);
+  return [centered.div(std)];
+}
+
 export function CumSum(
   [x, axisOnnx]: Operand[],
   { exclusive = 0, reverse = 0 }: { exclusive?: number; reverse?: number },
