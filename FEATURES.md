@@ -16,9 +16,9 @@ Other features just aren't implemented yet. But those can probably be added easi
 
 In the tables below, we use a color legend to refer to functions in JAX:
 
-- 🟢 = supported **(~58%)**
+- 🟢 = supported **(~60%)**
 - 🟡 = supported, with API limitations **(~2%)**
-- 🟠 = not supported, easy to add (<1 day) **(~29%)**
+- 🟠 = not supported, easy to add (<1 day) **(~27%)**
 - 🔴 = not supported **(~11%)**
 - ⚪️ = not applicable, will not be supported (see notes)
 
@@ -500,11 +500,10 @@ in pairs of real and imaginary parts.
 ## [`jax.numpy.linalg` module](https://docs.jax.dev/en/latest/jax.numpy.html#module-jax.numpy.linalg)
 
 Similarly, the `linalg` module has some very important operations for linear algebra and matrices.
-Most of these will be tricky to implement as routines with backend-specific lowering. We have
-Cholesky but are missing other building blocks like:
+Most of these are implemented as routines with backend-specific lowering.
 
-- LU decomposition (solver)
-- Householder iteration (QR, SVD, eigenvalues)
+We have Cholesky and LU decompositions but are missing other building blocks like QR, SVD, and
+eigenvalues ([issue](https://github.com/ekzhang/jax-js/issues/51)).
 
 | API                | Support | Notes                                   |
 | ------------------ | ------- | --------------------------------------- |
@@ -543,10 +542,10 @@ Cholesky but are missing other building blocks like:
 ## [`jax.lax` module](https://docs.jax.dev/en/latest/jax.lax.html)
 
 Only a few functions in `jax.lax` have been implemented, notably `conv_general_dilated()` for
-convolutions and `dot()` for general tensor contractions. Also, `linalg.triangular_solve()` is
+convolutions and `dot()` for general tensor contractions. Also, several routines in `lax.linalg` are
 available.
 
-In the future, the library may need a rework to add support for `lax` operations, which are
+In the future, the library may undergo a rework to add support for more `lax` operations, which are
 lower-level (semantics-wise, they don't do automatic type promotion). The reason why jax-js did not
 start from `lax` is because JAX is built on XLA as foundations and started with `lax` wrappers, but
 jax-js was built from scratch.
@@ -694,7 +693,7 @@ These modules are unimplemented:
 - `jax.example_libraries`
 - `jax.experimental`
 
-## [`optax`](https://optax.readthedocs.io/en/latest/index.html)
+## [`optax`](https://jax-js.com/docs/_jax-js/onnx)
 
 We have ported a subset of the [Optax](https://github.com/google-deepmind/optax) gradient processing
 and optimization library at `@jax-js/optax`. You can install this alongside `@jax-js/jax`.
@@ -703,8 +702,21 @@ and optimization library at `@jax-js/optax`. You can install this alongside `@ja
 npm i @jax-js/optax
 ```
 
-[API docs](https://jax-js.com/docs/modules/_jax-js_optax.html). Currently, the following optimizers
-are supported:
+Currently, the following optimizers are supported:
 
 - SGD
-- Adam
+- Adam, AdamW
+
+## [`onnx`](https://jax-js.com/docs/_jax-js/onnx)
+
+This is a fast ONNX model loader for jax-js, which loads compiled `.onnx` files into a computation
+graph and executes them on jax-js Arrays. It gives you a functional way of working with exported
+models, with multiple backends plus `jit()` and `grad()`.
+
+You can construct a `new ONNXModel()` from binary data, then run that model on array inputs. We
+support about 100 of the most common [ONNX operators](https://onnx.ai/onnx/operators/). Feel free to
+contribute by
+[implementing more operators](https://github.com/ekzhang/jax-js/tree/main/packages/onnx/src/ops).
+
+Please note that unlike [`onnxruntime-web`](https://www.npmjs.com/package/onnxruntime-web), we don't
+plan to support int4 and int8 quantization of models.
