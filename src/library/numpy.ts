@@ -1429,18 +1429,21 @@ export function vander(
     x.dispose();
     throw new Error(`vander: input must be 1D, got ${ndim}D`);
   }
-
   n ??= x.shape[0];
   if (!Number.isInteger(n) || n < 0) {
     x.dispose();
     throw new Error(`vander: n must be a non-negative integer, got ${n}`);
   }
-
+  const rows = x.shape[0];
+  if (n <= 1) return onesLike(x, { shape: [rows, n] });
+  const ones = onesLike(x.ref, { shape: [rows, 1] });
   const powers = increasing
-    ? arange(0, n, 1, { dtype: x.dtype, device: x.device })
-    : arange(n - 1, -1, -1, { dtype: x.dtype, device: x.device });
-  const p = powers.reshape([1, n]);
-  return where(p.ref.equal(0), 1, power(x.reshape([x.shape[0], 1]), p));
+    ? arange(1, n, 1, { dtype: x.dtype, device: x.device })
+    : arange(n - 1, 0, -1, { dtype: x.dtype, device: x.device });
+  const powered = power(x.reshape([rows, 1]), powers.reshape([1, n - 1]));
+  return increasing
+    ? concatenate([ones, powered], 1)
+    : concatenate([powered, ones], 1);
 }
 
 /**
