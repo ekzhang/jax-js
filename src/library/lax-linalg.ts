@@ -67,6 +67,14 @@ export function lu(x: ArrayLike): [Array, Array, Array] {
   return core.lu(x) as [Array, Array, Array];
 }
 
+export function svd(
+  a: ArrayLike,
+  opts: { computeUv?: boolean; fullMatrices?: boolean } = {},
+): Array | [Array, Array, Array] {
+  const out = core.svd(a, opts) as Array[];
+  return opts.computeUv === false ? out[0] : [out[0], out[1], out[2]];
+}
+
 /**
  * Solve a triangular linear system.
  *

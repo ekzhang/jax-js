@@ -889,6 +889,9 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
     });
     return [null, ctB];
   },
+  [Primitive.SVD]() {
+    throw new NonlinearError(Primitive.SVD);
+  },
   [Primitive.Jit](cts, args, { name, jaxpr }) {
     // We need this one because the jvp() rule for Jit generates a Jit
     // with the transformed Jaxpr. So grad-of-jit will result in a transposed

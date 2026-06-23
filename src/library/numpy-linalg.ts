@@ -176,6 +176,16 @@ export function slogdet(a: ArrayLike): [Array, Array] {
   return [sign, logabsdet];
 }
 
+export function svd(
+  a: ArrayLike,
+  opts: { computeUv?: boolean; fullMatrices?: boolean } = {},
+): Array | [Array, Array, Array] {
+  a = fudgeArray(a);
+  if (a.ndim < 2)
+    throw new Error(`svd: input must be at least 2D, got ${a.aval}`);
+  return lax.linalg.svd(a, opts);
+}
+
 /**
  * Solve a linear system of equations.
  *

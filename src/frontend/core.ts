@@ -93,6 +93,7 @@ export enum Primitive {
   TriangularSolve = "triangular_solve", // A is upper triangular, A @ X.T = B.T
   Cholesky = "cholesky", // A is positive-definite, A = L @ L^T
   LU = "lu", // LU decomposition with partial pivoting
+  SVD = "svd", // Singular value decomposition
 
   // JIT compilation
   Jit = "jit",
@@ -123,6 +124,7 @@ interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
   [Primitive.Shrink]: { slice: Pair[] };
   [Primitive.Pad]: { width: Pair[] };
   [Primitive.TriangularSolve]: { unitDiagonal: boolean };
+  [Primitive.SVD]: { computeUv: boolean; fullMatrices: boolean };
   [Primitive.Jit]: { name: string; jaxpr: Jaxpr; numConsts: number };
 }
 
@@ -147,6 +149,7 @@ export const routinePrimitives = new Map([
   [Primitive.TriangularSolve, Routines.TriangularSolve],
   [Primitive.Cholesky, Routines.Cholesky],
   [Primitive.LU, Routines.LU],
+  [Primitive.SVD, Routines.SVD],
 ]);
 
 export function add(x: TracerValue, y: TracerValue) {
@@ -534,6 +537,19 @@ export function lu(x: TracerValue) {
   if (aval.ndim < 2)
     throw new Error(`lu: expected batch of matrices, got ${aval}`);
   return bind(Primitive.LU, [x]);
+}
+
+export function svd(
+  x: TracerValue,
+  {
+    computeUv = true,
+    fullMatrices = true,
+  }: { computeUv?: boolean; fullMatrices?: boolean } = {},
+) {
+  const aval = ShapedArray.fromAval(getAval(x));
+  if (aval.ndim < 2)
+    throw new Error(`svd: expected batch of matrices, got ${aval}`);
+  return bind(Primitive.SVD, [x], { computeUv, fullMatrices });
 }
 
 export function sort(x: TracerValue) {

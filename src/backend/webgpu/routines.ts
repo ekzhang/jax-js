@@ -603,6 +603,8 @@ export function createRoutineShader(
       return createCholesky(device, routine.type);
     case Routines.LU:
       return createLU(device, routine.type);
+    case Routines.SVD:
+      throw new UnsupportedRoutineError(routine.name, "webgpu");
     default:
       throw new UnsupportedRoutineError(routine.name, "webgpu");
   }

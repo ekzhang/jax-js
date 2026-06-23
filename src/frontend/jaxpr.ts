@@ -1012,6 +1012,20 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
       new ShapedArray([...batch, m], DType.Int32, false),
     ];
   },
+  [Primitive.SVD]([a], { computeUv, fullMatrices }) {
+    if (a.ndim < 2)
+      throw new TypeError(`svd: requires at least 2D input, got ${a}`);
+    const batch = a.shape.slice(0, -2);
+    const [m, n] = a.shape.slice(-2);
+    const k = Math.min(m, n);
+    const s = new ShapedArray([...batch, k], a.dtype, false);
+    if (!computeUv) return [s];
+    return [
+      new ShapedArray([...batch, m, fullMatrices ? m : k], a.dtype, false),
+      s,
+      new ShapedArray([...batch, fullMatrices ? n : k, n], a.dtype, false),
+    ];
+  },
   [Primitive.Jit](args, { jaxpr }) {
     const { inTypes, outTypes } = typecheckJaxpr(jaxpr);
     if (args.length !== inTypes.length) {

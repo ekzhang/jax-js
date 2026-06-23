@@ -1177,6 +1177,7 @@ export class Array extends Tracer {
       [Primitive.TriangularSolve]: Array.#routine(Primitive.TriangularSolve),
       [Primitive.Cholesky]: Array.#routine(Primitive.Cholesky),
       [Primitive.LU]: Array.#routine(Primitive.LU),
+      [Primitive.SVD]: Array.#routine(Primitive.SVD),
       [Primitive.Jit](args, { jaxpr }) {
         if (jaxpr.inBinders.length !== args.length) {
           throw new Error(

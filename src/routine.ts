@@ -74,6 +74,14 @@ export enum Routines {
    *   such that `P = eye(M).slice(Permutation)` -> `P @ A = L @ U`.
    */
   LU = "LU",
+
+  /**
+   * Singular value decomposition of 2D matrices.
+   *
+   * The input is a batch of shape `[..., M, N]`. With `computeUv`, the output is
+   * `U, S, Vh`; otherwise the output is only `S`.
+   */
+  SVD = "SVD",
 }
 
 export interface RoutineType {
@@ -109,6 +117,8 @@ export function runCpuRoutine(
       return runCholesky(type, inputAr, outputAr);
     case Routines.LU:
       return runLU(type, inputAr, outputAr);
+    case Routines.SVD:
+      throw new Error("svd: CPU routine is not implemented yet");
     default:
       name satisfies never; // Exhaustiveness check
   }
