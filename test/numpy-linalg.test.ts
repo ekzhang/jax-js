@@ -323,6 +323,23 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
       expect(s).toBeAllclose([5.0, 0.0], { rtol: 1e-4, atol: 1e-4 });
     });
 
+    svdTest("returns orthonormal full singular vector bases", () => {
+      const a = np.array([
+        [1.0, 0.0],
+        [1.0, 0.0],
+        [0.0, 0.0],
+      ]);
+      const [u, _s, vh] = np.linalg.svd(a.ref);
+      expect(np.matmul(u.ref.transpose(), u.ref)).toBeAllclose(np.eye(3), {
+        rtol: 1e-4,
+        atol: 1e-4,
+      });
+      expect(np.matmul(vh, vh.ref.transpose())).toBeAllclose(np.eye(2), {
+        rtol: 1e-4,
+        atol: 1e-4,
+      });
+    });
+
     svdTest("handles batched matrices", () => {
       const a = np.array([
         [
