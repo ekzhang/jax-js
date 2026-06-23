@@ -128,7 +128,7 @@ export function runCpuRoutine(
     case Routines.SVD:
       return runSVD(type, inputAr, outputAr, routine.params);
     case Routines.Eigvals:
-      throw new Error("eigvals: CPU routine is not implemented yet");
+      return runEigvals(type, inputAr, outputAr);
     default:
       name satisfies never; // Exhaustiveness check
   }
@@ -461,5 +461,136 @@ function runSVD(
         vhOut![b * vhRows * n + row * n + col] = v[col * n + row];
       }
     }
+  }
+}
+
+function hessenbergHouseholder(a: number[], n: number): number[] {
+  const h = a.slice();
+  for (let k = 0; k < n - 2; k++) {
+    let norm = 0;
+    for (let i = k + 1; i < n; i++) norm = Math.hypot(norm, h[i * n + k]);
+    if (norm === 0) continue;
+
+    const sign = h[(k + 1) * n + k] >= 0 ? 1 : -1;
+    const v = new Array(n).fill(0);
+    v[k + 1] = h[(k + 1) * n + k] + sign * norm;
+    for (let i = k + 2; i < n; i++) v[i] = h[i * n + k];
+
+    let betaDen = 0;
+    for (let i = k + 1; i < n; i++) betaDen += v[i] * v[i];
+    if (betaDen === 0) continue;
+    const beta = 2 / betaDen;
+
+    for (let j = k; j < n; j++) {
+      let dot = 0;
+      for (let i = k + 1; i < n; i++) dot += v[i] * h[i * n + j];
+      for (let i = k + 1; i < n; i++) h[i * n + j] -= beta * v[i] * dot;
+    }
+
+    for (let i = 0; i < n; i++) {
+      let dot = 0;
+      for (let j = k + 1; j < n; j++) dot += h[i * n + j] * v[j];
+      for (let j = k + 1; j < n; j++) h[i * n + j] -= beta * dot * v[j];
+    }
+
+    for (let i = k + 2; i < n; i++) h[i * n + k] = 0;
+  }
+  return h;
+}
+
+function qrDecompose(a: number[], n: number): { q: number[]; r: number[] } {
+  const q = new Array(n * n).fill(0);
+  const r = new Array(n * n).fill(0);
+  const cols: number[][] = [];
+  for (let j = 0; j < n; j++) {
+    cols[j] = Array.from({ length: n }, (_, i) => a[i * n + j]);
+  }
+
+  for (let j = 0; j < n; j++) {
+    const v = cols[j].slice();
+    for (let i = 0; i < j; i++) {
+      let rij = 0;
+      for (let row = 0; row < n; row++) rij += q[row * n + i] * cols[j][row];
+      r[i * n + j] = rij;
+      for (let row = 0; row < n; row++) v[row] -= rij * q[row * n + i];
+    }
+
+    const norm = Math.hypot(...v);
+    r[j * n + j] = norm;
+    if (norm !== 0) {
+      for (let row = 0; row < n; row++) q[row * n + j] = v[row] / norm;
+    }
+  }
+  return { q, r };
+}
+
+function hasComplexTwoByTwoBlock(a: number[], n: number, i: number): boolean {
+  const aa = a[i * n + i];
+  const bb = a[i * n + i + 1];
+  const cc = a[(i + 1) * n + i];
+  const dd = a[(i + 1) * n + i + 1];
+  const trace = aa + dd;
+  const det = aa * dd - bb * cc;
+  return trace * trace - 4 * det < 0;
+}
+
+function realQrEigenvalues(input: number[], n: number): number[] {
+  if (n === 1) return [input[0]];
+
+  const h = hessenbergHouseholder(input, n);
+  const maxIter = Math.max(100, 200 * n * n);
+  for (let iter = 0; iter < maxIter; iter++) {
+    let done = true;
+    for (let i = 1; i < n; i++) {
+      const tol =
+        1e-10 *
+        (Math.abs(h[(i - 1) * n + i - 1]) + Math.abs(h[i * n + i]) + 1);
+      if (Math.abs(h[i * n + i - 1]) <= tol) h[i * n + i - 1] = 0;
+      else done = false;
+    }
+    if (done) return Array.from({ length: n }, (_, i) => h[i * n + i]);
+
+    for (let i = 0; i < n - 1; i++) {
+      if (Math.abs(h[(i + 1) * n + i]) > 1e-7) {
+        if (hasComplexTwoByTwoBlock(h, n, i)) {
+          throw new Error("eigvals: complex eigenvalues are not supported yet");
+        }
+      }
+    }
+
+    const mu = h[(n - 1) * n + n - 1];
+    const shifted = h.slice();
+    for (let i = 0; i < n; i++) shifted[i * n + i] -= mu;
+    const { q, r } = qrDecompose(shifted, n);
+    const next = multiplyMatrix(r, n, n, q, n);
+    for (let i = 0; i < n; i++) next[i * n + i] += mu;
+    h.splice(0, h.length, ...next);
+  }
+
+  for (let i = 0; i < n - 1; i++) {
+    if (
+      Math.abs(h[(i + 1) * n + i]) > 1e-7 &&
+      hasComplexTwoByTwoBlock(h, n, i)
+    ) {
+      throw new Error("eigvals: complex eigenvalues are not supported yet");
+    }
+  }
+  throw new Error("eigvals: QR iteration failed to converge");
+}
+
+function runEigvals(type: RoutineType, [a]: DataArray[], [out]: DataArray[]) {
+  const shape = type.inputShapes[0];
+  if (shape.length < 2) throw new Error("eigvals: input must be at least 2D");
+  const n = shape[shape.length - 1];
+  if (shape[shape.length - 2] !== n)
+    throw new Error("eigvals: input must be square");
+
+  for (let offset = 0; offset < a.length; offset += n * n) {
+    const batch = offset / (n * n);
+    const values = realQrEigenvalues(
+      Array.from(a.subarray(offset, offset + n * n)),
+      n,
+    );
+    for (let i = 0; i < n; i++) out[batch * n + i] = values[i];
   }
 }
