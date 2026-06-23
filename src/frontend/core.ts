@@ -94,6 +94,7 @@ export enum Primitive {
   Cholesky = "cholesky", // A is positive-definite, A = L @ L^T
   LU = "lu", // LU decomposition with partial pivoting
   SVD = "svd", // Singular value decomposition
+  Eigvals = "eigvals", // Real eigenvalues
 
   // JIT compilation
   Jit = "jit",
@@ -150,6 +151,7 @@ export const routinePrimitives = new Map([
   [Primitive.Cholesky, Routines.Cholesky],
   [Primitive.LU, Routines.LU],
   [Primitive.SVD, Routines.SVD],
+  [Primitive.Eigvals, Routines.Eigvals],
 ]);
 
 export function add(x: TracerValue, y: TracerValue) {
@@ -550,6 +552,13 @@ export function svd(
   if (aval.ndim < 2)
     throw new Error(`svd: expected batch of matrices, got ${aval}`);
   return bind(Primitive.SVD, [x], { computeUv, fullMatrices });
+}
+
+export function eigvals(x: TracerValue) {
+  const aval = ShapedArray.fromAval(getAval(x));
+  if (aval.ndim < 2 || aval.shape[aval.ndim - 1] !== aval.shape[aval.ndim - 2])
+    throw new Error(`eigvals: expected batch of square matrices, got ${aval}`);
+  return bind1(Primitive.Eigvals, [x]);
 }
 
 export function sort(x: TracerValue) {

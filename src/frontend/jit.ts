@@ -779,6 +779,7 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   [Primitive.Cholesky]: routineNoJit(),
   [Primitive.LU]: routineNoJit(),
   [Primitive.SVD]: routineNoJit(),
+  [Primitive.Eigvals]: routineNoJit(),
   [Primitive.Jit]() {
     throw new Error(
       "internal: Jit should have been flattened before JIT compilation",

@@ -1026,6 +1026,13 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
       new ShapedArray([...batch, fullMatrices ? n : k, n], a.dtype, false),
     ];
   },
+  [Primitive.Eigvals]([a]) {
+    if (a.ndim < 2)
+      throw new TypeError(`eigvals: requires at least 2D input, got ${a}`);
+    if (a.shape[a.ndim - 2] !== a.shape[a.ndim - 1])
+      throw new TypeError(`eigvals: must be square, got ${a}`);
+    return [new ShapedArray(a.shape.slice(0, -1), a.dtype, false)];
+  },
   [Primitive.Jit](args, { jaxpr }) {
     const { inTypes, outTypes } = typecheckJaxpr(jaxpr);
     if (args.length !== inTypes.length) {

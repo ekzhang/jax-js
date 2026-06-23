@@ -605,6 +605,8 @@ export function createRoutineShader(
       return createLU(device, routine.type);
     case Routines.SVD:
       throw new UnsupportedRoutineError(routine.name, "webgpu");
+    case Routines.Eigvals:
+      throw new UnsupportedRoutineError(routine.name, "webgpu");
     default:
       throw new UnsupportedRoutineError(routine.name, "webgpu");
   }

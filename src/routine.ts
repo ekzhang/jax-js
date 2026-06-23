@@ -82,6 +82,14 @@ export enum Routines {
    * `U, S, Vh`; otherwise the output is only `S`.
    */
   SVD = "SVD",
+
+  /**
+   * Real eigenvalues of 2D square matrices.
+   *
+   * The input is a batch of shape `[..., N, N]`, and the output is a batch of
+   * shape `[..., N]`. Complex eigenvalue pairs are not represented.
+   */
+  Eigvals = "Eigvals",
 }
 
 export interface RoutineType {
@@ -119,6 +127,8 @@ export function runCpuRoutine(
       return runLU(type, inputAr, outputAr);
     case Routines.SVD:
       return runSVD(type, inputAr, outputAr, routine.params);
+    case Routines.Eigvals:
+      throw new Error("eigvals: CPU routine is not implemented yet");
     default:
       name satisfies never; // Exhaustiveness check
   }

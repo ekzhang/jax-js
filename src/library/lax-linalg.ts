@@ -75,6 +75,10 @@ export function svd(
   return opts.computeUv === false ? out[0] : [out[0], out[1], out[2]];
 }
 
+export function eigvals(a: ArrayLike): Array {
+  return core.eigvals(a) as Array;
+}
+
 /**
  * Solve a triangular linear system.
  *

@@ -397,6 +397,9 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
   [Primitive.SVD]() {
     throw new TypeError("svd: JVP rule is not implemented");
   },
+  [Primitive.Eigvals]() {
+    throw new TypeError("eigvals: JVP rule is not implemented");
+  },
   [Primitive.Jit](primals, tangents, { name, jaxpr }) {
     const newJaxpr = jvpJaxpr(jaxpr);
     const outs = bind(

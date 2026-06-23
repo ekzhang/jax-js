@@ -186,6 +186,12 @@ export function svd(
   return lax.linalg.svd(a, opts);
 }
 
+export function eigvals(a: ArrayLike): Array {
+  a = fudgeArray(a);
+  checkSquare("eigvals", a);
+  return lax.linalg.eigvals(a);
+}
+
 /**
  * Solve a linear system of equations.
  *
