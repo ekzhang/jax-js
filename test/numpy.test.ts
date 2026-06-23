@@ -1941,6 +1941,47 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.roll()", () => {
+    test("rolls a 1D array", () => {
+      const x = np.array([1, 2, 3, 4, 5]);
+      const y = np.roll(x, 2);
+      expect(y.js()).toEqual([4, 5, 1, 2, 3]);
+    });
+
+    test("rolls a 2D array with/out axis", () => {
+      const x = np.array([
+        [1, 2, 3],
+        [4, 5, 6],
+      ]);
+      const y1 = np.roll(x.ref, 1);
+      expect(y1.js()).toEqual([
+        [6, 1, 2],
+        [3, 4, 5],
+      ]);
+      const y2 = np.roll(x.ref, 1, 0);
+      expect(y2.js()).toEqual([
+        [4, 5, 6],
+        [1, 2, 3],
+      ]);
+      const y3 = np.roll(x.ref, -1, 1);
+      expect(y3.js()).toEqual([
+        [2, 3, 1],
+        [5, 6, 4],
+      ]);
+      const y4 = np.roll(x, [2, 1], [1, 0]);
+      expect(y4.js()).toEqual([
+        [5, 6, 4],
+        [2, 3, 1],
+      ]);
+    });
+
+    test("rolls with large shifts", () => {
+      const x = np.array([1, 2, 3, 4, 5]);
+      const y = np.roll(x, 20);
+      expect(y.js()).toEqual([1, 2, 3, 4, 5]);
+    });
+  });
+
   suite("jax.numpy.argmax()", () => {
     test("finds maximum of logits", () => {
       const x = np.argmax(np.array([0.1, 0.2, 0.3, 0.2]));

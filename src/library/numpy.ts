@@ -35,6 +35,7 @@ import {
   normalizeAxis,
   range,
   rep,
+  zip,
 } from "../utils";
 import * as lax from "./lax";
 import { iinfo } from "./numpy";
@@ -745,6 +746,46 @@ export function flipud(x: ArrayLike): Array {
 /** Flip an array horizontally (axis=1). */
 export function fliplr(x: ArrayLike): Array {
   return flip(x, 1);
+}
+
+/**
+ * Roll the elements of an array along a specified axis.
+ * @param a - Input array.
+ * @param shift - The number of places by which elements are shifted. If multiple,
+ * the shift is specified for each axis individually.
+ * @param axis - The axis or axes to roll. If `null`, the array is flattened,
+ * shifted, and then reshaped to its original shape.
+ */
+export function roll(
+  a: ArrayLike,
+  shift: number | number[],
+  axis: core.Axis = null,
+): Array {
+  a = fudgeArray(a);
+  if (axis === null) {
+    return roll(a.ravel(), shift, 0).reshape(a.shape);
+  }
+  axis = normalizeAxis(axis, a.ndim, false);
+  if (typeof shift === "number") {
+    shift = rep(axis.length, shift);
+  } else if (shift.length !== axis.length) {
+    throw new Error(
+      `roll: shift and axis must have the same length, got ` +
+        `shift=${JSON.stringify(shift)} and axis=${JSON.stringify(axis)}`,
+    );
+  }
+  for (const [s, ax] of zip(shift, axis)) {
+    if (!Number.isInteger(s))
+      throw new Error(`roll: shift must be an integer, got ${s}`);
+    const n = a.shape[ax];
+    const s2 = ((s % n) + n) % n;
+    const parts = [
+      a.ref.slice(...rep<[] | Pair>(a.ndim, []).toSpliced(ax, 1, [n - s2, n])),
+      a.slice(...rep<[] | Pair>(a.ndim, []).toSpliced(ax, 1, [0, n - s2])),
+    ];
+    a = concatenate(parts, ax);
+  }
+  return a;
 }
 
 export { transpose as permuteDims };
