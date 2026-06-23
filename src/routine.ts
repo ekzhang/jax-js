@@ -356,8 +356,7 @@ function symmetricJacobiEigen(
     const aqq = work[q * n + q];
     const apq = work[p * n + q];
     const tau = (aqq - app) / (2 * apq);
-    const t =
-      Math.sign(tau || 1) / (Math.abs(tau) + Math.sqrt(1 + tau * tau));
+    const t = Math.sign(tau || 1) / (Math.abs(tau) + Math.sqrt(1 + tau * tau));
     const c = 1 / Math.sqrt(1 + t * t);
     const s = t * c;
 
@@ -543,8 +542,7 @@ function realQrEigenvalues(input: number[], n: number): number[] {
     let done = true;
     for (let i = 1; i < n; i++) {
       const tol =
-        1e-10 *
-        (Math.abs(h[(i - 1) * n + i - 1]) + Math.abs(h[i * n + i]) + 1);
+        1e-10 * (Math.abs(h[(i - 1) * n + i - 1]) + Math.abs(h[i * n + i]) + 1);
       if (Math.abs(h[i * n + i - 1]) <= tol) h[i * n + i - 1] = 0;
       else done = false;
     }
