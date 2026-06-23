@@ -1413,6 +1413,37 @@ export function outer(x: ArrayLike, y: ArrayLike): Array {
 }
 
 /**
+ * Generate a Vandermonde matrix from a 1D input vector.
+ *
+ * @param x - Input vector.
+ * @param n - Number of columns. Defaults to `x.shape[0]`.
+ * @param increasing - If true, powers increase from left to right.
+ */
+export function vander(
+  x: ArrayLike,
+  { n, increasing = false }: { n?: number; increasing?: boolean } = {},
+): Array {
+  x = fudgeArray(x);
+  if (x.ndim !== 1) {
+    const ndim = x.ndim;
+    x.dispose();
+    throw new Error(`vander: input must be 1D, got ${ndim}D`);
+  }
+
+  n ??= x.shape[0];
+  if (!Number.isInteger(n) || n < 0) {
+    x.dispose();
+    throw new Error(`vander: n must be a non-negative integer, got ${n}`);
+  }
+
+  const powers = increasing
+    ? arange(0, n, 1, { dtype: x.dtype, device: x.device })
+    : arange(n - 1, -1, -1, { dtype: x.dtype, device: x.device });
+  const p = powers.reshape([1, n]);
+  return where(p.ref.equal(0), 1, power(x.reshape([x.shape[0], 1]), p));
+}
+
+/**
  * @function Compute the cross product of two arrays.
  *
  * Supports 2D (scalar result) and 3D cross products, with optional axis

@@ -459,7 +459,7 @@ Most operations behave the same way as they do in JAX.
 | `unravel_index`       | 🟠      |                                         |
 | `unstack`             | 🟠      |                                         |
 | `unwrap`              | 🔴      |                                         |
-| `vander`              | 🟠      |                                         |
+| `vander`              | 🟢      |                                         |
 | `var`                 | 🟢      |                                         |
 | `vdot`                | 🟢      |                                         |
 | `vecdot`              | 🟢      |                                         |
