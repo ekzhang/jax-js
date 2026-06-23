@@ -8,6 +8,7 @@ import { numpy as np } from "@jax-js/jax";
 import { TensorProto } from "onnx-buf";
 
 import {
+  onnxDtypeToJax,
   type Operand,
   operandToJax,
   operandToJs,
@@ -77,4 +78,9 @@ export function ConstantOfShape(
   } else {
     return [np.zeros(shape)];
   }
+}
+
+export function BitCast([input]: Operand[], { to }: { to: number }): Operand[] {
+  const x = operandToJax(input);
+  return [x.view(onnxDtypeToJax(to))];
 }

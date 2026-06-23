@@ -19,6 +19,10 @@ function isIntegerDtype(dtype: DType): boolean {
   return dtype === np.int32 || dtype === np.uint32 || dtype === np.bool;
 }
 
+function isBitwiseDtype(dtype: DType): boolean {
+  return dtype === np.int32 || dtype === np.uint32;
+}
+
 function wrapFn(
   fn: (...args: np.Array[]) => np.Array,
   staticFn?: (...args: number[]) => number,
@@ -58,6 +62,15 @@ function wrapFn(
   };
 }
 
+function wrapBitwiseFn(fn: (...args: np.Array[]) => np.Array) {
+  return (inputs: Operand[]): Operand[] => {
+    if (!inputs.every((op) => isBitwiseDtype(op.dtype))) {
+      throw new Error("ONNX bitwise operators only support integer tensors");
+    }
+    return [fn(...inputs.map(operandToJax))];
+  };
+}
+
 export const Add = wrapFn(np.add, (a, b) => a + b);
 export const Sub = wrapFn(np.subtract, (a, b) => a - b);
 export const Mul = wrapFn(np.multiply, (a, b) => a * b);
@@ -71,6 +84,19 @@ export const Reciprocal = wrapFn(np.reciprocal);
 export const Floor = wrapFn(np.floor);
 export const Ceil = wrapFn(np.ceil);
 export const Identity = wrapFn((x) => x);
+
+export function Round([xOp]: Operand[]): Operand[] {
+  const x = operandToJax(xOp);
+  return [np.where(x.ref.equal(0), x.ref, np.round(x))];
+}
+
+export function Min(inputs: Operand[]): Operand[] {
+  return [inputs.map(operandToJax).reduce((a, b) => np.minimum(a, b))];
+}
+
+export function Max(inputs: Operand[]): Operand[] {
+  return [inputs.map(operandToJax).reduce((a, b) => np.maximum(a, b))];
+}
 
 export const Equal = wrapFn(np.equal, (a, b) => Number(a === b), np.bool);
 export const Less = wrapFn(np.less, (a, b) => Number(a < b), np.bool);
@@ -91,8 +117,56 @@ export const Clip = wrapFn(np.clip);
 
 export const IsNaN = wrapFn(np.isnan);
 
+export function IsInf(
+  [xOp]: Operand[],
+  {
+    detect_negative = 1,
+    detect_positive = 1,
+  }: { detect_negative?: number; detect_positive?: number },
+): Operand[] {
+  const x = operandToJax(xOp);
+  if (detect_negative && detect_positive) return [np.isinf(x)];
+  if (detect_negative) return [np.isneginf(x)];
+  if (detect_positive) return [np.isposinf(x)];
+  return [np.fullLike(x, false, { dtype: np.bool })];
+}
+
+export const And = wrapFn(
+  np.logicalAnd,
+  (a, b) => Number(Boolean(a) && Boolean(b)),
+  np.bool,
+);
+export const Or = wrapFn(
+  np.logicalOr,
+  (a, b) => Number(Boolean(a) || Boolean(b)),
+  np.bool,
+);
+export const Xor = wrapFn(
+  np.logicalXor,
+  (a, b) => Number(Boolean(a) !== Boolean(b)),
+  np.bool,
+);
+
 export function Not([x]: Operand[]): Operand[] {
   return [np.notEqual(operandToJax(x), true)];
+}
+
+export const BitwiseAnd = wrapBitwiseFn(np.bitwiseAnd);
+export const BitwiseOr = wrapBitwiseFn(np.bitwiseOr);
+export const BitwiseXor = wrapBitwiseFn(np.bitwiseXor);
+export const BitwiseNot = wrapBitwiseFn(np.bitwiseNot);
+
+export function BitShift(
+  inputs: Operand[],
+  { direction }: { direction: "LEFT" | "RIGHT" },
+): Operand[] {
+  if (!inputs.every((op) => op.dtype === np.uint32)) {
+    throw new Error("ONNX BitShift only supports unsigned integer tensors");
+  }
+  const [x, y] = inputs.map(operandToJax);
+  if (direction === "LEFT") return [np.leftShift(x, y)];
+  if (direction === "RIGHT") return [np.rightShift(x, y)];
+  throw new Error(`Unsupported BitShift direction: ${direction}`);
 }
 
 export const Sin = wrapFn(np.sin);
@@ -121,6 +195,57 @@ export const Celu = wrapFn(nn.celu);
 export const Softplus = wrapFn(nn.softplus);
 export const Softsign = wrapFn(nn.softSign);
 export const Mish = wrapFn(nn.mish);
+export const HardSwish = wrapFn(nn.hardSwish);
+
+export function HardSigmoid(
+  [xOp]: Operand[],
+  { alpha = 0.2, beta = 0.5 }: { alpha?: number; beta?: number },
+): Operand[] {
+  const x = operandToJax(xOp);
+  return [np.clip(x.mul(alpha).add(beta), 0, 1)];
+}
+
+export function Selu(
+  [xOp]: Operand[],
+  {
+    alpha = 1.67326319217681884765625,
+    gamma = 1.05070102214813232421875,
+  }: { alpha?: number; gamma?: number },
+): Operand[] {
+  const x = operandToJax(xOp);
+  return [
+    np.where(x.ref.lessEqual(0), np.expm1(x.ref).mul(alpha), x).mul(gamma),
+  ];
+}
+
+export function PRelu([xOp, slopeOp]: Operand[]): Operand[] {
+  const x = operandToJax(xOp);
+  const slope = operandToJax(slopeOp);
+  return [np.where(x.ref.less(0), x.ref.mul(slope), x)];
+}
+
+export function ThresholdedRelu(
+  [xOp]: Operand[],
+  { alpha = 1.0 }: { alpha?: number },
+): Operand[] {
+  const x = operandToJax(xOp);
+  return [np.where(x.ref.greater(alpha), x, np.zerosLike(x.ref))];
+}
+
+export function Shrink(
+  [xOp]: Operand[],
+  { bias = 0.0, lambd = 0.5 }: { bias?: number; lambd?: number },
+): Operand[] {
+  const x = operandToJax(xOp);
+  const negative = x.ref.less(-lambd);
+  const positive = x.ref.greater(lambd);
+  const positiveOrZero = np.where(
+    positive,
+    x.ref.sub(bias),
+    np.zerosLike(x.ref),
+  );
+  return [np.where(negative, x.add(bias), positiveOrZero)];
+}
 
 export function Gelu(
   inputs: Operand[],
