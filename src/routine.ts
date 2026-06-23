@@ -118,7 +118,7 @@ export function runCpuRoutine(
     case Routines.LU:
       return runLU(type, inputAr, outputAr);
     case Routines.SVD:
-      throw new Error("svd: CPU routine is not implemented yet");
+      return runSVD(type, inputAr, outputAr, routine.params);
     default:
       name satisfies never; // Exhaustiveness check
   }
@@ -273,6 +273,182 @@ function runLU(
           for (let col = j + 1; col < n; col++)
             out[i * n + col] -= factor * out[j * n + col];
         }
+      }
+    }
+  }
+}
+
+function identityMatrix(n: number): number[] {
+  const out = new Array(n * n).fill(0);
+  for (let i = 0; i < n; i++) out[i * n + i] = 1;
+  return out;
+}
+
+function transposeMatrix(a: number[], rows: number, cols: number): number[] {
+  const out = new Array(rows * cols);
+  for (let i = 0; i < rows; i++) {
+    for (let j = 0; j < cols; j++) out[j * rows + i] = a[i * cols + j];
+  }
+  return out;
+}
+
+function multiplyMatrix(
+  a: number[],
+  aRows: number,
+  aCols: number,
+  b: number[],
+  bCols: number,
+): number[] {
+  const out = new Array(aRows * bCols).fill(0);
+  for (let i = 0; i < aRows; i++) {
+    for (let k = 0; k < aCols; k++) {
+      const aik = a[i * aCols + k];
+      for (let j = 0; j < bCols; j++) {
+        out[i * bCols + j] += aik * b[k * bCols + j];
+      }
+    }
+  }
+  return out;
+}
+
+function symmetricJacobiEigen(
+  a: number[],
+  n: number,
+): { values: number[]; vectors: number[] } {
+  const work = a.slice();
+  const vectors = identityMatrix(n);
+  const maxIter = Math.max(50, 50 * n * n);
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    let p = 0;
+    let q = 1;
+    let max = 0;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const value = Math.abs(work[i * n + j]);
+        if (value > max) {
+          max = value;
+          p = i;
+          q = j;
+        }
+      }
+    }
+
+    if (n < 2) break;
+    const scale = Math.max(
+      1,
+      Math.abs(work[p * n + p]),
+      Math.abs(work[q * n + q]),
+    );
+    if (max <= 1e-10 * scale) break;
+
+    const app = work[p * n + p];
+    const aqq = work[q * n + q];
+    const apq = work[p * n + q];
+    const tau = (aqq - app) / (2 * apq);
+    const t =
+      Math.sign(tau || 1) / (Math.abs(tau) + Math.sqrt(1 + tau * tau));
+    const c = 1 / Math.sqrt(1 + t * t);
+    const s = t * c;
+
+    for (let k = 0; k < n; k++) {
+      const wkp = work[k * n + p];
+      const wkq = work[k * n + q];
+      work[k * n + p] = c * wkp - s * wkq;
+      work[k * n + q] = s * wkp + c * wkq;
+    }
+    for (let k = 0; k < n; k++) {
+      const wpk = work[p * n + k];
+      const wqk = work[q * n + k];
+      work[p * n + k] = c * wpk - s * wqk;
+      work[q * n + k] = s * wpk + c * wqk;
+    }
+    for (let k = 0; k < n; k++) {
+      const vkp = vectors[k * n + p];
+      const vkq = vectors[k * n + q];
+      vectors[k * n + p] = c * vkp - s * vkq;
+      vectors[k * n + q] = s * vkp + c * vkq;
+    }
+  }
+
+  return {
+    values: Array.from({ length: n }, (_, i) => work[i * n + i]),
+    vectors,
+  };
+}
+
+function normalizeColumns(a: number[], rows: number, cols: number) {
+  for (let col = 0; col < cols; col++) {
+    let norm = 0;
+    for (let row = 0; row < rows; row++) {
+      norm = Math.hypot(norm, a[row * cols + col]);
+    }
+    if (norm === 0) continue;
+    for (let row = 0; row < rows; row++) a[row * cols + col] /= norm;
+  }
+}
+
+function runSVD(
+  type: RoutineType,
+  [a]: DataArray[],
+  outputs: DataArray[],
+  { computeUv, fullMatrices }: { computeUv: boolean; fullMatrices: boolean },
+) {
+  const shape = type.inputShapes[0];
+  if (shape.length < 2) throw new Error("svd: input must be at least 2D");
+  const m = shape[shape.length - 2];
+  const n = shape[shape.length - 1];
+  const k = Math.min(m, n);
+  const batches = a.length / (m * n);
+  const [uOut, sOut, vhOut] = computeUv
+    ? outputs
+    : [undefined, outputs[0], undefined];
+
+  for (let b = 0; b < batches; b++) {
+    const mat = Array.from(a.subarray(b * m * n, (b + 1) * m * n));
+    const at = transposeMatrix(mat, m, n);
+    const ata = multiplyMatrix(at, n, m, mat, n);
+    const eig = symmetricJacobiEigen(ata, n);
+    const order = eig.values
+      .map((value, index) => ({ value: Math.max(0, value), index }))
+      .sort((x, y) => y.value - x.value);
+    const singularValues = order
+      .slice(0, k)
+      .map((item) => Math.sqrt(item.value));
+
+    for (let i = 0; i < k; i++) sOut[b * k + i] = singularValues[i];
+    if (!computeUv) continue;
+
+    const v = new Array(n * n).fill(0);
+    for (let col = 0; col < n; col++) {
+      const src = order[col]?.index ?? col;
+      for (let row = 0; row < n; row++) {
+        v[row * n + col] = eig.vectors[row * n + src];
+      }
+    }
+
+    const uFull = identityMatrix(m);
+    for (let col = 0; col < k; col++) {
+      if (singularValues[col] <= 1e-12) continue;
+      for (let row = 0; row < m; row++) {
+        let sum = 0;
+        for (let j = 0; j < n; j++) sum += mat[row * n + j] * v[j * n + col];
+        uFull[row * m + col] = sum / singularValues[col];
+      }
+    }
+    normalizeColumns(uFull, m, m);
+
+    const uCols = fullMatrices ? m : k;
+    for (let row = 0; row < m; row++) {
+      for (let col = 0; col < uCols; col++) {
+        uOut![b * m * uCols + row * uCols + col] = uFull[row * m + col];
+      }
+    }
+
+    const vhRows = fullMatrices ? n : k;
+    for (let row = 0; row < vhRows; row++) {
+      for (let col = 0; col < n; col++) {
+        vhOut![b * vhRows * n + row * n + col] = v[col * n + row];
       }
     }
   }
