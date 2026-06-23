@@ -1861,6 +1861,24 @@ export function log1p(x: ArrayLike): Array {
   return log(add(1, x));
 }
 
+/**
+ * @function
+ * Compute `log(exp(x1) + exp(x2))` avoiding overflow.
+ */
+export const logaddexp = jit(function logaddexp(x1: Array, x2: Array): Array {
+  const xmax = maximum(x1.ref, x2.ref);
+  return log(exp(x1.sub(xmax.ref)).add(exp(x2.sub(xmax.ref)))).add(xmax);
+});
+
+/**
+ * @function
+ * Logarithm of the sum of exponentials of inputs in base-2 avoiding overflow.
+ */
+export const logaddexp2 = jit(function logaddexp2(x1: Array, x2: Array): Array {
+  const xmax = maximum(x1.ref, x2.ref);
+  return log2(exp2(x1.sub(xmax.ref)).add(exp2(x2.sub(xmax.ref)))).add(xmax);
+});
+
 /** Convert angles from degrees to radians. */
 export function deg2rad(x: ArrayLike): Array {
   return multiply(x, pi / 180);
