@@ -397,6 +397,329 @@ function normalizeColumns(a: number[], rows: number, cols: number) {
   }
 }
 
+function completeOrthonormalColumns(
+  basis: number[],
+  rows: number,
+  cols: number,
+): number[] {
+  const out = new Array(rows * rows).fill(0);
+  let outCol = 0;
+
+  const addCandidate = (candidate: number[]) => {
+    for (let col = 0; col < outCol; col++) {
+      let dot = 0;
+      for (let row = 0; row < rows; row++)
+        dot += candidate[row] * out[row * rows + col];
+      for (let row = 0; row < rows; row++)
+        candidate[row] -= dot * out[row * rows + col];
+    }
+    let norm = 0;
+    for (let row = 0; row < rows; row++)
+      norm = Math.hypot(norm, candidate[row]);
+    if (norm <= 1e-12) return;
+    for (let row = 0; row < rows; row++)
+      out[row * rows + outCol] = candidate[row] / norm;
+    outCol++;
+  };
+
+  for (let col = 0; col < cols && outCol < rows; col++) {
+    addCandidate(
+      Array.from({ length: rows }, (_, row) => basis[row * cols + col]),
+    );
+  }
+  for (let col = 0; col < rows && outCol < rows; col++) {
+    const candidate = new Array(rows).fill(0);
+    candidate[col] = 1;
+    addCandidate(candidate);
+  }
+  return out;
+}
+
+function golubReinschTallSVD(
+  input: number[],
+  m: number,
+  n: number,
+): { s: number[]; u: number[]; v: number[] } {
+  const a = input.slice();
+  const s = new Array(Math.min(m + 1, n)).fill(0);
+  const e = new Array(n).fill(0);
+  const work = new Array(m).fill(0);
+  const uCols = n;
+  const u = new Array(m * uCols).fill(0);
+  const v = new Array(n * n).fill(0);
+  const nct = Math.min(m - 1, n);
+  const nrt = Math.max(0, Math.min(n - 2, m));
+  const mrc = Math.max(nct, nrt);
+  const get = (row: number, col: number) => a[row * n + col];
+  const set = (row: number, col: number, value: number) => {
+    a[row * n + col] = value;
+  };
+
+  for (let k = 0; k < mrc; k++) {
+    if (k < nct) {
+      s[k] = 0;
+      for (let i = k; i < m; i++) s[k] = Math.hypot(s[k], get(i, k));
+      if (s[k] !== 0) {
+        if (get(k, k) < 0) s[k] = -s[k];
+        for (let i = k; i < m; i++) set(i, k, get(i, k) / s[k]);
+        set(k, k, get(k, k) + 1);
+      }
+      s[k] = -s[k];
+    }
+
+    for (let j = k + 1; j < n; j++) {
+      if (k < nct && s[k] !== 0) {
+        let t = 0;
+        for (let i = k; i < m; i++) t += get(i, k) * get(i, j);
+        t = -t / get(k, k);
+        for (let i = k; i < m; i++) set(i, j, get(i, j) + t * get(i, k));
+      }
+      e[j] = get(k, j);
+    }
+
+    if (k < nct) {
+      for (let i = k; i < m; i++) u[i * uCols + k] = get(i, k);
+    }
+
+    if (k < nrt) {
+      e[k] = 0;
+      for (let i = k + 1; i < n; i++) e[k] = Math.hypot(e[k], e[i]);
+      if (e[k] !== 0) {
+        if (e[k + 1] < 0) e[k] = -e[k];
+        for (let i = k + 1; i < n; i++) e[i] /= e[k];
+        e[k + 1] += 1;
+      }
+      e[k] = -e[k];
+      if (k + 1 < m && e[k] !== 0) {
+        for (let i = k + 1; i < m; i++) work[i] = 0;
+        for (let i = k + 1; i < m; i++) {
+          for (let j = k + 1; j < n; j++) work[i] += e[j] * get(i, j);
+        }
+        for (let j = k + 1; j < n; j++) {
+          const t = -e[j] / e[k + 1];
+          for (let i = k + 1; i < m; i++) set(i, j, get(i, j) + t * work[i]);
+        }
+      }
+      for (let i = k + 1; i < n; i++) v[i * n + k] = e[i];
+    }
+  }
+
+  const pInit = Math.min(n, m + 1);
+  if (nct < n) s[nct] = get(nct, nct);
+  if (m < pInit) s[pInit - 1] = 0;
+  if (nrt + 1 < pInit) e[nrt] = get(nrt, pInit - 1);
+  e[pInit - 1] = 0;
+
+  for (let j = nct; j < uCols; j++) {
+    for (let i = 0; i < m; i++) u[i * uCols + j] = 0;
+    u[j * uCols + j] = 1;
+  }
+  for (let k = nct - 1; k >= 0; k--) {
+    if (s[k] !== 0) {
+      for (let j = k + 1; j < uCols; j++) {
+        let t = 0;
+        for (let i = k; i < m; i++) t += u[i * uCols + k] * u[i * uCols + j];
+        t = -t / u[k * uCols + k];
+        for (let i = k; i < m; i++) u[i * uCols + j] += t * u[i * uCols + k];
+      }
+      for (let i = k; i < m; i++) u[i * uCols + k] = -u[i * uCols + k];
+      u[k * uCols + k] += 1;
+      for (let i = 0; i < k - 1; i++) u[i * uCols + k] = 0;
+    } else {
+      for (let i = 0; i < m; i++) u[i * uCols + k] = 0;
+      u[k * uCols + k] = 1;
+    }
+  }
+
+  for (let k = n - 1; k >= 0; k--) {
+    if (k < nrt && e[k] !== 0) {
+      for (let j = k + 1; j < n; j++) {
+        let t = 0;
+        for (let i = k + 1; i < n; i++) t += v[i * n + k] * v[i * n + j];
+        t = -t / v[(k + 1) * n + k];
+        for (let i = k + 1; i < n; i++) v[i * n + j] += t * v[i * n + k];
+      }
+    }
+    for (let i = 0; i < n; i++) v[i * n + k] = 0;
+    v[k * n + k] = 1;
+  }
+
+  let p = pInit;
+  const pp = p - 1;
+  let iter = 0;
+  const eps = Number.EPSILON;
+  while (p > 0) {
+    let k: number;
+    let kase: number;
+    for (k = p - 2; k >= -1; k--) {
+      if (k === -1) break;
+      const alpha =
+        Number.MIN_VALUE + eps * (Math.abs(s[k]) + Math.abs(s[k + 1]));
+      if (Math.abs(e[k]) <= alpha || Number.isNaN(e[k])) {
+        e[k] = 0;
+        break;
+      }
+    }
+    if (k === p - 2) {
+      kase = 4;
+    } else {
+      let ks: number;
+      for (ks = p - 1; ks >= k; ks--) {
+        if (ks === k) break;
+        const t =
+          (ks !== p ? Math.abs(e[ks]) : 0) +
+          (ks !== k + 1 ? Math.abs(e[ks - 1]) : 0);
+        if (Math.abs(s[ks]) <= eps * t) {
+          s[ks] = 0;
+          break;
+        }
+      }
+      if (ks === k) kase = 3;
+      else if (ks === p - 1) kase = 1;
+      else {
+        kase = 2;
+        k = ks;
+      }
+    }
+    k++;
+
+    switch (kase) {
+      case 1: {
+        let f = e[p - 2];
+        e[p - 2] = 0;
+        for (let j = p - 2; j >= k; j--) {
+          let t = Math.hypot(s[j], f);
+          const cs = s[j] / t;
+          const sn = f / t;
+          s[j] = t;
+          if (j !== k) {
+            f = -sn * e[j - 1];
+            e[j - 1] = cs * e[j - 1];
+          }
+          for (let i = 0; i < n; i++) {
+            t = cs * v[i * n + j] + sn * v[i * n + p - 1];
+            v[i * n + p - 1] = -sn * v[i * n + j] + cs * v[i * n + p - 1];
+            v[i * n + j] = t;
+          }
+        }
+        break;
+      }
+      case 2: {
+        let f = e[k - 1];
+        e[k - 1] = 0;
+        for (let j = k; j < p; j++) {
+          let t = Math.hypot(s[j], f);
+          const cs = s[j] / t;
+          const sn = f / t;
+          s[j] = t;
+          f = -sn * e[j];
+          e[j] = cs * e[j];
+          for (let i = 0; i < m; i++) {
+            t = cs * u[i * uCols + j] + sn * u[i * uCols + k - 1];
+            u[i * uCols + k - 1] =
+              -sn * u[i * uCols + j] + cs * u[i * uCols + k - 1];
+            u[i * uCols + j] = t;
+          }
+        }
+        break;
+      }
+      case 3: {
+        const scale = Math.max(
+          Math.abs(s[p - 1]),
+          Math.abs(s[p - 2]),
+          Math.abs(e[p - 2]),
+          Math.abs(s[k]),
+          Math.abs(e[k]),
+        );
+        const sp = s[p - 1] / scale;
+        const spm1 = s[p - 2] / scale;
+        const epm1 = e[p - 2] / scale;
+        const sk = s[k] / scale;
+        const ek = e[k] / scale;
+        const b = ((spm1 + sp) * (spm1 - sp) + epm1 * epm1) / 2;
+        const c = sp * epm1 * (sp * epm1);
+        let shift = 0;
+        if (b !== 0 || c !== 0) {
+          shift = b < 0 ? -Math.sqrt(b * b + c) : Math.sqrt(b * b + c);
+          shift = c / (b + shift);
+        }
+        let f = (sk + sp) * (sk - sp) + shift;
+        let g = sk * ek;
+        for (let j = k; j < p - 1; j++) {
+          let t = Math.hypot(f, g);
+          if (t === 0) t = Number.MIN_VALUE;
+          let cs = f / t;
+          let sn = g / t;
+          if (j !== k) e[j - 1] = t;
+          f = cs * s[j] + sn * e[j];
+          e[j] = cs * e[j] - sn * s[j];
+          g = sn * s[j + 1];
+          s[j + 1] = cs * s[j + 1];
+          for (let i = 0; i < n; i++) {
+            t = cs * v[i * n + j] + sn * v[i * n + j + 1];
+            v[i * n + j + 1] = -sn * v[i * n + j] + cs * v[i * n + j + 1];
+            v[i * n + j] = t;
+          }
+          t = Math.hypot(f, g);
+          if (t === 0) t = Number.MIN_VALUE;
+          cs = f / t;
+          sn = g / t;
+          s[j] = t;
+          f = cs * e[j] + sn * s[j + 1];
+          s[j + 1] = -sn * e[j] + cs * s[j + 1];
+          g = sn * e[j + 1];
+          e[j + 1] = cs * e[j + 1];
+          if (j < m - 1) {
+            for (let i = 0; i < m; i++) {
+              t = cs * u[i * uCols + j] + sn * u[i * uCols + j + 1];
+              u[i * uCols + j + 1] =
+                -sn * u[i * uCols + j] + cs * u[i * uCols + j + 1];
+              u[i * uCols + j] = t;
+            }
+          }
+        }
+        e[p - 2] = f;
+        iter++;
+        if (iter > 1000)
+          throw new Error("svd: QR iteration failed to converge");
+        break;
+      }
+      case 4: {
+        if (s[k] <= 0) {
+          s[k] = s[k] < 0 ? -s[k] : 0;
+          for (let i = 0; i <= pp; i++) v[i * n + k] = -v[i * n + k];
+        }
+        while (k < pp) {
+          if (s[k] >= s[k + 1]) break;
+          let t = s[k];
+          s[k] = s[k + 1];
+          s[k + 1] = t;
+          if (k < n - 1) {
+            for (let i = 0; i < n; i++) {
+              t = v[i * n + k + 1];
+              v[i * n + k + 1] = v[i * n + k];
+              v[i * n + k] = t;
+            }
+          }
+          if (k < m - 1) {
+            for (let i = 0; i < m; i++) {
+              t = u[i * uCols + k + 1];
+              u[i * uCols + k + 1] = u[i * uCols + k];
+              u[i * uCols + k] = t;
+            }
+          }
+          k++;
+        }
+        iter = 0;
+        p--;
+        break;
+      }
+    }
+  }
+
+  return { s: s.slice(0, n), u, v };
+}
+
 function runSVD(
   type: RoutineType,
   [a]: DataArray[],
@@ -415,37 +738,22 @@ function runSVD(
 
   for (let b = 0; b < batches; b++) {
     const mat = Array.from(a.subarray(b * m * n, (b + 1) * m * n));
-    const at = transposeMatrix(mat, m, n);
-    const ata = multiplyMatrix(at, n, m, mat, n);
-    const eig = symmetricJacobiEigen(ata, n);
-    const order = eig.values
-      .map((value, index) => ({ value: Math.max(0, value), index }))
-      .sort((x, y) => y.value - x.value);
-    const singularValues = order
-      .slice(0, k)
-      .map((item) => Math.sqrt(item.value));
+    const tall = m >= n;
+    const svd = tall
+      ? golubReinschTallSVD(mat, m, n)
+      : golubReinschTallSVD(transposeMatrix(mat, m, n), n, m);
+    const singularValues = svd.s.slice(0, k);
 
-    for (let i = 0; i < k; i++) sOut[b * k + i] = singularValues[i];
+    for (let i = 0; i < k; i++) sOut[b * k + i] = singularValues[i] ?? 0;
     if (!computeUv) continue;
 
-    const v = new Array(n * n).fill(0);
-    for (let col = 0; col < n; col++) {
-      const src = order[col]?.index ?? col;
-      for (let row = 0; row < n; row++) {
-        v[row * n + col] = eig.vectors[row * n + src];
-      }
-    }
-
-    const uFull = identityMatrix(m);
-    for (let col = 0; col < k; col++) {
-      if (singularValues[col] <= 1e-12) continue;
-      for (let row = 0; row < m; row++) {
-        let sum = 0;
-        for (let j = 0; j < n; j++) sum += mat[row * n + j] * v[j * n + col];
-        uFull[row * m + col] = sum / singularValues[col];
-      }
-    }
-    normalizeColumns(uFull, m, m);
+    const uBasis = tall ? svd.u : svd.v;
+    const uBasisCols = tall ? n : m;
+    const vBasis = tall ? svd.v : svd.u;
+    const vBasisRows = n;
+    const vBasisCols = tall ? n : m;
+    const uFull = completeOrthonormalColumns(uBasis, m, uBasisCols);
+    const vFull = completeOrthonormalColumns(vBasis, vBasisRows, vBasisCols);
 
     const uCols = fullMatrices ? m : k;
     for (let row = 0; row < m; row++) {
@@ -457,7 +765,7 @@ function runSVD(
     const vhRows = fullMatrices ? n : k;
     for (let row = 0; row < vhRows; row++) {
       for (let col = 0; col < n; col++) {
-        vhOut![b * vhRows * n + row * n + col] = v[col * n + row];
+        vhOut![b * vhRows * n + row * n + col] = vFull[col * n + row];
       }
     }
   }
