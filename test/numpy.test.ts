@@ -1982,6 +1982,41 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.vander()", () => {
+    test("builds a Vandermonde matrix", () => {
+      const x = np.array([0, 2, 3]);
+      const y = np.vander(x);
+      expect(y).toBeAllclose([
+        [0, 0, 1],
+        [4, 2, 1],
+        [9, 3, 1],
+      ]);
+    });
+
+    test("supports explicit column count and increasing powers", () => {
+      const x = np.array([1, 2, 3]);
+      const y = np.vander(x, { n: 4, increasing: true });
+      expect(y).toBeAllclose([
+        [1, 1, 1, 1],
+        [1, 2, 4, 8],
+        [1, 3, 9, 27],
+      ]);
+    });
+
+    test("supports zero columns", () => {
+      const x = np.array([1, 2, 3]);
+      const y = np.vander(x, { n: 0 });
+      expect(y.shape).toEqual([3, 0]);
+      y.dispose();
+    });
+
+    test("rejects non-vector inputs", () => {
+      expect(() => np.vander(np.ones([2, 2]))).toThrow(
+        "vander: input must be 1D",
+      );
+    });
+  });
+
   suite("jax.numpy.argmax()", () => {
     test("finds maximum of logits", () => {
       const x = np.argmax(np.array([0.1, 0.2, 0.3, 0.2]));
