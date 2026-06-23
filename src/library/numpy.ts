@@ -778,12 +778,11 @@ export function roll(
     if (!Number.isInteger(s))
       throw new Error(`roll: shift must be an integer, got ${s}`);
     const n = a.shape[ax];
-    const s2 = ((s % n) + n) % n;
-    const parts = [
-      a.ref.slice(...rep<[] | Pair>(a.ndim, []).toSpliced(ax, 1, [n - s2, n])),
-      a.slice(...rep<[] | Pair>(a.ndim, []).toSpliced(ax, 1, [0, n - s2])),
-    ];
-    a = concatenate(parts, ax);
+    const s1 = ((s % n) + n) % n;
+    if (s1 !== 0) {
+      const parts = split(a, [n - s1], ax);
+      a = concatenate([parts[1], parts[0]], ax);
+    }
   }
   return a;
 }
