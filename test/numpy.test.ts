@@ -2677,6 +2677,74 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.takeAlongAxis()", () => {
+    test("takes values along columns", () => {
+      const x = np.array([
+        [10, 20, 30],
+        [40, 50, 60],
+      ]);
+      const indices = np.array([
+        [2, 0],
+        [1, 1],
+      ]);
+      const y = np.takeAlongAxis(x, indices, 1);
+      expect(y.js()).toEqual([
+        [30, 10],
+        [50, 50],
+      ]);
+    });
+
+    test("takes values along rows", () => {
+      const x = np.array([
+        [10, 20, 30],
+        [40, 50, 60],
+        [70, 80, 90],
+      ]);
+      const indices = np.array([
+        [2, 0, 1],
+        [0, 2, 2],
+      ]);
+      const y = np.takeAlongAxis(x, indices, 0);
+      expect(y.js()).toEqual([
+        [70, 20, 60],
+        [10, 80, 90],
+      ]);
+    });
+
+    test("broadcasts non-axis dimensions", () => {
+      const x = np.arange(12).reshape([3, 4]);
+      const indices = np.array([[0, 2]]);
+      const y = np.takeAlongAxis(x, indices, 1);
+      expect(y.js()).toEqual([
+        [0, 2],
+        [4, 6],
+        [8, 10],
+      ]);
+    });
+
+    test("uses the last axis by default", () => {
+      const x = np.array([
+        [10, 20, 30],
+        [40, 50, 60],
+      ]);
+      const indices = np.array([[1], [0]]);
+      const y = np.takeAlongAxis(x, indices);
+      expect(y.js()).toEqual([[20], [40]]);
+    });
+
+    test("rejects rank mismatches", () => {
+      expect(() => np.takeAlongAxis(np.ones([2, 3]), np.ones([2]), 1)).toThrow(
+        "takeAlongAxis: input and indices must have the same rank",
+      );
+    });
+
+    test("rejects unbroadcastable non-axis dimensions", () => {
+      expect(() =>
+        np.takeAlongAxis(np.ones([2, 3]), np.ones([4, 2]), 1),
+      ).toThrow("takeAlongAxis: non-axis dimensions must broadcast");
+    });
+  });
+
   suite("jax.numpy.logicalAnd()", () => {
     test("basic logical and", () => {
       const result = np.logicalAnd(

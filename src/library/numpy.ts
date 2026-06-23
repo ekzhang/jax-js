@@ -1053,6 +1053,70 @@ export function take(
 }
 
 /**
+ * Take values from an array by matching 1D index slices along an axis.
+ *
+ * The input array and indices must have the same rank. Dimensions other than
+ * `axis` follow standard broadcasting rules, and the output shape is the
+ * broadcasted shape with the size of `indices` along `axis`.
+ */
+export function takeAlongAxis(
+  a: ArrayLike,
+  indices: ArrayLike,
+  axis: number = -1,
+): Array {
+  a = fudgeArray(a);
+  indices = fudgeArray(indices);
+  if (a.ndim !== indices.ndim) {
+    const aShape = a.shape;
+    const indexShape = indices.shape;
+    a.dispose();
+    indices.dispose();
+    throw new Error(
+      `takeAlongAxis: input and indices must have the same rank, got ` +
+        `${JSON.stringify(aShape)} and ${JSON.stringify(indexShape)}`,
+    );
+  }
+
+  axis = checkAxis(axis, a.ndim);
+  const outShape = indices.shape.slice();
+  for (let i = 0; i < a.ndim; i++) {
+    if (i === axis) continue;
+    const aDim = a.shape[i];
+    const indexDim = indices.shape[i];
+    if (aDim !== indexDim && aDim !== 1 && indexDim !== 1) {
+      const aShape = a.shape;
+      const indexShape = indices.shape;
+      a.dispose();
+      indices.dispose();
+      throw new Error(
+        `takeAlongAxis: non-axis dimensions must broadcast, got ` +
+          `${JSON.stringify(aShape)} and ${JSON.stringify(indexShape)}`,
+      );
+    }
+    outShape[i] = Math.max(aDim, indexDim);
+  }
+
+  const coords: Array[] = [];
+  for (let i = 0; i < a.ndim; i++) {
+    if (i === axis) {
+      coords.push(broadcastTo(indices, outShape));
+    } else {
+      const shape = rep(a.ndim, 1);
+      shape[i] = a.shape[i];
+      coords.push(
+        broadcastTo(
+          arange(0, a.shape[i], 1, { dtype: int32, device: a.device }).reshape(
+            shape,
+          ),
+          outShape,
+        ),
+      );
+    }
+  }
+  return core.gather(a, coords, range(a.ndim), 0) as Array;
+}
+
+/**
  * Return if two arrays are element-wise equal within a tolerance.
  *
  * The formula used is `|actual - expected| <= atol + rtol * |expected|`, with

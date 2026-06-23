@@ -2,7 +2,6 @@
 
 import { type DType, numpy as np } from "@jax-js/jax";
 
-import { takeAlongAxis } from "../arrayHelpers";
 import {
   type Operand,
   operandToJax,
@@ -134,7 +133,9 @@ export function GatherElements(
   [dataOp, indicesOp]: Operand[],
   { axis = 0 }: { axis?: number },
 ): Operand[] {
-  return [takeAlongAxis(operandToJax(dataOp), operandToJax(indicesOp), axis)];
+  return [
+    np.takeAlongAxis(operandToJax(dataOp), operandToJax(indicesOp), axis),
+  ];
 }
 
 export function Concat(
