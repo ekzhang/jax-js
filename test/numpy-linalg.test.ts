@@ -354,6 +354,65 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
     });
   });
 
+  suite("numpy.linalg.eigvals()", () => {
+    const eigvalsTest = device === "webgpu" ? test.skip : test;
+
+    eigvalsTest("returns diagonal entries for a diagonal matrix", () => {
+      const a = np.array([
+        [3.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 2.0],
+      ]);
+      expect(np.sort(np.linalg.eigvals(a))).toBeAllclose([1.0, 2.0, 3.0]);
+    });
+
+    eigvalsTest("returns eigenvalues for an upper triangular matrix", () => {
+      const a = np.array([
+        [5.0, 2.0],
+        [0.0, -1.0],
+      ]);
+      expect(np.sort(np.linalg.eigvals(a))).toBeAllclose([-1.0, 5.0]);
+    });
+
+    eigvalsTest("handles a real-spectrum nonsymmetric matrix", () => {
+      const a = np.array([
+        [1.0, 2.0],
+        [3.0, 4.0],
+      ]);
+      expect(np.sort(np.linalg.eigvals(a))).toBeAllclose(
+        [-0.3722813, 5.3722813],
+        { rtol: 1e-4, atol: 1e-4 },
+      );
+    });
+
+    eigvalsTest("handles batched matrices", () => {
+      const a = np.array([
+        [
+          [1.0, 0.0],
+          [0.0, 2.0],
+        ],
+        [
+          [3.0, 0.0],
+          [0.0, 4.0],
+        ],
+      ]);
+      expect(np.sort(np.linalg.eigvals(a))).toBeAllclose([
+        [1.0, 2.0],
+        [3.0, 4.0],
+      ]);
+    });
+
+    eigvalsTest("throws for complex eigenvalue pairs", () => {
+      const a = np.array([
+        [0.0, -1.0],
+        [1.0, 0.0],
+      ]);
+      expect(() => np.linalg.eigvals(a).js()).toThrow(
+        /complex eigenvalues are not supported/,
+      );
+    });
+  });
+
   suite("numpy.linalg.slogdet()", () => {
     test("computes slogdet of simple matrix", () => {
       const a = np.array([
