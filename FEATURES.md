@@ -430,7 +430,7 @@ Most operations behave the same way as they do in JAX.
 | `sum`                 | 🟢      |                                         |
 | `swapaxes`            | 🟢      |                                         |
 | `take`                | 🟢      |                                         |
-| `take_along_axis`     | 🟠      |                                         |
+| `take_along_axis`     | 🟢      |                                         |
 | `tan`                 | 🟢      |                                         |
 | `tanh`                | 🟢      |                                         |
 | `tensordot`           | 🟢      |                                         |
