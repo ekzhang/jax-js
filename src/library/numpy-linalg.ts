@@ -159,6 +159,41 @@ export function matrixPower(a: ArrayLike, n: number): Array {
 }
 
 export { matrixTranspose } from "./numpy";
+
+/**
+ * Compute the dot product of two or more arrays in a single function call,
+ * while automatically selecting the fastest evaluation order.
+ *
+ * If the first argument is 1D, it is treated as a row vector. If the last
+ * argument is 1D, it is a column vector. All other intermediate arguments
+ * must be 2D matrices.
+ *
+ * Equivalent to `jax.numpy.einsum()` with the appropriate subscripts.
+ */
+export function multiDot(arrays: Array[]): Array {
+  if (arrays.length < 2) throw new Error("Expected at least two arrays");
+  if (arrays[0].ndim === 1) {
+    const [first, ...rest] = arrays;
+    return multiDot([first.reshape([1, -1]), ...rest]).slice(0);
+  }
+  if (arrays[arrays.length - 1].ndim === 1) {
+    const [rest, last] = [arrays.slice(0, -1), arrays[arrays.length - 1]];
+    return multiDot([...rest, last.reshape([-1, 1])]).slice([], 0);
+  }
+  for (let i = 0; i < arrays.length; i++) {
+    if (arrays[i].ndim !== 2) {
+      throw new Error(
+        `multiDot: expected 2D, got ${arrays[i].aval} at index ${i}`,
+      );
+    }
+  }
+  const einsumArgs: (Array | number[])[] = []; // Alternate arrays and indices
+  for (let i = 0; i < arrays.length; i++) {
+    einsumArgs.push(arrays[i], [i, i + 1]);
+  }
+  return np.einsum(...einsumArgs);
+}
+
 export { outer } from "./numpy";
 
 /** Return sign and natural logarithm of the determinant of `a`. */

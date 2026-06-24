@@ -118,6 +118,62 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
     });
   });
 
+  suite("numpy.linalg.multiDot()", () => {
+    test("multiplies a chain of matrices", () => {
+      const a = np.array([
+        [1.0, 2.0],
+        [3.0, 4.0],
+      ]);
+      const b = np.array([
+        [5.0, 6.0, 7.0],
+        [8.0, 9.0, 10.0],
+      ]);
+      const c = np.array([
+        [11.0, 12.0],
+        [13.0, 14.0],
+        [15.0, 16.0],
+      ]);
+
+      const result = np.linalg.multiDot([a.ref, b.ref, c.ref]);
+      const expected = np.matmul(np.matmul(a, b), c);
+      expect(result).toBeAllclose(expected);
+    });
+
+    test("handles the two-array case", () => {
+      const a = np.array([
+        [1.0, 2.0, 3.0],
+        [4.0, 5.0, 6.0],
+      ]);
+      const b = np.array([
+        [7.0, 8.0],
+        [9.0, 10.0],
+        [11.0, 12.0],
+      ]);
+
+      const result = np.linalg.multiDot([a.ref, b.ref]);
+      const expected = np.matmul(a, b);
+      expect(result).toBeAllclose(expected);
+    });
+
+    test("treats 1D endpoints as row and column vectors", () => {
+      const x = np.array([1.0, 2.0]);
+      const a = np.array([
+        [1.0, 2.0, 3.0],
+        [4.0, 5.0, 6.0],
+      ]);
+      const b = np.array([
+        [1.0, 0.0],
+        [0.0, 1.0],
+        [1.0, 1.0],
+      ]);
+      const y = np.array([2.0, 3.0]);
+
+      const result = np.linalg.multiDot([x.ref, a.ref, b.ref, y.ref]);
+      expect(result.shape).toEqual([]);
+      expect(result).toBeAllclose(129.0);
+    });
+  });
+
   suite("numpy.linalg.lstsq()", () => {
     test("solves overdetermined system (M > N)", () => {
       // 3x2 system: more equations than unknowns
