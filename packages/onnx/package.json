@@ -1,6 +1,6 @@
 {
   "name": "@jax-js/onnx",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Load ONNX models and run inference natively with jax-js.",
   "keywords": [
     "machine learning",
