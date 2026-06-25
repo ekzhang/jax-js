@@ -402,4 +402,122 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
       expect(norms).toBeAllclose([[5.0], [13.0]]);
     });
   });
+
+  suite("numpy.linalg.matrixNorm()", () => {
+    const matrix = () =>
+      np.array([
+        [1.0, 2.0],
+        [3.0, 4.0],
+      ]);
+    const batched = () => np.arange(18).astype(np.float32).reshape([2, 3, 3]);
+
+    const expectNorm = (
+      input: np.Array,
+      ord: number | "fro",
+      keepdims: boolean,
+      expected: number | number[] | number[][] | number[][][],
+      shape: number[],
+    ) => {
+      const norm = np.linalg.matrixNorm(input, { ord, keepdims });
+      expect(norm).toBeAllclose(expected);
+      expect(norm.shape).toEqual(shape);
+    };
+
+    test("Throws on array with less than 2 dimensions", () => {
+      const a = np.array([1.0, 2.0, 3.0, 4.0]);
+      expect(() => np.linalg.matrixNorm(a)).toThrow();
+    });
+
+    test("Throws on non-supported norms", () => {
+      expect(() => np.linalg.matrixNorm(matrix(), { ord: -2 })).toThrow();
+      expect(() => np.linalg.matrixNorm(matrix(), { ord: 2 })).toThrow();
+      expect(() => np.linalg.matrixNorm(matrix(), { ord: "nuc" })).toThrow();
+    });
+
+    test("Frobenius norm (default)", () => {
+      expectNorm(matrix(), "fro", false, 5.477225575051661, []);
+    });
+
+    test("Frobenius norm keepdims", () => {
+      expectNorm(matrix(), "fro", true, [[5.477225575051661]], [1, 1]);
+    });
+
+    test("Frobenius norm batched", () => {
+      expectNorm(batched(), "fro", false, [14.28285686, 39.7617907], [2]);
+    });
+
+    test("Frobenius norm batched keepdims", () => {
+      expectNorm(
+        batched(),
+        "fro",
+        true,
+        [[[14.28285686]], [[39.7617907]]],
+        [2, 1, 1],
+      );
+    });
+
+    test("L1 norm", () => {
+      expectNorm(matrix(), 1, false, 6.0, []);
+    });
+
+    test("L1 norm keepdims", () => {
+      expectNorm(matrix(), 1, true, [[6.0]], [1, 1]);
+    });
+
+    test("L1 norm batched", () => {
+      expectNorm(batched(), 1, false, [15.0, 42.0], [2]);
+    });
+
+    test("L1 norm batched keepdims", () => {
+      expectNorm(batched(), 1, true, [[[15.0]], [[42.0]]], [2, 1, 1]);
+    });
+
+    test("L-1 norm", () => {
+      expectNorm(matrix(), -1, false, 4.0, []);
+    });
+
+    test("L-1 norm keepdims", () => {
+      expectNorm(matrix(), -1, true, [[4.0]], [1, 1]);
+    });
+
+    test("L-1 norm batched", () => {
+      expectNorm(batched(), -1, false, [9.0, 36.0], [2]);
+    });
+
+    test("L-1 norm batched keepdims", () => {
+      expectNorm(batched(), -1, true, [[[9.0]], [[36.0]]], [2, 1, 1]);
+    });
+
+    test("L-infinity norm", () => {
+      expectNorm(matrix(), Infinity, false, 7.0, []);
+    });
+
+    test("L-infinity norm keepdims", () => {
+      expectNorm(matrix(), Infinity, true, [[7.0]], [1, 1]);
+    });
+
+    test("L-infinity norm batched", () => {
+      expectNorm(batched(), Infinity, false, [21.0, 48.0], [2]);
+    });
+
+    test("L-infinity norm batched keepdims", () => {
+      expectNorm(batched(), Infinity, true, [[[21.0]], [[48.0]]], [2, 1, 1]);
+    });
+
+    test("L-negative-infinity norm", () => {
+      expectNorm(matrix(), -Infinity, false, 3.0, []);
+    });
+
+    test("L-negative-infinity norm keepdims", () => {
+      expectNorm(matrix(), -Infinity, true, [[3.0]], [1, 1]);
+    });
+
+    test("L-negative-infinity norm batched", () => {
+      expectNorm(batched(), -Infinity, false, [3.0, 30.0], [2]);
+    });
+
+    test("L-negative-infinity norm batched keepdims", () => {
+      expectNorm(batched(), -Infinity, true, [[[3.0]], [[30.0]]], [2, 1, 1]);
+    });
+  });
 });

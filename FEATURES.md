@@ -521,7 +521,7 @@ eigenvalues ([issue](https://github.com/ekzhang/jax-js/issues/51)).
 | `inv`              | 🟢      |                                         |
 | `lstsq`            | 🟡      | Cholesky-based, less stable than QR/SVD |
 | `matmul`           | 🟢      |                                         |
-| `matrix_norm`      | 🟠      |                                         |
+| `matrix_norm`      | 🟡      | nuc, -2/2 not supported (need SVD)      |
 | `matrix_power`     | 🟢      |                                         |
 | `matrix_rank`      | 🔴      |                                         |
 | `matrix_transpose` | 🟢      |                                         |

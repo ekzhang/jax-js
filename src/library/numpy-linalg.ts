@@ -302,3 +302,48 @@ export function vectorNorm(
     return np.power(np.power(np.abs(x), ord).sum(ax, { keepdims }), 1 / ord);
   }
 }
+
+/**
+ * Calculates the matrix norm of a matrix or a stack of matrices.
+ * @param x - Input Array (..., M, N)
+ * @param ord - Order of the norm (default "fro").
+ * @param keepdims - Whether to keep reduced dimensions as size 1 or collapse axes.
+ * @returns Matrix norm of input array. If `keepdims` is `true`, the result has shape (..., 1, 1). Otherwise, it has shape (...,).
+ */
+export function matrixNorm(
+  x: ArrayLike,
+  {
+    ord = "fro",
+    keepdims = false,
+  }: { ord?: number | "fro" | "nuc"; keepdims?: boolean } = {},
+): Array {
+  x = fudgeArray(x);
+  if (x.ndim < 2) {
+    throw new Error(
+      `Input must be at least 2-dimensional. Recieved ${x.ndim}-dimensional array`,
+    );
+  }
+  if (ord === "fro") {
+    return np.sqrt(np.sum(np.square(x), [-2, -1], { keepdims }));
+  } else if (ord === "nuc") {
+    throw new Error("Order nuc is not supported");
+  } else if (ord === -1) {
+    return np.min(np.sum(np.abs(x), [-2], { keepdims }), [-1], { keepdims });
+  } else if (ord === 1) {
+    return np.max(np.sum(np.abs(x), [-2], { keepdims }), [-1], { keepdims });
+  } else if (ord === -2) {
+    throw new Error("Order -2 is not supported");
+  } else if (ord === 2) {
+    throw new Error("Order 2 is not supported");
+  } else if (ord === -Infinity) {
+    return np.min(np.sum(np.abs(x), [-1], { keepdims }), [keepdims ? -2 : -1], {
+      keepdims,
+    });
+  } else if (ord === Infinity) {
+    return np.max(np.sum(np.abs(x), [-1], { keepdims }), [keepdims ? -2 : -1], {
+      keepdims,
+    });
+  } else {
+    throw new Error(`Order ${ord} is not supported`);
+  }
+}
