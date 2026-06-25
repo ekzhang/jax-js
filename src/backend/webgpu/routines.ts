@@ -8,9 +8,14 @@ import {
   maxValueWgsl,
   ShaderInfo,
 } from "./codegen";
-import { DType, isFloatDtype } from "../../alu";
+import { byteWidth, DType, isFloatDtype } from "../../alu";
 import { UnsupportedRoutineError } from "../../backend";
-import { Routine, Routines, RoutineType } from "../../routine";
+import {
+  type FlashAttentionParams,
+  Routine,
+  Routines,
+  RoutineType,
+} from "../../routine";
 import { findPow2, prod } from "../../utils";
 
 type BitonicSortPass = {
@@ -588,6 +593,341 @@ fn main(
   ];
 }
 
+function flashAttentionUniform(
+  B: number,
+  L: number,
+  N: number,
+  S: number,
+  numSeqTiles: number,
+  scale: number,
+): Uint8Array<ArrayBuffer> {
+  const buf = new ArrayBuffer(24);
+  const view = new DataView(buf);
+  view.setUint32(0, B, true);
+  view.setUint32(4, L, true);
+  view.setUint32(8, N, true);
+  view.setUint32(12, S, true);
+  view.setUint32(16, numSeqTiles, true);
+  view.setFloat32(20, scale, true);
+  return new Uint8Array(buf);
+}
+
+function broadcastIndexWgsl(
+  shape: number[],
+  targetShape: number[],
+  targetNames: string[],
+): string {
+  if (shape.length > targetShape.length) {
+    throw new Error(
+      `Cannot broadcast shape ${shape} to ${targetShape}: too many dimensions`,
+    );
+  }
+  const offset = targetShape.length - shape.length;
+  const terms: string[] = [];
+  for (let i = 0; i < shape.length; i++) {
+    const dim = shape[i];
+    const targetDim = targetShape[offset + i];
+    if (dim === 1) continue;
+    if (dim !== targetDim) {
+      throw new Error(`Cannot broadcast shape ${shape} to ${targetShape}`);
+    }
+    const stride = prod(shape.slice(i + 1));
+    const name = targetNames[offset + i];
+    terms.push(stride === 1 ? name : `${name} * ${stride}u`);
+  }
+  return terms.length === 0 ? "0u" : terms.join(" + ");
+}
+
+function createFlashAttention(
+  device: GPUDevice,
+  type: RoutineType,
+  { scale, isCausal, localWindowSize, hasMask }: FlashAttentionParams,
+): ShaderInfo[] {
+  const dtype = type.inputDtypes[0];
+  const ty = dtypeToWgsl(dtype, true);
+  const biasTy = dtypeToWgsl(type.inputDtypes[3], true);
+  const maskTy = dtypeToWgsl(type.inputDtypes[4], true);
+  const [B, L, N, H] = type.inputShapes[0];
+  const S = type.inputShapes[1][1];
+  const K = type.inputShapes[1][2];
+  const G = N / K;
+  if (H % 4 !== 0) {
+    throw new Error(
+      `flash_attention: head dimension ${H} must be divisible by 4`,
+    );
+  }
+
+  const vecFactor = 4;
+  const headVec = H / vecFactor;
+  const workgroupSize = findPow2(128, device.limits.maxComputeWorkgroupSizeX);
+  const numSeqTiles = Math.ceil(L / workgroupSize);
+  const maxKStep = 32;
+  const biasIndex = broadcastIndexWgsl(
+    type.inputShapes[3],
+    [B, N, L, S],
+    ["batch_idx", "head_idx", "q_idx_global", "k_idx_global"],
+  );
+  const maskIndex = broadcastIndexWgsl(
+    type.inputShapes[4],
+    [B, N, L, S],
+    ["batch_idx", "head_idx", "q_idx_global", "k_idx_global"],
+  );
+  const validKConditions = ["k_idx_global < uniforms.S"];
+  if (isCausal) validKConditions.push("k_idx_global <= q_idx_global");
+  if (localWindowSize !== null) {
+    const [before, after] = localWindowSize;
+    if (
+      before < 0 ||
+      after < 0 ||
+      !Number.isInteger(before) ||
+      !Number.isInteger(after)
+    ) {
+      throw new Error(
+        `flash_attention: localWindowSize values must be non-negative integers, got ${localWindowSize}`,
+      );
+    }
+    if (before < L) {
+      validKConditions.push(`k_idx_global + ${before}u >= q_idx_global`);
+    }
+    if (after < S) {
+      validKConditions.push(`k_idx_global <= q_idx_global + ${after}u`);
+    }
+  }
+  const validK = validKConditions.join(" && ");
+  const loadMask = hasMask ? `return mask[${maskIndex}] != 0;` : "return true;";
+  const applyMask = hasMask
+    ? "if (valid_score) {\n        valid_score = load_mask(batch_idx, head_idx, q_idx_global, k_idx_global);\n      }"
+    : "";
+  const kRangeInit: string[] = [];
+  if (localWindowSize !== null) {
+    const [before, after] = localWindowSize;
+    if (before < L) {
+      kRangeInit.push(
+        `k_start_first = max(q_tile_start, ${before}u) - ${before}u;`,
+      );
+    }
+    if (after < S) {
+      kRangeInit.push(`k_end = min(k_end, q_tile_end + ${after}u);`);
+    }
+  }
+  if (isCausal) {
+    kRangeInit.push("k_end = min(k_end, q_tile_end);");
+  }
+
+  const storageBytes = 2 * maxKStep * headVec * vecFactor * byteWidth(dtype);
+  if (storageBytes > device.limits.maxComputeWorkgroupStorageSize) {
+    throw new Error(
+      `flash_attention: head dimension ${H} exceeds WebGPU workgroup storage limit`,
+    );
+  }
+
+  const needsF16 =
+    dtype === DType.Float16 || type.inputDtypes[3] === DType.Float16;
+  const code = `
+${needsF16 ? "enable f16;" : ""}
+${headerWgsl}
+
+const min_value = -3.4028234663852886e+38f;
+
+struct Uniforms {
+  B: u32,
+  L: u32,
+  N: u32,
+  S: u32,
+  num_seq_tiles: u32,
+  scale: f32,
+}
+
+@group(0) @binding(0) var<storage, read> query: array<${ty}>;
+@group(0) @binding(1) var<storage, read> key: array<${ty}>;
+@group(0) @binding(2) var<storage, read> value: array<${ty}>;
+@group(0) @binding(3) var<storage, read> bias: array<${biasTy}>;
+@group(0) @binding(4) var<storage, read> mask: array<${maskTy}>;
+@group(0) @binding(5) var<storage, read_write> output: array<${ty}>;
+
+@group(1) @binding(0) var<uniform> uniforms: Uniforms;
+
+var<workgroup> k_tile: array<vec4<${ty}>, ${maxKStep * headVec}>;
+var<workgroup> v_tile: array<vec4<${ty}>, ${maxKStep * headVec}>;
+
+fn load_bias(
+  batch_idx: u32,
+  head_idx: u32,
+  q_idx_global: u32,
+  k_idx_global: u32,
+) -> f32 {
+  return f32(bias[${biasIndex}]);
+}
+
+fn load_mask(
+  batch_idx: u32,
+  head_idx: u32,
+  q_idx_global: u32,
+  k_idx_global: u32,
+) -> bool {
+  ${loadMask}
+}
+
+@compute @workgroup_size(${workgroupSize})
+fn main(
+  @builtin(workgroup_id) wg_id: vec3<u32>,
+  @builtin(local_invocation_id) local_id: vec3<u32>,
+) {
+  let workgroup_idx = wg_id.x + wg_id.y * ${gridOffsetY}u;
+  let batch_head_idx = workgroup_idx / uniforms.num_seq_tiles;
+  let head_idx = batch_head_idx % uniforms.N;
+  let kv_head_idx = head_idx / ${G}u;
+  let batch_idx = batch_head_idx / uniforms.N;
+  if (batch_idx >= uniforms.B) {
+    return;
+  }
+
+  let local_idx = local_id.x;
+  let q_tile_start = (workgroup_idx % uniforms.num_seq_tiles) * ${workgroupSize}u;
+  let q_tile_end = min(q_tile_start + ${workgroupSize}u, uniforms.L);
+  let q_idx_global = q_tile_start + local_idx;
+  let valid_q = q_idx_global < uniforms.L;
+
+  var k_start_first = 0u;
+  var k_end = uniforms.S;
+  ${kRangeInit.join("\n  ")}
+
+  var q_tile: array<vec4<f32>, ${headVec}>;
+  var o_tile: array<vec4<f32>, ${headVec}>;
+  var qk_scores: array<f32, ${maxKStep}>;
+  var qk_valid: array<bool, ${maxKStep}>;
+  for (var i = 0u; i < ${headVec}u; i++) {
+    q_tile[i] = vec4<f32>(0.0);
+    o_tile[i] = vec4<f32>(0.0);
+  }
+
+  if (valid_q) {
+    let q_offset = ((batch_idx * uniforms.L + q_idx_global) * uniforms.N + head_idx) * ${H}u;
+    for (var i = 0u; i < ${headVec}u; i++) {
+      let offset = q_offset + i * 4u;
+      q_tile[i] = vec4<f32>(
+        f32(query[offset]),
+        f32(query[offset + 1u]),
+        f32(query[offset + 2u]),
+        f32(query[offset + 3u])
+      ) * uniforms.scale;
+    }
+  }
+
+  var previous_max = min_value;
+  var previous_denom = 0.0;
+
+  for (var k_start = k_start_first; k_start < k_end; k_start += ${maxKStep}u) {
+    workgroupBarrier();
+    for (var idx = local_idx; idx < ${maxKStep * headVec}u; idx += ${workgroupSize}u) {
+      let k_slot = idx / ${headVec}u;
+      let vec_idx = idx % ${headVec}u;
+      let k_idx_global = k_start + k_slot;
+      var k_val = vec4<${ty}>(${ty}(0));
+      var v_val = vec4<${ty}>(${ty}(0));
+      if (k_idx_global < k_end) {
+        let offset = ((batch_idx * uniforms.S + k_idx_global) * ${K}u + kv_head_idx) * ${H}u + vec_idx * 4u;
+        k_val = vec4<${ty}>(
+          key[offset],
+          key[offset + 1u],
+          key[offset + 2u],
+          key[offset + 3u]
+        );
+        v_val = vec4<${ty}>(
+          value[offset],
+          value[offset + 1u],
+          value[offset + 2u],
+          value[offset + 3u]
+        );
+      }
+      k_tile[idx] = k_val;
+      v_tile[idx] = v_val;
+    }
+    workgroupBarrier();
+
+    for (var k = 0u; k < ${maxKStep}u; k++) {
+      let k_idx_global = k_start + k;
+      var score = min_value;
+      var valid_score = valid_q && ${validK};
+      ${applyMask}
+      if (valid_score) {
+        var dot_val = 0.0;
+        for (var i = 0u; i < ${headVec}u; i++) {
+          dot_val += dot(q_tile[i], vec4<f32>(k_tile[k * ${headVec}u + i]));
+        }
+        score = dot_val + load_bias(batch_idx, head_idx, q_idx_global, k_idx_global);
+      }
+      qk_scores[k] = score;
+      qk_valid[k] = valid_score;
+    }
+
+    var local_max = min_value;
+    for (var k = 0u; k < ${maxKStep}u; k++) {
+      if (qk_valid[k]) {
+        local_max = max(local_max, qk_scores[k]);
+      }
+    }
+    let new_max = max(previous_max, local_max);
+
+    var sum = 0.0;
+    for (var k = 0u; k < ${maxKStep}u; k++) {
+      var exp_val = 0.0;
+      if (qk_valid[k]) {
+        exp_val = exp(qk_scores[k] - new_max);
+      }
+      qk_scores[k] = exp_val;
+      sum += exp_val;
+    }
+
+    let dleft = previous_denom * exp(previous_max - new_max);
+    var denom = dleft + sum;
+    denom = select(denom, 0.0000001, denom == 0.0);
+    let o_ratio = dleft / denom;
+    for (var k = 0u; k < ${maxKStep}u; k++) {
+      qk_scores[k] = qk_scores[k] / denom;
+    }
+    previous_max = new_max;
+    previous_denom = denom;
+
+    for (var i = 0u; i < ${headVec}u; i++) {
+      var acc = vec4<f32>(0.0);
+      for (var k = 0u; k < ${maxKStep}u; k++) {
+        acc += vec4<f32>(v_tile[k * ${headVec}u + i]) * qk_scores[k];
+      }
+      o_tile[i] = o_tile[i] * o_ratio + acc;
+    }
+  }
+
+  if (valid_q) {
+    let out_offset = ((batch_idx * uniforms.L + q_idx_global) * uniforms.N + head_idx) * ${H}u;
+    for (var i = 0u; i < ${headVec}u; i++) {
+      let offset = out_offset + i * 4u;
+      output[offset] = ${ty}(o_tile[i].x);
+      output[offset + 1u] = ${ty}(o_tile[i].y);
+      output[offset + 2u] = ${ty}(o_tile[i].z);
+      output[offset + 3u] = ${ty}(o_tile[i].w);
+    }
+  }
+}
+`.trim();
+
+  const grid = calculateGrid(B * N * numSeqTiles);
+  return [
+    {
+      code,
+      numInputs: 5,
+      numOutputs: 1,
+      hasUniform: true,
+      passes: [
+        {
+          grid,
+          uniform: flashAttentionUniform(B, L, N, S, numSeqTiles, scale),
+        },
+      ],
+    },
+  ];
+}
+
 export function createRoutineShader(
   device: GPUDevice,
   routine: Routine,
@@ -603,6 +943,8 @@ export function createRoutineShader(
       return createCholesky(device, routine.type);
     case Routines.LU:
       return createLU(device, routine.type);
+    case Routines.FlashAttention:
+      return createFlashAttention(device, routine.type, routine.params);
     default:
       throw new UnsupportedRoutineError(routine.name, "webgpu");
   }

@@ -1,6 +1,7 @@
 // Custom lowering for advanced operations that don't fit into AluExp.
 
 import { DataArray, DType, dtypedArray } from "./alu";
+import type { Pair } from "./shape";
 
 /**
  * Advanced operations that don't fit into the `AluExp` compiler representation.
@@ -74,6 +75,16 @@ export enum Routines {
    *   such that `P = eye(M).slice(Permutation)` -> `P @ A = L @ U`.
    */
   LU = "LU",
+
+  /**
+   * Forward scaled dot-product attention.
+   *
+   * Inputs are `query: [B, L, N, H]`, `key: [B, S, K, H]`,
+   * `value: [B, S, K, H]`, `bias` broadcastable to `[B, N, L, S]`,
+   * and boolean `mask` broadcastable to `[B, N, L, S]` where true means attend.
+   * Supports GQA/MQA when N is divisible by K. The output is `[B, L, N, H]`.
+   */
+  FlashAttention = "FlashAttention",
 }
 
 export interface RoutineType {
@@ -81,6 +92,18 @@ export interface RoutineType {
   inputDtypes: DType[];
   outputShapes: number[][];
   outputDtypes: DType[];
+}
+
+/** Parameters for the FlashAttention primitive/routine. */
+export interface FlashAttentionParams {
+  /** Scaling factor applied to QK logits, usually `1 / sqrt(headDim)`. */
+  scale: number;
+  /** If true, only attends to keys with index <= query index. */
+  isCausal: boolean;
+  /** Optional local attention window `[before, after]`, or null for dense attention. */
+  localWindowSize: Pair | null;
+  /** Whether to apply the mask input. If false, the mask input is ignored. */
+  hasMask: boolean;
 }
 
 // Reference implementation of each routine in CPU is below.
@@ -109,6 +132,8 @@ export function runCpuRoutine(
       return runCholesky(type, inputAr, outputAr);
     case Routines.LU:
       return runLU(type, inputAr, outputAr);
+    case Routines.FlashAttention:
+      throw new Error("flash_attention routine is only supported on WebGPU");
     default:
       name satisfies never; // Exhaustiveness check
   }

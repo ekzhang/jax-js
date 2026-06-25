@@ -1,7 +1,7 @@
 /** @file Core library internals and interpreter stack, based on Autodidax. */
 
 import { AluGroup, AluOp, DType, isFloatDtype, promoteTypes } from "../alu";
-import { Routines } from "../routine";
+import { type FlashAttentionParams, Routines } from "../routine";
 import { type Pair } from "../shape";
 import {
   JsTreeDef,
@@ -93,6 +93,7 @@ export enum Primitive {
   TriangularSolve = "triangular_solve", // A is upper triangular, A @ X.T = B.T
   Cholesky = "cholesky", // A is positive-definite, A = L @ L^T
   LU = "lu", // LU decomposition with partial pivoting
+  FlashAttention = "flash_attention", // forward scaled dot-product attention
 
   // JIT compilation
   Jit = "jit",
@@ -123,6 +124,7 @@ interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
   [Primitive.Shrink]: { slice: Pair[] };
   [Primitive.Pad]: { width: Pair[] };
   [Primitive.TriangularSolve]: { unitDiagonal: boolean };
+  [Primitive.FlashAttention]: FlashAttentionParams;
   [Primitive.Jit]: { name: string; jaxpr: Jaxpr; numConsts: number };
 }
 
@@ -147,6 +149,7 @@ export const routinePrimitives = new Map([
   [Primitive.TriangularSolve, Routines.TriangularSolve],
   [Primitive.Cholesky, Routines.Cholesky],
   [Primitive.LU, Routines.LU],
+  [Primitive.FlashAttention, Routines.FlashAttention],
 ]);
 
 export function add(x: TracerValue, y: TracerValue) {
@@ -540,6 +543,21 @@ export function sort(x: TracerValue) {
   const nd = ndim(x);
   if (nd === 0) throw new Error("sort: requires at least 1D input");
   return bind1(Primitive.Sort, [x]);
+}
+
+export function flashAttention(
+  query: TracerValue,
+  key: TracerValue,
+  value: TracerValue,
+  bias: TracerValue,
+  mask: TracerValue,
+  params: FlashAttentionParams,
+) {
+  return bind1(
+    Primitive.FlashAttention,
+    [query, key, value, bias, mask],
+    params,
+  );
 }
 
 export function argsort(x: TracerValue) {

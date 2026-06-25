@@ -1012,6 +1012,60 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
       new ShapedArray([...batch, m], DType.Int32, false),
     ];
   },
+  [Primitive.FlashAttention]([query, key, value, bias, mask]) {
+    if (query.ndim !== 4 || key.ndim !== 4 || value.ndim !== 4) {
+      throw new TypeError(
+        `flash_attention: expected rank-4 Q/K/V inputs, got ${query}, ${key}, ${value}`,
+      );
+    }
+    if (!isFloatDtype(query.dtype) || query.dtype !== key.dtype) {
+      throw new TypeError(
+        `flash_attention: query/key must have matching floating dtype, got ${query.dtype} and ${key.dtype}`,
+      );
+    }
+    if (value.dtype !== query.dtype) {
+      throw new TypeError(
+        `flash_attention: value dtype must match query dtype, got ${value.dtype} and ${query.dtype}`,
+      );
+    }
+    if (!isFloatDtype(bias.dtype)) {
+      throw new TypeError(
+        `flash_attention: bias must have floating dtype, got ${bias.dtype}`,
+      );
+    }
+    if (mask.dtype !== DType.Bool) {
+      throw new TypeError(
+        `flash_attention: mask must have boolean dtype, got ${mask.dtype}`,
+      );
+    }
+    const [B, L, N, H] = query.shape;
+    const [Bk, S, K, Hk] = key.shape;
+    if (
+      !deepEqual(value.shape, key.shape) ||
+      B !== Bk ||
+      H !== Hk ||
+      N < K ||
+      N % K !== 0
+    ) {
+      throw new TypeError(
+        `flash_attention: shape mismatch Q=${query}, K=${key}, V=${value}`,
+      );
+    }
+    const targetShape = [B, N, L, S];
+    const biasShape = generalBroadcast(bias.shape, targetShape);
+    if (!deepEqual(biasShape, targetShape)) {
+      throw new TypeError(
+        `flash_attention: bias shape ${bias.shape} is not broadcastable to [${B}, ${N}, ${L}, ${S}]`,
+      );
+    }
+    const maskShape = generalBroadcast(mask.shape, targetShape);
+    if (!deepEqual(maskShape, targetShape)) {
+      throw new TypeError(
+        `flash_attention: mask shape ${mask.shape} is not broadcastable to [${B}, ${N}, ${L}, ${S}]`,
+      );
+    }
+    return [new ShapedArray([B, L, N, H], query.dtype, false)];
+  },
   [Primitive.Jit](args, { jaxpr }) {
     const { inTypes, outTypes } = typecheckJaxpr(jaxpr);
     if (args.length !== inTypes.length) {
