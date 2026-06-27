@@ -24,7 +24,7 @@ import {
 } from "../frontend/array";
 import * as core from "../frontend/core";
 import { jit } from "../frontend/jaxpr";
-import { moveaxis as moveaxisTracer } from "../frontend/vmap";
+import { moveaxis as moveaxisTracer, vmap } from "../frontend/vmap";
 import { Pair } from "../shape";
 import {
   checkAxis,
@@ -1192,6 +1192,49 @@ export function takeAlongAxis(
     }
   }
   return core.gather(a, coords, range(a.ndim), 0) as Array;
+}
+
+/**
+ * Apply a function to 1D array slices along an axis.
+ *
+ * This is implemented internally with applications of `jax.vmap()`, rather than
+ * iterating the function over a loop.
+ */
+export function applyAlongAxis(
+  func1d: (x: Array) => Array,
+  axis: number,
+  x: ArrayLike,
+): Array {
+  const nd = ndim(x);
+  axis = checkAxis(axis, nd);
+  let func = func1d;
+  for (let i = 1; i < nd - axis; i++) func = vmap(func, i) as any;
+  for (let i = 0; i < axis; i++) func = vmap(func, 0) as any;
+  // Example: If axis = 2 and then func now takes in [0, 1, 2, 3, 4] and returns
+  // [0, 1, 4, 3, 2], so we need to transpose the results.
+  const y = func(fudgeArray(x));
+  const post = nd - axis - 1;
+  return y.transpose([
+    ...range(axis),
+    ...range(axis + post, y.ndim),
+    ...range(axis, axis + post).reverse(),
+  ]);
+}
+
+/** Apply a function repeatedly over specified axes. */
+export function applyOverAxes(
+  func: (x: Array, axis: number) => Array,
+  a: ArrayLike,
+  axes: number[],
+): Array {
+  a = fudgeArray(a);
+  for (const axis of axes) {
+    const b = func(a, axis);
+    if (b.ndim === a.ndim) a = b;
+    else if (b.ndim === a.ndim - 1) a = expandDims(b, axis);
+    else throw new Error("function must return array of the correct shape");
+  }
+  return a;
 }
 
 /**

@@ -2584,6 +2584,108 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.applyAlongAxis()", () => {
+    test("applies a scalar-valued function along an axis", () => {
+      const x = np.arange(24).reshape([2, 3, 4]);
+      const y = np.applyAlongAxis((x: np.Array) => x.sum(), 1, x);
+      expect(y.shape).toEqual([2, 4]);
+      expect(y.js()).toEqual([
+        [12, 15, 18, 21],
+        [48, 51, 54, 57],
+      ]);
+    });
+
+    test("inserts vector-valued results at the mapped axis", () => {
+      const x = np.arange(24).reshape([2, 3, 4]);
+      const y = np.applyAlongAxis(
+        (x: np.Array) => np.stack([x.ref.sum(), x.max()]),
+        -1,
+        x,
+      );
+      expect(y.shape).toEqual([2, 3, 2]);
+      expect(y.js()).toEqual([
+        [
+          [6, 3],
+          [22, 7],
+          [38, 11],
+        ],
+        [
+          [54, 15],
+          [70, 19],
+          [86, 23],
+        ],
+      ]);
+    });
+
+    test("supports higher-rank function results", () => {
+      const x = np.array([
+        [1, 2, 3],
+        [4, 5, 6],
+      ]);
+      const y = np.applyAlongAxis(
+        (x: np.Array) => np.stack([x.ref, x.add(10)]),
+        1,
+        x,
+      );
+      expect(y.shape).toEqual([2, 2, 3]);
+      expect(y.js()).toEqual([
+        [
+          [1, 2, 3],
+          [11, 12, 13],
+        ],
+        [
+          [4, 5, 6],
+          [14, 15, 16],
+        ],
+      ]);
+    });
+  });
+
+  suite("jax.numpy.applyOverAxes()", () => {
+    test("expands reduced dimensions after applying over axes", () => {
+      const x = np.arange(24).reshape([2, 3, 4]);
+      const y = np.applyOverAxes(
+        (x: np.Array, axis: number) => x.sum(axis),
+        x,
+        [0, 2],
+      );
+      expect(y.shape).toEqual([1, 3, 1]);
+      expect(y.js()).toEqual([[[60], [92], [124]]]);
+    });
+
+    test("keeps dimensions returned by the function", () => {
+      const x = np.arange(24).reshape([2, 3, 4]);
+      const y = np.applyOverAxes(
+        (x: np.Array, axis: number) => x.sum(axis, { keepdims: true }),
+        x,
+        [1],
+      );
+      expect(y.shape).toEqual([2, 1, 4]);
+      expect(y.js()).toEqual([[[12, 15, 18, 21]], [[48, 51, 54, 57]]]);
+    });
+
+    test("supports negative axes", () => {
+      const x = np.arange(24).reshape([2, 3, 4]);
+      const y = np.applyOverAxes(
+        (x: np.Array, axis: number) => x.sum(axis),
+        x,
+        [-1],
+      );
+      expect(y.shape).toEqual([2, 3, 1]);
+      expect(y.js()).toEqual([
+        [[6], [22], [38]],
+        [[54], [70], [86]],
+      ]);
+    });
+
+    test("requires functions to preserve or reduce rank by one", () => {
+      const x = np.arange(6).reshape([2, 3]);
+      expect(() =>
+        np.applyOverAxes((x: np.Array) => np.expandDims(x, 0), x, [0]),
+      ).toThrow(Error);
+    });
+  });
+
   if (device !== "webgl") {
     suite("jax.numpy.sort()", () => {
       test("sorts 1D array", () => {

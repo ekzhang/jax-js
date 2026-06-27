@@ -126,8 +126,8 @@ Most operations behave the same way as they do in JAX.
 | `angle`               | ⚪️      | complex numbers                         |
 | `any`                 | 🟢      |                                         |
 | `append`              | 🟠      |                                         |
-| `apply_along_axis`    | 🟠      |                                         |
-| `apply_over_axes`     | 🟠      |                                         |
+| `apply_along_axis`    | 🟢      |                                         |
+| `apply_over_axes`     | 🟢      |                                         |
 | `arange`              | 🟢      |                                         |
 | `arccos`              | 🟢      |                                         |
 | `arccosh`             | 🟢      |                                         |
