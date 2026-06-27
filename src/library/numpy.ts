@@ -46,6 +46,8 @@ import {
   parseEinsumExpression,
 } from "./numpy/einsum";
 
+const JsArray = globalThis.Array;
+
 export {
   arange,
   Array,
@@ -796,6 +798,32 @@ export function flipud(x: ArrayLike): Array {
 /** Flip an array horizontally (axis=1). */
 export function fliplr(x: ArrayLike): Array {
   return flip(x, 1);
+}
+
+/** Rotate an array by 90 degrees in the plane specified by axes. */
+export function rot90(
+  m: ArrayLike,
+  k: number = 1,
+  axes: number[] = [0, 1],
+): Array {
+  if (!Number.isInteger(k)) throw new Error(`rot90: k must be an integer`);
+  if (!JsArray.isArray(axes) || axes.length !== 2)
+    throw new Error(`rot90: axes must contain exactly two axes`);
+
+  const a = fudgeArray(m);
+  const [axis1, axis2] = normalizeAxis(axes, a.ndim, false);
+  switch (((k % 4) + 4) % 4) {
+    case 0:
+      return a;
+    case 1:
+      return swapaxes(flip(a, axis2), axis1, axis2);
+    case 2:
+      return flip(a, [axis1, axis2]);
+    case 3:
+      return flip(swapaxes(a, axis1, axis2), axis2);
+    default:
+      throw new Error(`rot90: unreachable ${k}`);
+  }
 }
 
 /**
