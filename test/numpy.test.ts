@@ -103,6 +103,23 @@ suite.each(devices)("device:%s", (device) => {
         [4, 9, 15],
       ]);
     });
+
+    test("handles 0-dimensional scalars", () => {
+      expect(np.cumsum(5).js()).toEqual([5]);
+      expect(np.cumsum(5, 0).js()).toEqual([5]);
+      expect(() => np.cumsum(5, 1)).toThrow("out of bounds");
+
+      expect(np.cumulativeSum(5).js()).toEqual([5]);
+      expect(np.cumulativeSum(5, { axis: 0 }).js()).toEqual([5]);
+      expect(np.cumulativeSum(5, { includeInitial: true }).js()).toEqual([
+        0, 5,
+      ]);
+    });
+
+    test("cumulative product works", () => {
+      const x = np.array([1, 2, 3, 4]);
+      expect(np.cumprod(x).js()).toEqual([1, 2, 6, 24]);
+    });
   });
 
   suite("jax.numpy.cross()", () => {

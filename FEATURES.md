@@ -196,9 +196,9 @@ Most operations behave the same way as they do in JAX.
 | `count_nonzero`       | 🟠      |                                         |
 | `cov`                 | 🟢      |                                         |
 | `cross`               | 🟢      |                                         |
-| `cumprod`             | 🟠      |                                         |
+| `cumprod`             | 🟡      | Quadratic-time                          |
 | `cumsum`              | 🟡      | Quadratic-time                          |
-| `cumulative_prod`     | 🟠      |                                         |
+| `cumulative_prod`     | 🟡      | Quadratic-time                          |
 | `cumulative_sum`      | 🟡      | Quadratic-time                          |
 | `deg2rad`             | 🟢      |                                         |
 | `degrees`             | 🟢      |                                         |

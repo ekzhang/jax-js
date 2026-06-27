@@ -151,22 +151,22 @@ export const lessEqual = core.lessEqual as (
 
 /** Compute element-wise logical AND. */
 export function logicalAnd(x: ArrayLike, y: ArrayLike): Array {
-  return astype(x, DType.Bool).mul(astype(y, DType.Bool));
+  return astype(x, bool).mul(astype(y, bool));
 }
 
 /** Compute element-wise logical OR. */
 export function logicalOr(x: ArrayLike, y: ArrayLike): Array {
-  return astype(x, DType.Bool).add(astype(y, DType.Bool));
+  return astype(x, bool).add(astype(y, bool));
 }
 
 /** Compute element-wise logical XOR. */
 export function logicalXor(x: ArrayLike, y: ArrayLike): Array {
-  return notEqual(astype(x, DType.Bool), astype(y, DType.Bool));
+  return notEqual(astype(x, bool), astype(y, bool));
 }
 
 /** Compute element-wise logical NOT. */
 export function logicalNot(x: ArrayLike): Array {
-  return notEqual(astype(x, DType.Bool), true);
+  return notEqual(astype(x, bool), true);
 }
 
 /** Compute element-wise bitwise AND. */
@@ -505,6 +505,22 @@ export function argmax(
   return length.sub(max(idx, axis, opts));
 }
 
+function cumulativeHelper(
+  op: (x: Array) => Array,
+  a: ArrayLike,
+  axis: number,
+  padValue: number,
+): Array {
+  a = fudgeArray(a);
+  if (a.ndim === 0) a = a.reshape([1]);
+  axis = checkAxis(axis, a.ndim);
+  const n = a.shape[axis];
+  a = moveaxis(a, axis, -1);
+  a = core.broadcast(a, a.shape.concat(n), [-2]) as Array;
+  a = where(tri(n, n, 0, { dtype: bool }), a, padValue);
+  return moveaxis(op(a), -1, axis);
+}
+
 /**
  * Cumulative sum of elements along an axis.
  *
@@ -512,20 +528,54 @@ export function argmax(
  * two-phase parallel reduction algorithm.
  */
 export function cumsum(a: ArrayLike, axis?: number): Array {
-  a = fudgeArray(a);
-  if (axis === undefined) {
-    a = a.ravel();
-    axis = 0;
-  } else {
-    axis = checkAxis(axis, a.ndim);
-  }
-  const n = a.shape[axis];
-  a = moveaxis(a, axis, -1);
-  a = core.broadcast(a, a.shape.concat(n), [-2]) as Array;
-  return moveaxis(tril(a).sum(-1), -1, axis);
+  if (axis === undefined) ((a = ravel(a)), (axis = 0));
+  return cumulativeHelper((x) => x.sum(-1), a, axis, 0);
 }
 
-export { cumsum as cumulativeSum };
+/** Alternative API for `jax.numpy.cumsum()`. */
+export function cumulativeSum(
+  x: ArrayLike,
+  opts?: { axis?: number; includeInitial?: boolean },
+): Array {
+  x = fudgeArray(x);
+  if (x.ndim === 0) x = x.reshape([1]);
+  if (x.ndim > 1 && opts?.axis == undefined)
+    throw new Error("cumulativeSum: axis is required for arrays of ndim > 1");
+  const axis = checkAxis(opts?.axis ?? 0, x.ndim);
+  if (opts?.includeInitial) {
+    const pad = zerosLike(x.ref, { shape: x.shape.toSpliced(axis, 1, 1) });
+    x = concatenate([pad, x], axis);
+  }
+  return cumulativeHelper((x) => x.sum(-1), x, axis, 0);
+}
+
+/**
+ * Cumulative product of elements along an axis.
+ *
+ * Currently this function is `O(n^2)`, we'll improve this later on with a
+ * two-phase parallel reduction algorithm.
+ */
+export function cumprod(a: ArrayLike, axis?: number): Array {
+  if (axis === undefined) ((a = ravel(a)), (axis = 0));
+  return cumulativeHelper((x) => x.prod(-1), a, axis, 1);
+}
+
+/** Alternative API for `jax.numpy.cumprod()`. */
+export function cumulativeProd(
+  x: ArrayLike,
+  opts?: { axis?: number; includeInitial?: boolean },
+): Array {
+  x = fudgeArray(x);
+  if (x.ndim === 0) x = x.reshape([1]);
+  if (x.ndim > 1 && opts?.axis == undefined)
+    throw new Error("cumulativeProd: axis is required for arrays of ndim > 1");
+  const axis = checkAxis(opts?.axis ?? 0, x.ndim);
+  if (opts?.includeInitial) {
+    const pad = onesLike(x.ref, { shape: x.shape.toSpliced(axis, 1, 1) });
+    x = concatenate([pad, x], axis);
+  }
+  return cumulativeHelper((x) => x.prod(-1), x, axis, 1);
+}
 
 /** Reverse the elements in an array along the given axes. */
 export function flip(x: ArrayLike, axis: core.Axis = null): Array {
