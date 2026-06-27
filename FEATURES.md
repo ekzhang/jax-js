@@ -400,7 +400,7 @@ Most operations behave the same way as they do in JAX.
 | `roll`                | 🟢      |                                         |
 | `rollaxis`            | ⚪️      | use `moveaxis`                          |
 | `roots`               | 🔴      |                                         |
-| `rot90`               | 🟠      |                                         |
+| `rot90`               | 🟢      |                                         |
 | `round`               | 🟢      |                                         |
 | `s_`                  | ⚪️      | Python-specific                         |
 | `save`                | ⚪️      | file I/O                                |

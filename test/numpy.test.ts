@@ -676,6 +676,63 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.rot90()", () => {
+    test("rotates a 2D array counter-clockwise by default", () => {
+      const x = np.array([
+        [1, 2, 3],
+        [4, 5, 6],
+      ]);
+      expect(np.rot90(x).js()).toEqual([
+        [3, 6],
+        [2, 5],
+        [1, 4],
+      ]);
+    });
+
+    test("handles negative rotations", () => {
+      const x = np.array([
+        [1, 2, 3],
+        [4, 5, 6],
+      ]);
+      expect(np.rot90(x, -1).js()).toEqual([
+        [4, 1],
+        [5, 2],
+        [6, 3],
+      ]);
+    });
+
+    test("rotates across the specified axes", () => {
+      const x = np.array([
+        [
+          [1, 2],
+          [3, 4],
+        ],
+        [
+          [5, 6],
+          [7, 8],
+        ],
+      ]);
+      expect(np.rot90(x, 1, [1, 2]).js()).toEqual([
+        [
+          [2, 4],
+          [1, 3],
+        ],
+        [
+          [6, 8],
+          [5, 7],
+        ],
+      ]);
+    });
+
+    test("requires distinct axes", () => {
+      const x = np.array([
+        [1, 2],
+        [3, 4],
+      ]);
+      expect(() => np.rot90(x, 1, [0, 0])).toThrow(Error);
+    });
+  });
+
   suite("jax.numpy.matmul()", () => {
     test("acts as vector dot product", () => {
       const x = np.array([1, 2, 3, 4]);
