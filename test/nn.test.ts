@@ -397,6 +397,83 @@ suite.each(devices)("device:%s", (device) => {
       expect(out.shape).toEqual([1, 2, 2, 2]);
     });
 
+    if (device === "webgpu") {
+      test("flash attention matches naive attention with bias", () => {
+        const query = np.array([[[[1, 0, 0, 0]], [[0, 1, 0, 0]]]]);
+        const key = np.array([
+          [[[1, 0, 0, 0]], [[0, 1, 0, 0]], [[1, 1, 0, 0]]],
+        ]);
+        const value = np.array([
+          [[[1, 2, 3, 4]], [[5, 6, 7, 8]], [[9, 10, 11, 12]]],
+        ]);
+        const bias = np.array([
+          [
+            [
+              [0, -1, 0.5],
+              [0.25, 0, -0.5],
+            ],
+          ],
+        ]);
+
+        const naive = nn.dotProductAttention(query.ref, key.ref, value.ref, {
+          bias: bias.ref,
+          implementation: "naive",
+        });
+        const flash = nn.dotProductAttention(query, key, value, {
+          bias,
+          implementation: "flash",
+        });
+        expect(flash).toBeAllclose(naive, { atol: 1e-4 });
+      });
+
+      test("flash attention matches naive attention with mask", () => {
+        const query = np.array([
+          [[[1, 0, 0, 0]], [[0, 1, 0, 0]], [[1, 1, 0, 0]]],
+        ]);
+        const key = np.array([
+          [[[1, 0, 0, 0]], [[0, 1, 0, 0]], [[1, 1, 0, 0]]],
+        ]);
+        const value = np.array([
+          [[[1, 2, 3, 4]], [[5, 6, 7, 8]], [[9, 10, 11, 12]]],
+        ]);
+        const mask = np.array([
+          [true, false, true],
+          [false, true, false],
+          [true, true, false],
+        ]);
+
+        const naive = nn.dotProductAttention(query.ref, key.ref, value.ref, {
+          mask: mask.ref,
+          implementation: "naive",
+        });
+        const flash = nn.dotProductAttention(query, key, value, {
+          mask,
+          implementation: "flash",
+        });
+        expect(flash).toBeAllclose(naive, { atol: 1e-4 });
+      });
+
+      test("flash attention matches naive attention with local window", () => {
+        const query = np.arange(32).astype(np.float32).reshape([1, 4, 2, 4]);
+        const key = np.arange(16).astype(np.float32).reshape([1, 4, 1, 4]);
+        const value = np
+          .arange(16)
+          .astype(np.float32)
+          .reshape([1, 4, 1, 4])
+          .add(1);
+
+        const naive = nn.dotProductAttention(query.ref, key.ref, value.ref, {
+          localWindowSize: [1, 1],
+          implementation: "naive",
+        });
+        const flash = nn.dotProductAttention(query, key, value, {
+          localWindowSize: [1, 1],
+          implementation: "flash",
+        });
+        expect(flash).toBeAllclose(naive, { atol: 1e-4 });
+      });
+    }
+
     test("grouped-query attention (GQA)", () => {
       // Q: B=1, L=2, N=4 (query heads), H=2
       // K/V: B=1, S=2, K=2 (key/value heads), H=2
@@ -408,6 +485,75 @@ suite.each(devices)("device:%s", (device) => {
       const out = nn.dotProductAttention(query, key, value);
       expect(out.shape).toEqual([1, 2, 4, 2]);
     });
+
+    if (device === "webgpu") {
+      test("flash attention matches naive attention with GQA and causal mask", () => {
+        const query = np.array([
+          [
+            [
+              [1, 0, 0, 0],
+              [0, 1, 0, 0],
+              [1, 1, 0, 0],
+              [0.5, 0.5, 0, 0],
+            ],
+            [
+              [0, 1, 0, 0],
+              [1, 0, 0, 0],
+              [0.5, 0.25, 0, 0],
+              [0.25, 0.5, 0, 0],
+            ],
+            [
+              [1, 1, 0, 0],
+              [0.5, 0.5, 0, 0],
+              [1, 0.5, 0, 0],
+              [0.5, 1, 0, 0],
+            ],
+          ],
+        ]);
+        const key = np.array([
+          [
+            [
+              [1, 0, 0, 0],
+              [0, 1, 0, 0],
+            ],
+            [
+              [0, 1, 0, 0],
+              [1, 0, 0, 0],
+            ],
+            [
+              [1, 1, 0, 0],
+              [0.5, 0.5, 0, 0],
+            ],
+          ],
+        ]);
+        const value = np.array([
+          [
+            [
+              [1, 2, 3, 4],
+              [5, 6, 7, 8],
+            ],
+            [
+              [9, 10, 11, 12],
+              [13, 14, 15, 16],
+            ],
+            [
+              [17, 18, 19, 20],
+              [21, 22, 23, 24],
+            ],
+          ],
+        ]);
+
+        const naive = nn.dotProductAttention(query.ref, key.ref, value.ref, {
+          isCausal: true,
+          implementation: "naive",
+        });
+        const flash = nn.dotProductAttention(query, key, value, {
+          isCausal: true,
+          implementation: "flash",
+        });
+        expect(flash).toBeAllclose(naive, { atol: 1e-4 });
+      });
+    }
 
     test("multi-query attention (MQA)", () => {
       // Q: B=1, L=2, N=4 (query heads), H=2
