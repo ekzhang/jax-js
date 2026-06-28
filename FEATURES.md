@@ -125,7 +125,7 @@ Most operations behave the same way as they do in JAX.
 | `amin`                | ⚪️      | alias of `min`                          |
 | `angle`               | ⚪️      | complex numbers                         |
 | `any`                 | 🟢      |                                         |
-| `append`              | 🟠      |                                         |
+| `append`              | 🟢      |                                         |
 | `apply_along_axis`    | 🟢      |                                         |
 | `apply_over_axes`     | 🟢      |                                         |
 | `arange`              | 🟢      |                                         |
@@ -224,7 +224,7 @@ Most operations behave the same way as they do in JAX.
 | `equal`               | 🟢      |                                         |
 | `exp`                 | 🟢      |                                         |
 | `exp2`                | 🟢      |                                         |
-| `expand_dims`         | 🟠      |                                         |
+| `expand_dims`         | 🟢      |                                         |
 | `expm1`               | 🟡      | implemented as `exp(x)-1`               |
 | `extract`             | 🔴      |                                         |
 | `eye`                 | 🟢      |                                         |
@@ -555,8 +555,7 @@ jax-js was built from scratch.
 ## [`jax.random` module](https://docs.jax.dev/en/latest/jax.random.html)
 
 JAX uses a [Threefry2x32](https://docs.jax.dev/en/latest/jep/263-prng.html) random number generator.
-jax-js implements the same PRNG, with bitwise identical outputs. However, most samplers in the
-`random` module have not been implemented yet, these can be added easily.
+jax-js implements the same PRNG, with bitwise identical outputs.
 
 | API             | Support | Notes                         |
 | --------------- | ------- | ----------------------------- |
@@ -564,7 +563,7 @@ jax-js implements the same PRNG, with bitwise identical outputs. However, most s
 | `key_data`      | ⚪️      | keys are just uint32 arrays   |
 | `wrap_key_data` | ⚪️      | keys are just uint32 arrays   |
 | `fold_in`       | 🟠      |                               |
-| `split`         | 🟢      | not vmappable yet             |
+| `split`         | 🟢      |                               |
 | `clone`         | ⚪️      | use `.ref`                    |
 | `PRNGKey`       | ⚪️      | legacy                        |
 
