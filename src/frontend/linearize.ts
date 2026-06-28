@@ -825,10 +825,13 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
   },
   [Primitive.Concatenate]([ct], inputs, { axis }) {
     // The backprop of concatenate is split.
-    if (inputs.some((x) => !(x instanceof UndefPrimal)))
-      throw new NonlinearError(Primitive.Concatenate);
     const sizes = inputs.map((x) => x.aval.shape[axis]);
-    return split(ct, axis, sizes);
+    const cts = split(ct, axis, sizes);
+    return inputs.map((x, i) => {
+      if (x instanceof UndefPrimal) return cts[i];
+      (x.dispose(), cts[i].dispose());
+      return null;
+    });
   },
   [Primitive.Split](cts, [x], { axis }) {
     if (!(x instanceof UndefPrimal)) throw new NonlinearError(Primitive.Split);

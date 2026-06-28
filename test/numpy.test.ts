@@ -2853,6 +2853,43 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.append()", () => {
+    test("flattens inputs when axis is omitted", () => {
+      const x = np.array([
+        [1, 2],
+        [3, 4],
+      ]);
+      const y = np.append(x, np.array([[5, 6]]));
+      expect(y.shape).toEqual([6]);
+      expect(y.js()).toEqual([1, 2, 3, 4, 5, 6]);
+    });
+
+    test("appends along an axis", () => {
+      const x = np.array([
+        [1, 2],
+        [3, 4],
+      ]);
+      const y0 = np.append(x.ref, np.array([[5, 6]]), 0);
+      expect(y0.js()).toEqual([
+        [1, 2],
+        [3, 4],
+        [5, 6],
+      ]);
+
+      const y1 = np.append(x, np.array([[5], [6]]), 1);
+      expect(y1.js()).toEqual([
+        [1, 2, 5],
+        [3, 4, 6],
+      ]);
+    });
+
+    test("works with grad", () => {
+      const x = np.array([1, 2, 3]);
+      const dx = grad((x: np.Array) => np.append(x, np.array([4, 5])).sum())(x);
+      expect(dx.js()).toEqual([1, 1, 1]);
+    });
+  });
+
   suite("jax.numpy.takeAlongAxis()", () => {
     test("takes values along columns", () => {
       const x = np.array([
