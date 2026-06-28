@@ -1112,6 +1112,24 @@ export function argsort(a: ArrayLike, axis: number = -1): Array {
 }
 
 /**
+ * Append values to the end of an array.
+ *
+ * If `axis` is `null`, both inputs are flattened before concatenation.
+ */
+export function append(
+  arr: ArrayLike,
+  values: ArrayLike,
+  axis: number | null = null,
+): Array {
+  if (axis === null) {
+    return concatenate([ravel(arr), ravel(values)], 0);
+  }
+  const a = fudgeArray(arr);
+  axis = checkAxis(axis, a.ndim);
+  return concatenate([a, fudgeArray(values)], axis);
+}
+
+/**
  * Take elements from an array along an axis.
  *
  * This is equivalent to advanced indexing with integer indices over that
