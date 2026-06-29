@@ -651,8 +651,8 @@ export interface AbstractValue {
 /**
  * Broadcast shapes and promote types with casting for two avals.
  *
- * This implements the weak type behavior described in `promoteTypes()`, but not
- * implemented in that function as `weakType` is not passed.
+ * This implements weak type behavior by letting weak numeric values adopt the
+ * strong dtype, except bool promotes to int32 for numeric operations.
  */
 export function promoteAvals(a: AbstractValue, b: AbstractValue): ShapedArray {
   const shape = generalBroadcast(a.shape, b.shape);
@@ -663,10 +663,10 @@ export function promoteAvals(a: AbstractValue, b: AbstractValue): ShapedArray {
     dtype = promoteTypes(a.dtype, b.dtype);
   } else if (a.weakType) {
     // a is weak, b is strong: use b's dtype.
-    dtype = promoteTypes(b.dtype, DType.Uint32);
+    dtype = b.dtype === DType.Bool ? DType.Int32 : b.dtype;
   } else {
     // b is weak, a is strong: use a's dtype.
-    dtype = promoteTypes(a.dtype, DType.Uint32);
+    dtype = a.dtype === DType.Bool ? DType.Int32 : a.dtype;
   }
   return new ShapedArray(shape, dtype, weakType);
 }

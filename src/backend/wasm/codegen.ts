@@ -29,6 +29,7 @@ import {
   dtyF,
   type SimdPointerPlan,
   simdSupportedOps,
+  storeDtype,
   translateExp,
   translateExpSimd,
 } from "./translation";
@@ -39,6 +40,7 @@ import {
   byteWidth,
   DType,
   isFloatDtype,
+  isUnsignedDtype,
   Kernel,
 } from "../../alu";
 import { tuneNullopt } from "../../tuner";
@@ -170,7 +172,7 @@ function emitScalarReductionOp(
         cg.local.get(acc);
         if (re.op === AluOp.Min) dtyF(cg, re.op, re.dtype).min();
         else dtyF(cg, re.op, re.dtype).max();
-      } else if ([DType.Int32, DType.Uint32, DType.Bool].includes(re.dtype)) {
+      } else {
         // Wasm has no i32.min/max, so emulate with select.
         const local = cg.local.declare(cg.i32);
         cg.local.tee(local);
@@ -178,14 +180,14 @@ function emitScalarReductionOp(
         cg.local.get(local);
         cg.local.get(acc);
         if (re.op === AluOp.Min) {
-          if (re.dtype === DType.Int32) cg.i32.lt_s();
-          else cg.i32.lt_u();
+          if (isUnsignedDtype(re.dtype)) cg.i32.lt_u();
+          else cg.i32.lt_s();
         } else {
-          if (re.dtype === DType.Int32) cg.i32.gt_s();
-          else cg.i32.gt_u();
+          if (isUnsignedDtype(re.dtype)) cg.i32.gt_u();
+          else cg.i32.gt_s();
         }
         cg.select();
-      } else throw new Error(`invalid reduction min/max over ${re.dtype}`);
+      }
       return;
     default:
       throw new Error(`invalid wasm reduction op: ${re.op}`);
@@ -672,9 +674,7 @@ export function codegenWasm(kernel: Kernel): WasmCodegenResult {
               gidx: laneGidx,
             });
 
-            dty(cg, null, kernel.dtype).store(
-              Math.log2(byteWidth(kernel.dtype)),
-            );
+            storeDtype(cg, null, kernel.dtype);
           }
         }
       };
@@ -793,7 +793,7 @@ export function codegenWasm(kernel: Kernel): WasmCodegenResult {
           acc,
           gidx: groups[i].gidx,
         });
-        dty(cg, null, kernel.dtype).store(Math.log2(byteWidth(kernel.dtype)));
+        storeDtype(cg, null, kernel.dtype);
       }
     };
 
@@ -1021,7 +1021,7 @@ export function codegenWasm(kernel: Kernel): WasmCodegenResult {
         translateExp(cg, funcs, tune.exp, { gidx });
       }
 
-      dty(cg, null, kernel.dtype).store(Math.log2(byteWidth(kernel.dtype)));
+      storeDtype(cg, null, kernel.dtype);
       bumpLocal(gidx, 1);
     });
   });

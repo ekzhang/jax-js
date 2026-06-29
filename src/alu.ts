@@ -5,6 +5,8 @@ import { clamp, FpHash, FpHashable, gcd, strip1 } from "./utils";
 /** A numerical data type for array contents. */
 export enum DType {
   Float32 = "float32",
+  Int16 = "int16",
+  Uint16 = "uint16",
   Int32 = "int32",
   Uint32 = "uint32",
   Bool = "bool",
@@ -15,6 +17,8 @@ export enum DType {
 /** @inline */
 export type DataArray =
   | Float32Array<ArrayBuffer>
+  | Int16Array<ArrayBuffer>
+  | Uint16Array<ArrayBuffer>
   | Int32Array<ArrayBuffer>
   | Uint32Array<ArrayBuffer>
   | Float16Array<ArrayBuffer>
@@ -27,6 +31,8 @@ export const byteWidth = (dtype: DType): number => {
     case DType.Uint32:
     case DType.Bool:
       return 4;
+    case DType.Int16:
+    case DType.Uint16:
     case DType.Float16:
       return 2;
     case DType.Float64:
@@ -41,6 +47,57 @@ export const isFloatDtype = (
 ): dtype is DType.Float32 | DType.Float16 | DType.Float64 =>
   dtype === DType.Float32 || dtype === DType.Float16 || dtype === DType.Float64;
 
+export const isUnsignedDtype = (
+  dtype: DType,
+): dtype is DType.Bool | DType.Uint16 | DType.Uint32 =>
+  dtype === DType.Bool || dtype === DType.Uint16 || dtype === DType.Uint32;
+
+export function intMinValue(dtype: DType): number {
+  switch (dtype) {
+    case DType.Int16:
+      return -32768;
+    case DType.Uint16:
+      return 0;
+    case DType.Int32:
+      return -2147483648;
+    case DType.Uint32:
+      return 0;
+    default:
+      throw new TypeError(`Not an integer dtype: ${dtype}`);
+  }
+}
+
+export function intMaxValue(dtype: DType): number {
+  switch (dtype) {
+    case DType.Int16:
+      return 32767;
+    case DType.Uint16:
+      return 65535;
+    case DType.Int32:
+      return 2147483647;
+    case DType.Uint32:
+      return 4294967295;
+    default:
+      throw new TypeError(`Not an integer dtype: ${dtype}`);
+  }
+}
+
+export function normalizeInt(dtype: DType, value: number): number {
+  value = Math.trunc(value);
+  switch (dtype) {
+    case DType.Int16:
+      return (value << 16) >> 16;
+    case DType.Uint16:
+      return value & 0xffff;
+    case DType.Int32:
+      return value | 0;
+    case DType.Uint32:
+      return value >>> 0;
+    default:
+      throw new TypeError(`Not an integer dtype: ${dtype}`);
+  }
+}
+
 /**
  * Promote two dtypes to their join according to the type lattice.
  *
@@ -50,16 +107,22 @@ export const isFloatDtype = (
  *
  * **Type lattice:**
  * ```text
- * bool -> uint32 -> int32 -> float16 -> float32 -> float64
- *  weakType --^
+ * bool -> int16 ->  int32 -> float16 -> float32 -> float64
+ *    \         ,----^  ^
+ *     -> uint16 -> uint32
  * ```
+ *
+ * Integer promotion follows the join of these chains, so `uint16` with
+ * `uint32` promotes to `uint32`, while `uint16` with `int16` promotes to
+ * `int32`.
  *
  * `weakType` represents weakly typed arrays. These are created for JS numbers,
  * which default to float32 but "weak" so they cast to the dtype of any array
- * they are first combined with, except `bool`.
+ * they are first combined with, except `bool`, which becomes int32.
  *
  * **Examples:**
  * - `promoteTypes(bool, int32) → int32`
+ * - `promoteTypes(int16, uint32) → int32`
  * - `promoteTypes(uint32, int32) → int32`
  * - `promoteTypes(int32, float16) → float16`
  * - `promoteTypes(float16, float32) → float32`
@@ -71,15 +134,24 @@ export function promoteTypes(dtype1: DType, dtype2: DType): DType {
   // Define the promotion order in a linear chain (higher number = later in chain)
   const rank: Record<DType, number> = {
     [DType.Bool]: 0,
-    [DType.Uint32]: 1,
-    [DType.Int32]: 2,
-    [DType.Float16]: 3,
-    [DType.Float32]: 4,
-    [DType.Float64]: 5,
+    [DType.Uint16]: 10,
+    [DType.Uint32]: 11,
+    [DType.Int16]: 20,
+    [DType.Int32]: 21,
+    [DType.Float16]: 30,
+    [DType.Float32]: 31,
+    [DType.Float64]: 32,
   };
 
+  if (rank[dtype1] < rank[dtype2]) [dtype1, dtype2] = [dtype2, dtype1];
+
+  // Handle unsigned-and-signed integer promotions.
+  if (dtype1 === DType.Int16) {
+    if (dtype2 === DType.Uint16 || dtype2 === DType.Uint32) return DType.Int32;
+  }
+
   // Take the type that appears later in the chain
-  return rank[dtype1] > rank[dtype2] ? dtype1 : dtype2;
+  return dtype1;
 }
 
 export function dtypedArray(
@@ -91,6 +163,10 @@ export function dtypedArray(
   switch (dtype) {
     case DType.Float32:
       return new Float32Array(buffer, byteOffset, length);
+    case DType.Int16:
+      return new Int16Array(buffer, byteOffset, length);
+    case DType.Uint16:
+      return new Uint16Array(buffer, byteOffset, length);
     case DType.Int32:
     case DType.Bool: // Booleans are stored as 0/1 in int32.
       return new Int32Array(buffer, byteOffset, length);
@@ -109,6 +185,10 @@ export function dtypedJsArray(dtype: DType, data: number[]): DataArray {
   switch (dtype) {
     case DType.Float32:
       return new Float32Array(data);
+    case DType.Int16:
+      return new Int16Array(data);
+    case DType.Uint16:
+      return new Uint16Array(data);
     case DType.Int32:
     case DType.Bool: // Booleans are stored as 0/1 in int32.
       return new Int32Array(data);
@@ -280,10 +360,8 @@ export class AluExp implements FpHashable {
   static const(dtype: DType, value: any): AluExp {
     if (dtype === DType.Bool) {
       value = Number(Boolean(value));
-    } else if (dtype === DType.Int32) {
-      value = Math.trunc(value) | 0;
-    } else if (dtype === DType.Uint32) {
-      value = Math.trunc(value) >>> 0;
+    } else if (!isFloatDtype(dtype)) {
+      value = normalizeInt(dtype, value);
     }
     if (typeof value !== "number") {
       throw new TypeError(
@@ -515,22 +593,18 @@ export class AluExp implements FpHashable {
           const canBeZero = src[0].min <= 0 && src[0].max >= 0;
           const mustBeZero = src[0].min === 0 && src[0].max === 0;
           ret = mustBeZero ? [0, 0] : canBeZero ? [0, 1] : [1, 1];
-        } else if (this.dtype === DType.Int32) {
-          const a = wasFloat
-            ? clamp(src[0].min, -2147483648, 2147483647) | 0
-            : src[0].min | 0;
-          const b = wasFloat
-            ? clamp(src[0].max, -2147483648, 2147483647) | 0
-            : src[0].max | 0;
-          ret = bounded && a <= b ? [a, b] : [-Infinity, Infinity];
-        } else if (this.dtype === DType.Uint32) {
-          const a = wasFloat
-            ? clamp(src[0].min, 0, 4294967295) >>> 0
-            : src[0].min >>> 0;
-          const b = wasFloat
-            ? clamp(src[0].max, 0, 4294967295) >>> 0
-            : src[0].max >>> 0;
-          ret = bounded && a <= b ? [a, b] : [0, Infinity];
+        } else if (!isFloatDtype(this.dtype)) {
+          const min = intMinValue(this.dtype);
+          const max = intMaxValue(this.dtype);
+          const a = normalizeInt(
+            this.dtype,
+            wasFloat ? clamp(src[0].min, min, max) : src[0].min,
+          );
+          const b = normalizeInt(
+            this.dtype,
+            wasFloat ? clamp(src[0].max, min, max) : src[0].max,
+          );
+          ret = bounded && a <= b ? [a, b] : [min, max];
         } else {
           ret = [src[0].min, src[0].max];
         }
@@ -566,9 +640,17 @@ export class AluExp implements FpHashable {
     if (this.dtype === DType.Bool) {
       ret[0] = clamp(ret[0], 0, 1);
       ret[1] = clamp(ret[1], 0, 1);
-    }
-    if (this.dtype === DType.Uint32) {
-      ret[0] = Math.max(0, ret[0]);
+    } else if (!isFloatDtype(this.dtype)) {
+      const min = intMinValue(this.dtype);
+      const max = intMaxValue(this.dtype);
+      if (!Number.isFinite(ret[0]) || !Number.isFinite(ret[1])) {
+        ret = [min, max];
+      } else if (ret[0] === ret[1]) {
+        const value = normalizeInt(this.dtype, ret[0]);
+        ret = [value, value];
+      } else if (ret[0] < min || ret[1] > max) {
+        ret = [min, max];
+      }
     }
     this.#range = ret;
     return ret;
@@ -618,7 +700,8 @@ export class AluExp implements FpHashable {
   #isConstInt(): boolean {
     return (
       this.op === AluOp.Const &&
-      (this.dtype === DType.Int32 || this.dtype === DType.Uint32)
+      this.dtype !== DType.Bool &&
+      !isFloatDtype(this.dtype)
     );
   }
 
@@ -736,6 +819,9 @@ export class AluExp implements FpHashable {
       if (src[0].min === 1) return src[1];
     }
 
+    const allowDivModAlgebra =
+      this.dtype === DType.Int32 || this.dtype === DType.Uint32;
+
     // Shape tracking ops (can be made more general).
     // x % C => x
     if (
@@ -748,6 +834,7 @@ export class AluExp implements FpHashable {
     }
     // (x % A) % B => x % min(A, B), if A|B or B|A
     if (
+      allowDivModAlgebra &&
       op === AluOp.Mod &&
       src[0].op === AluOp.Mod &&
       src[1].#isConstInt() &&
@@ -764,6 +851,7 @@ export class AluExp implements FpHashable {
     }
     // (...) * A + (...) % A
     if (
+      allowDivModAlgebra &&
       op === AluOp.Add &&
       src[0].op === AluOp.Mul &&
       src[0].src[1].#isConstInt() &&
@@ -792,7 +880,7 @@ export class AluExp implements FpHashable {
         }
       }
     }
-    if (op === AluOp.Idiv && src[1].#isConstInt()) {
+    if (allowDivModAlgebra && op === AluOp.Idiv && src[1].#isConstInt()) {
       const [numer, denom] = src;
       const B: number = denom.arg;
       for (let i = 0; i < 2; i++) {
@@ -829,6 +917,7 @@ export class AluExp implements FpHashable {
       }
     }
     if (
+      allowDivModAlgebra &&
       op === AluOp.Mod &&
       src[1].#isConstInt() &&
       src[1].arg > 0 &&
@@ -907,7 +996,11 @@ export class AluExp implements FpHashable {
     // These are needed to simplify expressions like pool() in conv2d. Otherwise
     // the resulting expressions are complex and slow.
 
-    if ((op === AluOp.Mod || op === AluOp.Idiv) && src[1].#isConstInt()) {
+    if (
+      allowDivModAlgebra &&
+      (op === AluOp.Mod || op === AluOp.Idiv) &&
+      src[1].#isConstInt()
+    ) {
       const [x, y] = src;
 
       // divide_by_gcd: https://github.com/tinygrad/tinygrad/blob/d1224a7/tinygrad/uop/symbolic.py#L190
@@ -1051,17 +1144,21 @@ export class AluExp implements FpHashable {
     if (AluGroup.Binary.has(this.op) || AluGroup.Compare.has(this.op)) {
       const x = this.src[0].evaluate(context, globals);
       const y = this.src[1].evaluate(context, globals);
+      const normalize = (value: number) =>
+        this.dtype === DType.Bool || isFloatDtype(this.dtype)
+          ? value
+          : normalizeInt(this.dtype, value);
       switch (this.op) {
         case AluOp.Add:
-          return this.dtype === DType.Bool ? Number(x || y) : x + y;
+          return this.dtype === DType.Bool ? Number(x || y) : normalize(x + y);
         case AluOp.Sub:
-          return x - y;
+          return normalize(x - y);
         case AluOp.Mul:
-          return this.dtype === DType.Bool ? Number(x && y) : x * y;
+          return this.dtype === DType.Bool ? Number(x && y) : normalize(x * y);
         case AluOp.Idiv:
-          return Math.trunc(x / y); // Consistent with signed Mod.
+          return normalize(Math.trunc(x / y)); // Consistent with signed Mod.
         case AluOp.Mod:
-          return x % y;
+          return normalize(x % y);
         case AluOp.Min:
           return Math.min(x, y);
         case AluOp.Max:
@@ -1071,12 +1168,11 @@ export class AluExp implements FpHashable {
           if (this.arg === "and") r = x & y;
           else if (this.arg === "or") r = x | y;
           else r = x ^ y;
-          return this.dtype === DType.Int32 ? r | 0 : r >>> 0;
+          return normalizeInt(this.dtype, r);
         }
         case AluOp.BitShift:
-          if (this.arg === "shl")
-            return this.dtype === DType.Int32 ? (x << y) | 0 : (x << y) >>> 0;
-          return x >>> y;
+          if (this.arg === "shl") return normalizeInt(this.dtype, x << y);
+          return normalizeInt(this.dtype, x >>> y);
         case AluOp.Cmplt:
           return Number(x < y);
         case AluOp.Cmpne:
@@ -1115,11 +1211,11 @@ export class AluExp implements FpHashable {
           return 1 / x;
         case AluOp.Cast: {
           const wasFloat = isFloatDtype(this.src[0].dtype);
-          if (this.dtype === DType.Int32)
-            return (wasFloat ? clamp(x, -2147483648, 2147483647) : x) | 0;
-          else if (this.dtype === DType.Uint32)
-            return (wasFloat ? clamp(x, 0, 4294967295) : x) >>> 0;
-          else if (isFloatDtype(this.dtype)) return x;
+          if (this.dtype !== DType.Bool && !isFloatDtype(this.dtype)) {
+            const min = intMinValue(this.dtype);
+            const max = intMaxValue(this.dtype);
+            return normalizeInt(this.dtype, wasFloat ? clamp(x, min, max) : x);
+          } else if (isFloatDtype(this.dtype)) return x;
           else if (this.dtype === DType.Bool) return Number(Boolean(x));
           else throw new Error(`Unsupported cast to ${this.dtype}`);
         }
@@ -1129,6 +1225,8 @@ export class AluExp implements FpHashable {
           // Populate data in the byte view (all browsers use little-endian).
           const fromType = this.src[0].dtype;
           if (fromType === DType.Float32) view.setFloat32(0, x, true);
+          else if (fromType === DType.Int16) view.setInt16(0, x, true);
+          else if (fromType === DType.Uint16) view.setUint16(0, x, true);
           else if (fromType === DType.Int32) view.setInt32(0, x, true);
           else if (fromType === DType.Uint32) view.setUint32(0, x, true);
           else if (fromType === DType.Float16) view.setFloat16(0, x, true);
@@ -1136,6 +1234,8 @@ export class AluExp implements FpHashable {
           else throw new Error(`Unsupported bitcast from ${fromType}`);
           // Read the data in the target dtype.
           if (this.dtype === DType.Float32) return view.getFloat32(0, true);
+          else if (this.dtype === DType.Int16) return view.getInt16(0, true);
+          else if (this.dtype === DType.Uint16) return view.getUint16(0, true);
           else if (this.dtype === DType.Int32) return view.getInt32(0, true);
           else if (this.dtype === DType.Uint32) return view.getUint32(0, true);
           else if (this.dtype === DType.Float16)
@@ -1572,16 +1672,11 @@ export class Reduction implements FpHashable {
   get identity(): any {
     if (this.dtype === DType.Bool) {
       return this.op === AluOp.Add || this.op === AluOp.Max ? 0 : 1;
-    } else if (this.dtype === DType.Int32) {
+    } else if (!isFloatDtype(this.dtype)) {
       if (this.op === AluOp.Add) return 0;
       else if (this.op === AluOp.Mul) return 1;
-      else if (this.op === AluOp.Min) return -1 >>> 1;
-      else if (this.op === AluOp.Max) return 1 << 31;
-    } else if (this.dtype === DType.Uint32) {
-      if (this.op === AluOp.Add) return 0;
-      else if (this.op === AluOp.Mul) return 1;
-      else if (this.op === AluOp.Min) return -1 >>> 0;
-      else if (this.op === AluOp.Max) return 0;
+      else if (this.op === AluOp.Min) return intMaxValue(this.dtype);
+      else if (this.op === AluOp.Max) return intMinValue(this.dtype);
     } else if (isFloatDtype(this.dtype)) {
       if (this.op === AluOp.Add) return 0;
       else if (this.op === AluOp.Mul) return 1;
@@ -1601,31 +1696,27 @@ export class Reduction implements FpHashable {
         // AND reduction: identity is true
         return values.reduce((a: boolean, b: boolean) => a && b, true);
       }
-    } else if (this.dtype === DType.Int32) {
+    } else if (!isFloatDtype(this.dtype)) {
       if (this.op === AluOp.Add) {
-        return values.reduce((a: number, b: number) => (a + b) | 0, 0);
+        return values.reduce(
+          (a: number, b: number) => normalizeInt(this.dtype, a + b),
+          0,
+        );
       } else if (this.op === AluOp.Mul) {
-        return values.reduce((a: number, b: number) => (a * b) | 0, 1);
+        return values.reduce(
+          (a: number, b: number) => normalizeInt(this.dtype, a * b),
+          1,
+        );
       } else if (this.op === AluOp.Min) {
         return values.reduce(
           (a: number, b: number) => Math.min(a, b),
-          -1 >>> 1,
+          intMaxValue(this.dtype),
         );
       } else if (this.op === AluOp.Max) {
-        return values.reduce((a: number, b: number) => Math.max(a, b), 1 << 31);
-      }
-    } else if (this.dtype === DType.Uint32) {
-      if (this.op === AluOp.Add) {
-        return values.reduce((a: number, b: number) => (a + b) >>> 0, 0);
-      } else if (this.op === AluOp.Mul) {
-        return values.reduce((a: number, b: number) => (a * b) >>> 0, 1);
-      } else if (this.op === AluOp.Min) {
         return values.reduce(
-          (a: number, b: number) => Math.min(a, b),
-          -1 >>> 0,
+          (a: number, b: number) => Math.max(a, b),
+          intMinValue(this.dtype),
         );
-      } else if (this.op === AluOp.Max) {
-        return values.reduce((a: number, b: number) => Math.max(a, b), 0);
       }
     } else if (isFloatDtype(this.dtype)) {
       if (this.op === AluOp.Add) {

@@ -95,8 +95,8 @@ supported.
 | `np.bool_`    | 🟢          | 🟢   | 🟢     | 🟢        |                    |
 | `np.int8`     | 🟠          | 🟠   | 🟠     | 🟠        | requires emulation |
 | `np.uint8`    | 🟠          | 🟠   | 🟠     | 🟠        | requires emulation |
-| `np.int16`    | 🟠          | 🟠   | 🟠     | 🟠        | requires emulation |
-| `np.uint16`   | 🟠          | 🟠   | 🟠     | 🟠        | requires emulation |
+| `np.int16`    | 🟢          | 🟢   | 🟠     | 🟠        | 2-byte storage     |
+| `np.uint16`   | 🟢          | 🟢   | 🟠     | 🟠        | 2-byte storage     |
 | `np.int32`    | 🟢          | 🟢   | 🟢     | 🟢        |                    |
 | `np.uint32`   | 🟢          | 🟢   | 🟢     | 🟢        |                    |
 | `np.bfloat16` | 🔴          | 🔴   | 🔴     | 🔴        | lacks support      |
