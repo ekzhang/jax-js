@@ -21,12 +21,8 @@ suite.each(devices)("device:%s", (device) => {
     });
     expect(i8.dtype).toBe(np.int8);
     expect(i8.shape).toEqual([5]);
-    expect(await i8.ref.data()).toEqual(
-      new Int8Array([127, -1, 0, 127, -128]),
-    );
-    expect(i8.ref.dataSync()).toEqual(
-      new Int8Array([127, -1, 0, 127, -128]),
-    );
+    expect(await i8.ref.data()).toEqual(new Int8Array([127, -1, 0, 127, -128]));
+    expect(i8.ref.dataSync()).toEqual(new Int8Array([127, -1, 0, 127, -128]));
     expect(i8.js()).toEqual([127, -1, 0, 127, -128]);
 
     const u8 = np.array([-1, 0, 1, 255, 256], { dtype: np.uint8 });
