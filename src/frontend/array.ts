@@ -1320,6 +1320,14 @@ function arrayFromData(
     if (dtype && dtype !== DType.Float32)
       throw new Error("Float32Array must have float32 type");
     dtype ??= DType.Float32;
+  } else if (data instanceof Int8Array) {
+    if (dtype && dtype !== DType.Int8)
+      throw new Error("Int8Array must have int8 type");
+    dtype ??= DType.Int8;
+  } else if (data instanceof Uint8Array) {
+    if (dtype && dtype !== DType.Uint8)
+      throw new Error("Uint8Array must have uint8 type");
+    dtype ??= DType.Uint8;
   } else if (data instanceof Int16Array) {
     if (dtype && dtype !== DType.Int16)
       throw new Error("Int16Array must have int16 type");

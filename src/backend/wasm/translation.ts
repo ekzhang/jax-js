@@ -140,13 +140,21 @@ export function translateExp(
         gen(src[0]);
         const dtype0 = src[0].dtype;
         const i32repr = !isFloatDtype(dtype0);
-        if (dtype === DType.Int16 || dtype === DType.Int32) {
+        if (
+          dtype === DType.Int8 ||
+          dtype === DType.Int16 ||
+          dtype === DType.Int32
+        ) {
           clampFloatToIntRange(cg, op, dtype0, dtype);
           if (dtype0 === DType.Float32) cg.i32.trunc_sat_f32_s();
           else if (dtype0 === DType.Float64) cg.i32.trunc_sat_f64_s();
           else if (i32repr) normalizeI32ToInt(cg, dtype);
           else throw new UnsupportedOpError(op, dtype, "wasm", dtype0);
-        } else if (dtype === DType.Uint16 || dtype === DType.Uint32) {
+        } else if (
+          dtype === DType.Uint8 ||
+          dtype === DType.Uint16 ||
+          dtype === DType.Uint32
+        ) {
           clampFloatToIntRange(cg, op, dtype0, dtype);
           if (dtype0 === DType.Float32) cg.i32.trunc_sat_f32_u();
           else if (dtype0 === DType.Float64) cg.i32.trunc_sat_f64_u();
@@ -562,6 +570,8 @@ export function dty(cg: CodeGenerator, op: AluOp | null, dtype: DType) {
       return cg.f32;
     case DType.Float64:
       return cg.f64;
+    case DType.Int8:
+    case DType.Uint8:
     case DType.Int16:
     case DType.Uint16:
     case DType.Int32:
@@ -594,6 +604,12 @@ export function loadDtype(
   dtype: DType,
 ): void {
   switch (dtype) {
+    case DType.Int8:
+      cg.i32.load8_s(0);
+      return;
+    case DType.Uint8:
+      cg.i32.load8_u(0);
+      return;
     case DType.Int16:
       cg.i32.load16_s(1);
       return;
@@ -612,6 +628,10 @@ export function storeDtype(
   dtype: DType,
 ): void {
   switch (dtype) {
+    case DType.Int8:
+    case DType.Uint8:
+      cg.i32.store8(0);
+      return;
     case DType.Int16:
     case DType.Uint16:
       cg.i32.store16(1);
@@ -623,7 +643,15 @@ export function storeDtype(
 }
 
 function normalizeI32ToInt(cg: CodeGenerator, dtype: DType): void {
-  if (dtype === DType.Int16) {
+  if (dtype === DType.Int8) {
+    cg.i32.const(24);
+    cg.i32.shl();
+    cg.i32.const(24);
+    cg.i32.shr_s();
+  } else if (dtype === DType.Uint8) {
+    cg.i32.const(0xff);
+    cg.i32.and();
+  } else if (dtype === DType.Int16) {
     cg.i32.const(16);
     cg.i32.shl();
     cg.i32.const(16);

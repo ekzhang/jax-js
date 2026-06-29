@@ -5,6 +5,8 @@ import { clamp, FpHash, FpHashable, gcd, strip1 } from "./utils";
 /** A numerical data type for array contents. */
 export enum DType {
   Float32 = "float32",
+  Int8 = "int8",
+  Uint8 = "uint8",
   Int16 = "int16",
   Uint16 = "uint16",
   Int32 = "int32",
@@ -17,6 +19,8 @@ export enum DType {
 /** @inline */
 export type DataArray =
   | Float32Array<ArrayBuffer>
+  | Int8Array<ArrayBuffer>
+  | Uint8Array<ArrayBuffer>
   | Int16Array<ArrayBuffer>
   | Uint16Array<ArrayBuffer>
   | Int32Array<ArrayBuffer>
@@ -31,6 +35,9 @@ export const byteWidth = (dtype: DType): number => {
     case DType.Uint32:
     case DType.Bool:
       return 4;
+    case DType.Int8:
+    case DType.Uint8:
+      return 1;
     case DType.Int16:
     case DType.Uint16:
     case DType.Float16:
@@ -49,11 +56,18 @@ export const isFloatDtype = (
 
 export const isUnsignedDtype = (
   dtype: DType,
-): dtype is DType.Bool | DType.Uint16 | DType.Uint32 =>
-  dtype === DType.Bool || dtype === DType.Uint16 || dtype === DType.Uint32;
+): dtype is DType.Bool | DType.Uint8 | DType.Uint16 | DType.Uint32 =>
+  dtype === DType.Bool ||
+  dtype === DType.Uint8 ||
+  dtype === DType.Uint16 ||
+  dtype === DType.Uint32;
 
 export function intMinValue(dtype: DType): number {
   switch (dtype) {
+    case DType.Int8:
+      return -128;
+    case DType.Uint8:
+      return 0;
     case DType.Int16:
       return -32768;
     case DType.Uint16:
@@ -69,6 +83,10 @@ export function intMinValue(dtype: DType): number {
 
 export function intMaxValue(dtype: DType): number {
   switch (dtype) {
+    case DType.Int8:
+      return 127;
+    case DType.Uint8:
+      return 255;
     case DType.Int16:
       return 32767;
     case DType.Uint16:
@@ -85,6 +103,10 @@ export function intMaxValue(dtype: DType): number {
 export function normalizeInt(dtype: DType, value: number): number {
   value = Math.trunc(value);
   switch (dtype) {
+    case DType.Int8:
+      return (value << 24) >> 24;
+    case DType.Uint8:
+      return value & 0xff;
     case DType.Int16:
       return (value << 16) >> 16;
     case DType.Uint16:
@@ -107,14 +129,14 @@ export function normalizeInt(dtype: DType, value: number): number {
  *
  * **Type lattice:**
  * ```text
- * bool -> int16 ->  int32 -> float16 -> float32 -> float64
- *    \         ,----^  ^
- *     -> uint16 -> uint32
+ * bool -> int8 ->  int16 ->  int32 -> float16 -> float32 -> float64
+ *    \        ,-----^   ,-----^  ^
+ *     -> uint8 -> uint16 -> uint32
  * ```
  *
- * Integer promotion follows the join of these chains, so `uint16` with
- * `uint32` promotes to `uint32`, while `uint16` with `int16` promotes to
- * `int32`.
+ * Integer promotion follows the join of these chains, so `uint8` with
+ * `uint16` promotes to `uint16`, `uint8` with `int16` promotes to `int16`,
+ * and `uint16` with `int16` promotes to `int32`.
  *
  * `weakType` represents weakly typed arrays. These are created for JS numbers,
  * which default to float32 but "weak" so they cast to the dtype of any array
@@ -122,6 +144,8 @@ export function normalizeInt(dtype: DType, value: number): number {
  *
  * **Examples:**
  * - `promoteTypes(bool, int32) → int32`
+ * - `promoteTypes(int8, uint8) → int16`
+ * - `promoteTypes(uint8, int16) → int16`
  * - `promoteTypes(int16, uint32) → int32`
  * - `promoteTypes(uint32, int32) → int32`
  * - `promoteTypes(int32, float16) → float16`
@@ -134,10 +158,12 @@ export function promoteTypes(dtype1: DType, dtype2: DType): DType {
   // Define the promotion order in a linear chain (higher number = later in chain)
   const rank: Record<DType, number> = {
     [DType.Bool]: 0,
-    [DType.Uint16]: 10,
-    [DType.Uint32]: 11,
-    [DType.Int16]: 20,
-    [DType.Int32]: 21,
+    [DType.Uint8]: 10,
+    [DType.Uint16]: 11,
+    [DType.Uint32]: 12,
+    [DType.Int8]: 20,
+    [DType.Int16]: 21,
+    [DType.Int32]: 22,
     [DType.Float16]: 30,
     [DType.Float32]: 31,
     [DType.Float64]: 32,
@@ -146,6 +172,10 @@ export function promoteTypes(dtype1: DType, dtype2: DType): DType {
   if (rank[dtype1] < rank[dtype2]) [dtype1, dtype2] = [dtype2, dtype1];
 
   // Handle unsigned-and-signed integer promotions.
+  if (dtype1 === DType.Int8) {
+    if (dtype2 === DType.Uint8) return DType.Int16;
+    if (dtype2 === DType.Uint16 || dtype2 === DType.Uint32) return DType.Int32;
+  }
   if (dtype1 === DType.Int16) {
     if (dtype2 === DType.Uint16 || dtype2 === DType.Uint32) return DType.Int32;
   }
@@ -163,6 +193,10 @@ export function dtypedArray(
   switch (dtype) {
     case DType.Float32:
       return new Float32Array(buffer, byteOffset, length);
+    case DType.Int8:
+      return new Int8Array(buffer, byteOffset, length);
+    case DType.Uint8:
+      return new Uint8Array(buffer, byteOffset, length);
     case DType.Int16:
       return new Int16Array(buffer, byteOffset, length);
     case DType.Uint16:
@@ -185,6 +219,10 @@ export function dtypedJsArray(dtype: DType, data: number[]): DataArray {
   switch (dtype) {
     case DType.Float32:
       return new Float32Array(data);
+    case DType.Int8:
+      return new Int8Array(data);
+    case DType.Uint8:
+      return new Uint8Array(data);
     case DType.Int16:
       return new Int16Array(data);
     case DType.Uint16:
@@ -1225,6 +1263,8 @@ export class AluExp implements FpHashable {
           // Populate data in the byte view (all browsers use little-endian).
           const fromType = this.src[0].dtype;
           if (fromType === DType.Float32) view.setFloat32(0, x, true);
+          else if (fromType === DType.Int8) view.setInt8(0, x);
+          else if (fromType === DType.Uint8) view.setUint8(0, x);
           else if (fromType === DType.Int16) view.setInt16(0, x, true);
           else if (fromType === DType.Uint16) view.setUint16(0, x, true);
           else if (fromType === DType.Int32) view.setInt32(0, x, true);
@@ -1234,6 +1274,8 @@ export class AluExp implements FpHashable {
           else throw new Error(`Unsupported bitcast from ${fromType}`);
           // Read the data in the target dtype.
           if (this.dtype === DType.Float32) return view.getFloat32(0, true);
+          else if (this.dtype === DType.Int8) return view.getInt8(0);
+          else if (this.dtype === DType.Uint8) return view.getUint8(0);
           else if (this.dtype === DType.Int16) return view.getInt16(0, true);
           else if (this.dtype === DType.Uint16) return view.getUint16(0, true);
           else if (this.dtype === DType.Int32) return view.getInt32(0, true);
