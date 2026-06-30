@@ -58,6 +58,38 @@ suite.each(devices)("device:%s", (device) => {
     expect(udata[1]).toBe(2);
   });
 
+  test("reduction sum wraps to 8-bit output", () => {
+    const i8 = np.ones([300], { dtype: np.int8 }).sum();
+    expect(i8.dtype).toBe(np.int8);
+    expect(i8.js()).toBe(44);
+
+    const u8 = np.ones([300], { dtype: np.uint8 }).sum();
+    expect(u8.dtype).toBe(np.uint8);
+    expect(u8.js()).toBe(44);
+  });
+
+  test("jit reduction epilogue observes 8-bit reduction output", () => {
+    const mod100 = jit((x: np.Array) => x.sum().mod(100));
+
+    const i8 = mod100(np.ones([300], { dtype: np.int8 }));
+    expect(i8.dtype).toBe(np.int8);
+    expect(i8.js()).toBe(44);
+
+    const u8 = mod100(np.ones([300], { dtype: np.uint8 }));
+    expect(u8.dtype).toBe(np.uint8);
+    expect(u8.js()).toBe(44);
+
+    const prodMod100 = jit((x: np.Array) => x.prod().mod(100));
+
+    const i8Prod = prodMod100(np.array([16, 16], { dtype: np.int8 }));
+    expect(i8Prod.dtype).toBe(np.int8);
+    expect(i8Prod.js()).toBe(0);
+
+    const u8Prod = prodMod100(np.array([16, 16], { dtype: np.uint8 }));
+    expect(u8Prod.dtype).toBe(np.uint8);
+    expect(u8Prod.js()).toBe(0);
+  });
+
   test("casts to int8 and uint8 clamp floats and wrap integers", () => {
     const f = np.array([-129, -128, 1.9, 127, 128], {
       dtype: np.float32,

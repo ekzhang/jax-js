@@ -64,6 +64,8 @@ export const isUnsignedDtype = (
 
 export function intMinValue(dtype: DType): number {
   switch (dtype) {
+    case DType.Bool:
+      return 0;
     case DType.Int8:
       return -128;
     case DType.Uint8:
@@ -83,6 +85,8 @@ export function intMinValue(dtype: DType): number {
 
 export function intMaxValue(dtype: DType): number {
   switch (dtype) {
+    case DType.Bool:
+      return 1;
     case DType.Int8:
       return 127;
     case DType.Uint8:
@@ -103,6 +107,8 @@ export function intMaxValue(dtype: DType): number {
 export function normalizeInt(dtype: DType, value: number): number {
   value = Math.trunc(value);
   switch (dtype) {
+    case DType.Bool:
+      return value ? 1 : 0;
     case DType.Int8:
       return (value << 24) >> 24;
     case DType.Uint8:
@@ -1696,6 +1702,28 @@ export class Reduction implements FpHashable {
       });
       this.dtype = DType.Float32;
     }
+
+    // If reducing int8/int16 types, it's easier for backends to do this
+    // reduction in int32 and cast at the end. This avoids the need to
+    // repeatedly downcast the accumulator.
+    if (
+      (this.dtype === DType.Int8 || this.dtype === DType.Int16) &&
+      (this.op === AluOp.Add || this.op === AluOp.Mul)
+    ) {
+      this.epilogue = this.epilogue.substitute({
+        acc: AluExp.cast(this.dtype, AluVar.acc(DType.Int32)),
+      });
+      this.dtype = DType.Int32;
+    }
+    if (
+      (this.dtype === DType.Uint8 || this.dtype === DType.Uint16) &&
+      (this.op === AluOp.Add || this.op === AluOp.Mul)
+    ) {
+      this.epilogue = this.epilogue.substitute({
+        acc: AluExp.cast(this.dtype, AluVar.acc(DType.Uint32)),
+      });
+      this.dtype = DType.Uint32;
+    }
   }
 
   hash(state: FpHash): void {
@@ -1712,20 +1740,17 @@ export class Reduction implements FpHashable {
 
   /** Get the identity for this reduction operation. */
   get identity(): any {
-    if (this.dtype === DType.Bool) {
-      return this.op === AluOp.Add || this.op === AluOp.Max ? 0 : 1;
-    } else if (!isFloatDtype(this.dtype)) {
+    if (!isFloatDtype(this.dtype)) {
       if (this.op === AluOp.Add) return 0;
       else if (this.op === AluOp.Mul) return 1;
       else if (this.op === AluOp.Min) return intMaxValue(this.dtype);
       else if (this.op === AluOp.Max) return intMinValue(this.dtype);
-    } else if (isFloatDtype(this.dtype)) {
+    } else {
       if (this.op === AluOp.Add) return 0;
       else if (this.op === AluOp.Mul) return 1;
       else if (this.op === AluOp.Min) return Infinity;
       else if (this.op === AluOp.Max) return -Infinity;
     }
-    throw new TypeError(`Unsupported reduction: ${this.op} ${this.dtype}`);
   }
 
   /** Evaluate this operation on CPU. */

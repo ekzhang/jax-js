@@ -64,6 +64,28 @@ suite.each(devices)("device:%s", (device) => {
     expect(udata[1]).toBe(2);
   });
 
+  test("jit reduction epilogue observes 16-bit reduction output", () => {
+    const mod100 = jit((x: np.Array) => x.sum().mod(100));
+
+    const i16 = mod100(np.ones([70_000], { dtype: np.int16 }));
+    expect(i16.dtype).toBe(np.int16);
+    expect(i16.js()).toBe(64);
+
+    const u16 = mod100(np.ones([70_000], { dtype: np.uint16 }));
+    expect(u16.dtype).toBe(np.uint16);
+    expect(u16.js()).toBe(64);
+
+    const prodMod100 = jit((x: np.Array) => x.prod().mod(100));
+
+    const i16Prod = prodMod100(np.array([256, 256], { dtype: np.int16 }));
+    expect(i16Prod.dtype).toBe(np.int16);
+    expect(i16Prod.js()).toBe(0);
+
+    const u16Prod = prodMod100(np.array([256, 256], { dtype: np.uint16 }));
+    expect(u16Prod.dtype).toBe(np.uint16);
+    expect(u16Prod.js()).toBe(0);
+  });
+
   test("casts to int16 and uint16 clamp floats and wrap integers", () => {
     const f = np.array([-32769, -32768, 1.9, 32767, 32768], {
       dtype: np.float32,
