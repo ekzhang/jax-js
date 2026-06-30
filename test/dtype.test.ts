@@ -103,6 +103,14 @@ suite("weak types", () => {
     expect(b.js()).toEqual(7);
   });
 
+  test("constant as operand promotes bool to int32", () => {
+    const a = np.array(true, { dtype: np.bool });
+    const b = a.add(3);
+    expect(b.dtype).toBe(np.int32);
+    expect(b.weakType).toBe(false);
+    expect(b.js()).toEqual(4);
+  });
+
   test("ops preserve weak float", () => {
     const a = np.array(5, { dtype: np.int32 });
     const b = a.add(np.multiply(3, 3));

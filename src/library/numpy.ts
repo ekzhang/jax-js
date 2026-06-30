@@ -71,6 +71,10 @@ export * as fft from "./numpy-fft";
 export * as linalg from "./numpy-linalg";
 
 export const float32 = DType.Float32;
+export const int8 = DType.Int8;
+export const uint8 = DType.Uint8;
+export const int16 = DType.Int16;
+export const uint16 = DType.Uint16;
 export const int32 = DType.Int32;
 export const uint32 = DType.Uint32;
 export const bool = DType.Bool;
@@ -194,9 +198,17 @@ export function invert(x: ArrayLike): Array {
     case DType.Bool:
       allOnes = true;
       break;
+    case DType.Uint8:
+      allOnes = 0xff;
+      break;
+    case DType.Uint16:
+      allOnes = 0xffff;
+      break;
     case DType.Uint32:
       allOnes = 0xffffffff;
       break;
+    case DType.Int8:
+    case DType.Int16:
     case DType.Int32:
       allOnes = -1;
       break;
