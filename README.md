@@ -130,7 +130,7 @@ Here's a quick, high-level comparison with other popular web ML runtimes:
 | Strided/dilated convolution     | ✅         | ✅              | ✅                 |
 | Cholesky, Lstsq                 | ✅         | ❌              | ❌                 |
 | LU, Solve, Determinant          | ✅         | ❌              | ❌                 |
-| SVD                             | ❌         | ❌              | ❌                 |
+| Eigenvalues, SVD                | ✅         | ❌              | ❌                 |
 | FFT                             | ✅         | ✅              | ✅                 |
 | Basic RNG (Uniform, Normal)     | ✅         | ✅              | ✅                 |
 | Advanced RNG                    | ✅         | ❌              | ❌                 |
