@@ -1,26 +1,22 @@
 // Port of the `jax.numpy.fft` module, Fast Fourier Transform.
 
 import {
-  arange,
   array,
   Array,
   concatenate,
-  cos,
   DType,
   flip,
   roll,
-  sin,
   zerosLike,
 } from "./numpy";
 import { isFloatDtype } from "../alu";
-import { jit } from "../frontend/jaxpr";
+import * as core from "../frontend/core";
 import {
   checkAxis,
   deepEqual,
   invertPermutation,
   normalizeAxis,
   range,
-  rep,
 } from "../utils";
 
 /**
@@ -51,12 +47,22 @@ function checkPairInput(name: string, a: ComplexPair) {
   }
 }
 
-function checkPowerOfTwo(name: string, n: number) {
-  if (!Number.isInteger(n) || n < 1 || 2 ** Math.floor(Math.log2(n)) !== n) {
-    throw new Error(
-      `jax.numpy.fft.${name}: size must be a power of two, got ${n}`,
-    );
+function factorFftSize(n: number): number[] {
+  const factors: number[] = [];
+  for (const radix of [4, 2, 3, 5, 7]) {
+    while (n % radix === 0) {
+      factors.push(radix);
+      n /= radix;
+    }
   }
+  for (let radix = 11; radix * radix <= n; radix += 2) {
+    while (n % radix === 0) {
+      factors.push(radix);
+      n /= radix;
+    }
+  }
+  if (n > 1) factors.push(n);
+  return factors;
 }
 
 function checkRealInput(name: string, a: Array) {
@@ -93,48 +99,37 @@ function sliceAlongAxis(
   return a.slice(...index);
 }
 
-const fftUpdate = jit(
-  function fftUpdate(i: number, { real, imag }: ComplexPair): ComplexPair {
-    const half = 2 ** i;
-
-    real = real.reshape([-1, 2 * half]);
-    imag = imag.reshape([-1, 2 * half]);
-
-    const k = arange(0, half, 1, { dtype: real.dtype });
-    const theta = k.mul(-Math.PI / half);
-    const wr = cos(theta.ref);
-    const wi = sin(theta);
-
-    const ur = real.ref.slice([], [0, half]);
-    const ui = imag.ref.slice([], [0, half]);
-    const vr = real.slice([], [half, 2 * half]);
-    const vi = imag.slice([], [half, 2 * half]);
-
-    // t = w * v
-    const tr = vr.ref.mul(wr.ref).sub(vi.ref.mul(wi.ref));
-    const ti = vr.mul(wi).add(vi.mul(wr));
-
-    // store [u + t, u - t]
-    return {
-      real: concatenate([ur.ref.add(tr.ref), ur.sub(tr)], -1),
-      imag: concatenate([ui.ref.add(ti.ref), ui.sub(ti)], -1),
-    };
-  },
-  { staticArgnums: [0] },
-);
-
 /**
  * Compute a one-dimensional discrete Fourier transform.
- *
- * Currently, the size of the axis must be a power of two.
  */
 export function fft(a: ComplexPair, axis: number = -1): ComplexPair {
-  checkPairInput("fft", a);
+  return fftChecked("fft", a, axis, false);
+}
+
+function fftChecked(
+  name: string,
+  a: ComplexPair,
+  axis: number,
+  inverse: boolean,
+): ComplexPair {
+  checkPairInput(name, a);
+  axis = checkAxis(axis, a.real.ndim);
+  const n = a.real.shape[axis];
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(
+      `jax.numpy.fft.${name}: size must be a positive integer, got ${n}`,
+    );
+  }
+  return fftRoutine(a, axis, inverse);
+}
+
+function fftRoutine(
+  a: ComplexPair,
+  axis: number,
+  inverse: boolean,
+): ComplexPair {
   let { real, imag } = a;
-  axis = checkAxis(axis, real.ndim);
   const n = real.shape[axis];
-  checkPowerOfTwo("fft", n);
-  const logN = Math.log2(n);
 
   // If axis is not at the end, move it to the end
   let perm: number[] | null = null;
@@ -146,23 +141,10 @@ export function fft(a: ComplexPair, axis: number = -1): ComplexPair {
     imag = imag.transpose(perm);
   }
 
-  // Cooley-Tukey FFT (radix-2)
-  const originalShape = real.shape;
-  real = real
-    .reshape([-1, ...rep(logN, 2)])
-    .transpose([0, ...range(1, logN + 1).reverse()])
-    .flatten();
-  imag = imag
-    .reshape([-1, ...rep(logN, 2)])
-    .transpose([0, ...range(1, logN + 1).reverse()])
-    .flatten();
-
-  // Hack: If you don't do it, the arrays might be lazy and grow exponentially.
-  for (let i = 0; i < logN; i++) {
-    ({ real, imag } = fftUpdate(i, { real, imag }));
-  }
-  real = real.reshape(originalShape);
-  imag = imag.reshape(originalShape);
+  [real, imag] = core.fft(real, imag, {
+    factors: factorFftSize(n),
+    inverse,
+  }) as [Array, Array];
 
   // If axis was moved, move it back
   if (perm !== null) {
@@ -189,8 +171,6 @@ function transformN(
 
 /**
  * Compute an N-dimensional discrete Fourier transform.
- *
- * Currently, every transformed axis must have a power-of-two size.
  */
 export function fftn(
   a: ComplexPair,
@@ -201,8 +181,6 @@ export function fftn(
 
 /**
  * Compute a two-dimensional discrete Fourier transform.
- *
- * Currently, every transformed axis must have a power-of-two size.
  */
 export function fft2(a: ComplexPair, axes: number[] = [-2, -1]): ComplexPair {
   return fftn(a, axes);
@@ -210,29 +188,13 @@ export function fft2(a: ComplexPair, axes: number[] = [-2, -1]): ComplexPair {
 
 /**
  * Compute a one-dimensional inverse discrete Fourier transform.
- *
- * Currently, the size of the axis must be a power of two.
  */
 export function ifft(a: ComplexPair, axis: number = -1): ComplexPair {
-  checkPairInput("ifft", a);
-  let { real, imag } = a;
-  axis = checkAxis(axis, real.ndim);
-  const n = real.shape[axis];
-  checkPowerOfTwo("ifft", n);
-
-  // ifft(a) = 1/n * conj(fft(conj(a)))
-  imag = imag.mul(-1);
-  const result = fft({ real, imag }, axis);
-  return {
-    real: result.real.div(n),
-    imag: result.imag.mul(-1).div(n),
-  };
+  return fftChecked("ifft", a, axis, true);
 }
 
 /**
  * Compute an N-dimensional inverse discrete Fourier transform.
- *
- * Currently, every transformed axis must have a power-of-two size.
  */
 export function ifftn(
   a: ComplexPair,
@@ -243,8 +205,6 @@ export function ifftn(
 
 /**
  * Compute a two-dimensional inverse discrete Fourier transform.
- *
- * Currently, every transformed axis must have a power-of-two size.
  */
 export function ifft2(a: ComplexPair, axes: number[] = [-2, -1]): ComplexPair {
   return ifftn(a, axes);
@@ -253,14 +213,12 @@ export function ifft2(a: ComplexPair, axes: number[] = [-2, -1]): ComplexPair {
 /**
  * Compute a one-dimensional FFT of real input.
  *
- * The output stores only the non-negative frequency terms. Currently, the size
- * of the axis must be a power of two.
+ * The output stores only the non-negative frequency terms.
  */
 export function rfft(a: Array, axis: number = -1): ComplexPair {
   checkRealInput("rfft", a);
   axis = checkAxis(axis, a.ndim);
   const n = a.shape[axis];
-  checkPowerOfTwo("rfft", n);
 
   const result = fft({ real: a, imag: zerosLike(a.ref) }, axis);
   const stop = Math.floor(n / 2) + 1;
@@ -274,7 +232,7 @@ export function rfft(a: Array, axis: number = -1): ComplexPair {
  * Compute the inverse of `rfft`.
  *
  * The real output length is inferred as `2 * (m - 1)`, where `m` is the packed
- * spectrum length. Currently, the inferred length must be a power of two.
+ * spectrum length.
  */
 export function irfft(a: ComplexPair, axis: number = -1): Array {
   checkPairInput("irfft", a);
@@ -286,9 +244,6 @@ export function irfft(a: ComplexPair, axis: number = -1): Array {
       `jax.numpy.fft.irfft: packed input length must be at least 2, got ${m}`,
     );
   }
-  const n = 2 * (m - 1);
-  checkPowerOfTwo("irfft", n);
-
   const mirroredReal = flip(sliceAlongAxis(real.ref, axis, 1, m - 1), axis);
   const mirroredImag = flip(sliceAlongAxis(imag.ref, axis, 1, m - 1), axis).mul(
     -1,
@@ -308,7 +263,6 @@ export function irfft(a: ComplexPair, axis: number = -1): Array {
  * Compute an N-dimensional FFT of real input.
  *
  * The final transformed axis stores only the non-negative frequency terms.
- * Currently, every transformed axis must have a power-of-two size.
  */
 export function rfftn(a: Array, axes: number[] | null = null): ComplexPair {
   checkRealInput("rfftn", a);
@@ -329,7 +283,6 @@ export function rfftn(a: Array, axes: number[] | null = null): ComplexPair {
  * Compute a two-dimensional FFT of real input.
  *
  * The final transformed axis stores only the non-negative frequency terms.
- * Currently, every transformed axis must have a power-of-two size.
  */
 export function rfft2(a: Array, axes: number[] = [-2, -1]): ComplexPair {
   return rfftn(a, axes);
@@ -339,8 +292,7 @@ export function rfft2(a: Array, axes: number[] = [-2, -1]): ComplexPair {
  * Compute the inverse of `rfftn`.
  *
  * The real output length for the final transformed axis is inferred as
- * `2 * (m - 1)`. Currently, every transformed axis must have a power-of-two
- * size.
+ * `2 * (m - 1)`.
  */
 export function irfftn(a: ComplexPair, axes: number[] | null = null): Array {
   checkPairInput("irfftn", a);
@@ -360,8 +312,6 @@ export function irfftn(a: ComplexPair, axes: number[] | null = null): Array {
 
 /**
  * Compute the inverse of `rfft2`.
- *
- * Currently, every transformed axis must have a power-of-two size.
  */
 export function irfft2(a: ComplexPair, axes: number[] = [-2, -1]): Array {
   return irfftn(a, axes);
@@ -371,26 +321,20 @@ export function irfft2(a: ComplexPair, axes: number[] = [-2, -1]): Array {
  * Compute the FFT of a Hermitian-symmetric signal.
  *
  * The real output length is inferred as `2 * (m - 1)`, where `m` is the packed
- * Hermitian input length. Currently, the inferred length must be a power of two.
+ * Hermitian input length.
  */
 export function hfft(a: ComplexPair, axis: number = -1): Array {
   checkPairInput("hfft", a);
   axis = checkAxis(axis, a.real.ndim);
   const n = 2 * (a.real.shape[axis] - 1);
-  checkPowerOfTwo("hfft", n);
   return irfft({ real: a.real, imag: a.imag.mul(-1) }, axis).mul(n);
 }
 
-/**
- * Compute the inverse of `hfft`.
- *
- * Currently, the size of the axis must be a power of two.
- */
+/** Compute the inverse of `hfft`. */
 export function ihfft(a: Array, axis: number = -1): ComplexPair {
   checkRealInput("ihfft", a);
   axis = checkAxis(axis, a.ndim);
   const n = a.shape[axis];
-  checkPowerOfTwo("ihfft", n);
 
   const result = rfft(a, axis);
   return {

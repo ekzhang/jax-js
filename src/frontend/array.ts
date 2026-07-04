@@ -1178,6 +1178,7 @@ export class Array extends Tracer {
       [Primitive.Cholesky]: Array.#routine(Primitive.Cholesky),
       [Primitive.LU]: Array.#routine(Primitive.LU),
       [Primitive.JacobiEigh]: Array.#routine(Primitive.JacobiEigh),
+      [Primitive.Fft]: Array.#routine(Primitive.Fft),
       [Primitive.Jit](args, { jaxpr }) {
         if (jaxpr.inBinders.length !== args.length) {
           throw new Error(

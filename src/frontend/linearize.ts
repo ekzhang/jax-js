@@ -892,6 +892,23 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
     });
     return [null, ctB];
   },
+  [Primitive.Fft]([ctReal, ctImag], [real, imag], params) {
+    const aval = ShapedArray.fromAval(real.aval);
+    const n = aval.shape[aval.ndim - 1];
+    const [realAdjoint, imagAdjoint] = bind(Primitive.Fft, [ctReal, ctImag], {
+      factors: params.factors,
+      inverse: !params.inverse,
+    });
+    const scale = params.inverse ? 1 / n : n;
+    const realCt = mul(realAdjoint, scale);
+    const imagCt = mul(imagAdjoint, scale);
+    const cts: (Tracer | null)[] = [null, null];
+    if (real instanceof UndefPrimal) cts[0] = realCt;
+    else realCt.dispose();
+    if (imag instanceof UndefPrimal) cts[1] = imagCt;
+    else imagCt.dispose();
+    return cts;
+  },
   [Primitive.Jit](cts, args, { name, jaxpr }) {
     // We need this one because the jvp() rule for Jit generates a Jit
     // with the transformed Jaxpr. So grad-of-jit will result in a transposed

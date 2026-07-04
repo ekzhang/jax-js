@@ -85,6 +85,14 @@ export enum Routines {
    * Sorting eigenpairs is handled by the frontend wrapper.
    */
   JacobiEigh = "JacobiEigh",
+
+  /**
+   * Complex FFT along the last axis for real/imaginary array pairs.
+   *
+   * Inputs and outputs have identical shape, and the backend receives a
+   * factorization of the FFT dimension.
+   */
+  Fft = "Fft",
 }
 
 export interface RoutineType {
@@ -122,6 +130,8 @@ export function runCpuRoutine(
       return runLU(type, inputAr, outputAr);
     case Routines.JacobiEigh:
       return runJacobiEigh(type, inputAr, outputAr, routine.params);
+    case Routines.Fft:
+      return runFft(type, inputAr, outputAr, routine.params);
     default:
       name satisfies never; // Exhaustiveness check
   }
@@ -142,6 +152,7 @@ ${runTriangularSolve.toString()}
 ${runCholesky.toString()}
 ${runLU.toString()}
 ${runJacobiEigh.toString()}
+${runFft.toString()}
 const __minify_safe_runCpuRoutine = ${runCpuRoutine.name};
 `;
 }
@@ -412,6 +423,87 @@ function runJacobiEigh(
         }
       }
       maxOffDiagonal = maxAbsOffDiagonal(a);
+    }
+  }
+}
+
+function runFft(
+  type: RoutineType,
+  [real, imag]: DataArray[],
+  [outReal, outImag]: DataArray[],
+  { factors, inverse }: { factors: number[]; inverse: boolean },
+) {
+  const shape = type.inputShapes[0];
+  if (shape.length < 1) throw new Error("fft: input must be at least 1D");
+  const n = shape[shape.length - 1];
+  if (n < 1) throw new Error(`fft: final axis must be non-empty, got ${n}`);
+  if (
+    type.inputDtypes[0] !== type.inputDtypes[1] ||
+    !isFloatDtype(type.inputDtypes[0])
+  ) {
+    throw new Error("fft: expected matching floating-point real/imag arrays");
+  }
+
+  const angleScale = (inverse ? 2 : -2) * Math.PI;
+  const permutation = new Uint32Array(n);
+  for (let index = 0; index < n; index++) {
+    let remaining = index;
+    let stride = 1;
+    let reversed = 0;
+    for (const factor of factors) {
+      const digit = remaining % factor;
+      remaining = Math.floor(remaining / factor);
+      stride *= factor;
+      reversed += digit * (n / stride);
+    }
+    permutation[index] = reversed;
+  }
+  const scratchReal = new Array<number>(Math.max(1, ...factors));
+  const scratchImag = new Array<number>(scratchReal.length);
+
+  for (let offset = 0; offset < real.length; offset += n) {
+    for (let index = 0; index < n; index++) {
+      const source = offset + permutation[index];
+      outReal[offset + index] = real[source];
+      outImag[offset + index] = imag[source];
+    }
+
+    let prev = 1;
+    for (let stage = 0; stage < factors.length; stage++) {
+      const radix = factors[stage];
+      const span = prev * radix;
+      const stageScale = inverse && stage === factors.length - 1 ? 1 / n : 1;
+      for (let group = 0; group < n; group += span) {
+        for (let j = 0; j < prev; j++) {
+          for (let q = 0; q < radix; q++) {
+            const idx = offset + group + j + q * prev;
+            const angle = (angleScale * q * j) / span;
+            const c = Math.cos(angle);
+            const s = Math.sin(angle);
+            const xr = outReal[idx];
+            const xi = outImag[idx];
+            scratchReal[q] = xr * c - xi * s;
+            scratchImag[q] = xr * s + xi * c;
+          }
+          for (let p = 0; p < radix; p++) {
+            let sumReal = 0;
+            let sumImag = 0;
+            for (let q = 0; q < radix; q++) {
+              const angle = (angleScale * q * p) / radix;
+              const c = Math.cos(angle);
+              const s = Math.sin(angle);
+              const xr = scratchReal[q];
+              const xi = scratchImag[q];
+              sumReal += xr * c - xi * s;
+              sumImag += xr * s + xi * c;
+            }
+            const idx = offset + group + j + p * prev;
+            outReal[idx] = sumReal * stageScale;
+            outImag[idx] = sumImag * stageScale;
+          }
+        }
+      }
+      prev = span;
     }
   }
 }

@@ -94,6 +94,7 @@ export enum Primitive {
   Cholesky = "cholesky", // A is positive-definite, A = L @ L^T
   LU = "lu", // LU decomposition with partial pivoting
   JacobiEigh = "jacobi_eigh", // Symmetric eigendecomposition via Jacobi rotations
+  Fft = "fft", // Complex FFT along the final axis
 
   // JIT compilation
   Jit = "jit",
@@ -125,6 +126,7 @@ interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
   [Primitive.Pad]: { width: Pair[] };
   [Primitive.TriangularSolve]: { unitDiagonal: boolean };
   [Primitive.JacobiEigh]: { maxSweeps: number; tolerance: number };
+  [Primitive.Fft]: { factors: number[]; inverse: boolean };
   [Primitive.Jit]: { name: string; jaxpr: Jaxpr; numConsts: number };
 }
 
@@ -150,6 +152,7 @@ export const routinePrimitives = new Map([
   [Primitive.Cholesky, Routines.Cholesky],
   [Primitive.LU, Routines.LU],
   [Primitive.JacobiEigh, Routines.JacobiEigh],
+  [Primitive.Fft, Routines.Fft],
 ]);
 
 export function add(x: TracerValue, y: TracerValue) {
@@ -553,6 +556,14 @@ export function jacobiEigh(
       `jacobi_eigh: expected floating-point input, got ${aval}`,
     );
   return bind(Primitive.JacobiEigh, [x], { maxSweeps, tolerance });
+}
+
+export function fft(
+  real: TracerValue,
+  imag: TracerValue,
+  params: { factors: number[]; inverse: boolean },
+) {
+  return bind(Primitive.Fft, [real, imag], params);
 }
 
 export function sort(x: TracerValue) {

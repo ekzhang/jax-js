@@ -12,6 +12,7 @@ import {
   FpHash,
   FpHashable,
   generalBroadcast,
+  prod,
   runWithCache,
   unzip2,
   zip,
@@ -1022,6 +1023,24 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
         `jacobi_eigh: requires floating-point input, got ${a}`,
       );
     return [ShapedArray.fromAval(a), ShapedArray.fromAval(a)];
+  },
+  [Primitive.Fft]([real, imag], { factors }) {
+    if (!real.equals(imag)) {
+      throw new TypeError(
+        `fft: real and imag arrays must match, got ${real} and ${imag}`,
+      );
+    }
+    if (real.ndim < 1)
+      throw new TypeError(`fft: requires at least 1D input, got ${real}`);
+    if (!isFloatDtype(real.dtype))
+      throw new TypeError(`fft: requires floating-point input, got ${real}`);
+    const n = real.shape[real.ndim - 1];
+    if (prod(factors) !== n) {
+      throw new TypeError(
+        `fft: factorization ${factors} does not match size ${n}`,
+      );
+    }
+    return [ShapedArray.fromAval(real), ShapedArray.fromAval(real)];
   },
   [Primitive.Jit](args, { jaxpr }) {
     const { inTypes, outTypes } = typecheckJaxpr(jaxpr);

@@ -403,6 +403,11 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
   [Primitive.Cholesky]: lastDimsBatcher(Primitive.Cholesky, 2),
   [Primitive.LU]: lastDimsBatcher(Primitive.LU, 2, 3),
   [Primitive.JacobiEigh]: lastDimsBatcher(Primitive.JacobiEigh, 2, 2),
+  [Primitive.Fft](axisSize, [real, imag], [realBdim, imagBdim], params) {
+    real = moveBatchAxis(axisSize, realBdim, 0, real);
+    imag = moveBatchAxis(axisSize, imagBdim, 0, imag);
+    return [bind(Primitive.Fft, [real, imag], params), [0, 0]];
+  },
   [Primitive.Jit](axisSize, args, dims, { name, jaxpr }) {
     const newJaxpr = vmapJaxpr(jaxpr, axisSize, dims);
     const outs = bind(

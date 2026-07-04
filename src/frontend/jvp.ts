@@ -397,6 +397,7 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
   [Primitive.JacobiEigh]() {
     throw new Error("JVP rule not implemented for jacobi_eigh");
   },
+  [Primitive.Fft]: linearTangentsJvp(Primitive.Fft),
   [Primitive.Jit](primals, tangents, { name, jaxpr }) {
     const newJaxpr = jvpJaxpr(jaxpr);
     const outs = bind(

@@ -743,6 +743,173 @@ fn main(
   ];
 }
 
+function fftUniform(
+  phase: number,
+  radix: number,
+  prev: number,
+  normalize: boolean,
+): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(
+    new Uint32Array([phase, radix, prev, normalize ? 1 : 0]).buffer,
+  );
+}
+
+function createFft(
+  device: GPUDevice,
+  type: RoutineType,
+  params: { factors: number[]; inverse: boolean },
+): ShaderInfo[] {
+  const dtype = type.inputDtypes[0];
+  const shape = type.inputShapes[0];
+  const n = shape[shape.length - 1];
+  const batches = prod(shape.slice(0, -1));
+  if (prod(params.factors) !== n) {
+    throw new Error(
+      `fft: factorization ${params.factors} does not match size ${n}`,
+    );
+  }
+
+  const needsF16 = dtype === DType.Float16;
+  const ty = dtypeToWgsl(dtype, true);
+  const workgroupSize = Math.min(
+    256,
+    findPow2(0, device.limits.maxComputeWorkgroupSizeX),
+  );
+  const maxFactor = Math.max(1, ...params.factors);
+  const angleScale = params.inverse
+    ? "6.283185307179586"
+    : "-6.283185307179586";
+  const digitReversal = params.factors
+    .map(
+      (factor) => `
+  digit = remaining % ${factor}u;
+  remaining = remaining / ${factor}u;
+  stride = stride * ${factor}u;
+  reversed = reversed + digit * (${n}u / stride);`,
+    )
+    .join("");
+
+  const code = `
+${needsF16 ? "enable f16;" : ""}
+${headerWgsl}
+
+@group(0) @binding(0) var<storage, read> input_real: array<${ty}>;
+@group(0) @binding(1) var<storage, read> input_imag: array<${ty}>;
+@group(0) @binding(2) var<storage, read_write> output_real: array<${ty}>;
+@group(0) @binding(3) var<storage, read_write> output_imag: array<${ty}>;
+
+struct FftParams {
+  phase: u32,
+  radix: u32,
+  prev: u32,
+  normalize: u32,
+}
+
+@group(1) @binding(0) var<uniform> fft_params: FftParams;
+
+fn digit_reversed_index(index: u32) -> u32 {
+  var remaining = index;
+  var stride = 1u;
+  var reversed = 0u;
+  var digit = 0u;
+${digitReversal}
+  return reversed;
+}
+
+@compute @workgroup_size(${workgroupSize})
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+  let global = global_id.x + global_id.y * ${gridOffsetY * workgroupSize}u;
+
+  if (fft_params.phase == 0u) {
+    if (global >= ${batches * n}u) {
+      return;
+    }
+    let batch = global / ${n}u;
+    let out_idx = global % ${n}u;
+    let source = batch * ${n}u + digit_reversed_index(out_idx);
+    output_real[global] = input_real[source];
+    output_imag[global] = input_imag[source];
+    return;
+  }
+
+  let butterflies_per_batch = ${n}u / fft_params.radix;
+  if (global >= ${batches}u * butterflies_per_batch) {
+    return;
+  }
+
+  let batch = global / butterflies_per_batch;
+  let local = global % butterflies_per_batch;
+  let j = local % fft_params.prev;
+  let group = local / fft_params.prev;
+  let span = fft_params.prev * fft_params.radix;
+  let start = batch * ${n}u + group * span + j;
+  let scale = select(1.0, 1.0 / f32(${n}u), fft_params.normalize != 0u);
+
+  var scratch_real: array<f32, ${maxFactor}>;
+  var scratch_imag: array<f32, ${maxFactor}>;
+
+  for (var q = 0u; q < fft_params.radix; q++) {
+    let idx = start + q * fft_params.prev;
+    let angle = ${angleScale} * f32(q * j) / f32(span);
+    let c = cos(angle);
+    let s = sin(angle);
+    let xr = f32(output_real[idx]);
+    let xi = f32(output_imag[idx]);
+    scratch_real[q] = xr * c - xi * s;
+    scratch_imag[q] = xr * s + xi * c;
+  }
+
+  for (var p = 0u; p < fft_params.radix; p++) {
+    var sum_real = 0.0;
+    var sum_imag = 0.0;
+    for (var q = 0u; q < fft_params.radix; q++) {
+      let angle = ${angleScale} * f32(q * p) / f32(fft_params.radix);
+      let c = cos(angle);
+      let s = sin(angle);
+      let xr = scratch_real[q];
+      let xi = scratch_imag[q];
+      sum_real += xr * c - xi * s;
+      sum_imag += xr * s + xi * c;
+    }
+    let idx = start + p * fft_params.prev;
+    output_real[idx] = ${ty}(sum_real * scale);
+    output_imag[idx] = ${ty}(sum_imag * scale);
+  }
+}
+`.trim();
+
+  const passes = [
+    {
+      grid: calculateGrid(Math.ceil((batches * n) / workgroupSize)),
+      uniform: fftUniform(0, 1, 1, false),
+    },
+  ];
+  let prev = 1;
+  for (let i = 0; i < params.factors.length; i++) {
+    const radix = params.factors[i];
+    passes.push({
+      grid: calculateGrid(Math.ceil((batches * n) / radix / workgroupSize)),
+      uniform: fftUniform(
+        1,
+        radix,
+        prev,
+        params.inverse && i === params.factors.length - 1,
+      ),
+    });
+    prev *= radix;
+  }
+
+  return [
+    {
+      code,
+      numInputs: 2,
+      numOutputs: 2,
+      hasUniform: true,
+      passes,
+    },
+  ];
+}
+
 export function createRoutineShader(
   device: GPUDevice,
   routine: Routine,
@@ -760,6 +927,8 @@ export function createRoutineShader(
       return createLU(device, routine.type);
     case Routines.JacobiEigh:
       return createJacobiEigh(device, routine.type, routine.params);
+    case Routines.Fft:
+      return createFft(device, routine.type, routine.params);
     default:
       throw new UnsupportedRoutineError(routine.name, "webgpu");
   }
