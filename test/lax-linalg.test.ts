@@ -51,6 +51,25 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
       expect(reconstructed).toBeAllclose(x);
     });
 
+    if (device === "webgpu") {
+      test("computes blocked Cholesky decomposition for 512x512 matrix", async () => {
+        const n = 512;
+        const a = random.normal(random.key(n), [n, n]);
+        const x = np
+          .matmul(np.matrixTranspose(a.ref), a.ref)
+          .add(np.eye(n).mul(n));
+        a.dispose();
+
+        const L = lax.linalg.cholesky(x.ref);
+        const reconstructed = np.matmul(L.ref, np.matrixTranspose(L.ref));
+        const residual = np
+          .max(np.abs(reconstructed.sub(x.ref)))
+          .div(np.max(np.abs(x)));
+
+        expect(await residual.jsAsync()).toBeLessThan(1e-3);
+      });
+    }
+
     test("throws on non-square matrix", () => {
       const x = np.array([
         [1.0, 2.0, 3.0],

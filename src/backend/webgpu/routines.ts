@@ -366,6 +366,31 @@ fn main(
   ];
 }
 
+const CholeskyPhase = {
+  Unblocked: 0,
+  InitBlocked: 1,
+  FactorBlock: 2,
+  SolvePanel: 3,
+  UpdateTrailing: 4,
+} as const;
+
+const CHOLESKY_BLOCK_SIZE = 16;
+const CHOLESKY_BLOCK_THRESHOLD = 256;
+
+function choleskyUniform(
+  phase: number,
+  k: number,
+  blockSize: number,
+  rowsBelow: number,
+): Uint8Array<ArrayBuffer> {
+  const ar = new Uint32Array(4);
+  ar[0] = phase;
+  ar[1] = k;
+  ar[2] = blockSize;
+  ar[3] = rowsBelow;
+  return new Uint8Array(ar.buffer);
+}
+
 /**
  * Generate a Cholesky decomposition shader.
  *
@@ -386,9 +411,12 @@ function createCholesky(device: GPUDevice, type: RoutineType): ShaderInfo[] {
 
   const needsF16 = dtype === DType.Float16;
   const ty = dtypeToWgsl(dtype, true);
-
-  // Use workgroup size to parallelize column computation
-  const workgroupSize = findPow2(n, device.limits.maxComputeWorkgroupSizeX);
+  const workgroupSize = Math.min(
+    256,
+    findPow2(0, device.limits.maxComputeWorkgroupSizeX),
+  );
+  const useBlocked = n >= CHOLESKY_BLOCK_THRESHOLD;
+  const blockSize = useBlocked ? CHOLESKY_BLOCK_SIZE : n;
 
   const code = `
 ${needsF16 ? "enable f16;" : ""}
@@ -397,67 +425,230 @@ ${headerWgsl}
 @group(0) @binding(0) var<storage, read> input: array<${ty}>;
 @group(0) @binding(1) var<storage, read_write> output: array<${ty}>;
 
+struct CholeskyParams {
+  phase: u32,
+  k: u32,
+  block_size: u32,
+  rows_below: u32,
+}
+
+@group(1) @binding(0) var<uniform> params: CholeskyParams;
+
 // Shared memory for the diagonal element
 var<workgroup> L_jj: ${ty};
+
+fn mat_idx(base: u32, row: u32, col: u32) -> u32 {
+  return base + row * ${n}u + col;
+}
 
 @compute @workgroup_size(${workgroupSize})
 fn main(
   @builtin(workgroup_id) wg_id: vec3<u32>,
   @builtin(local_invocation_id) local_id: vec3<u32>,
+  @builtin(global_invocation_id) global_id: vec3<u32>,
 ) {
-  let batch = wg_id.x + wg_id.y * ${gridOffsetY}u;
-  if (batch >= ${batches}u) {
+  let tid = local_id.x;
+
+  if (params.phase == ${CholeskyPhase.Unblocked}u) {
+    let batch = wg_id.x + wg_id.y * ${gridOffsetY}u;
+    if (batch >= ${batches}u) {
+      return;
+    }
+
+    let base = batch * ${n * n}u;
+
+    // Zero out output and copy lower triangle from input.
+    for (var idx = tid; idx < ${n * n}u; idx += ${workgroupSize}u) {
+      let row = idx / ${n}u;
+      let col = idx % ${n}u;
+      output[base + idx] = select(0, input[base + idx], col <= row);
+    }
+    storageBarrier();
+
+    // Cholesky-Crout algorithm: process column by column.
+    for (var j = 0u; j < ${n}u; j++) {
+      for (var i = j + tid; i < ${n}u; i += ${workgroupSize}u) {
+        var sum = output[mat_idx(base, i, j)];
+        for (var k = 0u; k < j; k++) {
+          sum -= output[mat_idx(base, i, k)] * output[mat_idx(base, j, k)];
+        }
+        output[mat_idx(base, i, j)] = sum;
+      }
+      storageBarrier();
+
+      if (tid == 0u) {
+        L_jj = sqrt(output[mat_idx(base, j, j)]);
+        output[mat_idx(base, j, j)] = L_jj;
+      }
+      workgroupBarrier();
+
+      for (var i = j + 1u + tid; i < ${n}u; i += ${workgroupSize}u) {
+        output[mat_idx(base, i, j)] /= L_jj;
+      }
+      storageBarrier();
+    }
     return;
   }
 
-  let base = batch * ${n * n}u;
-  let tid = local_id.x;
+  if (params.phase == ${CholeskyPhase.InitBlocked}u) {
+    let batch = wg_id.x + wg_id.y * ${gridOffsetY}u;
+    if (batch >= ${batches}u) {
+      return;
+    }
 
-  // Zero out output and copy lower triangle from input (threads collaborate)
-  for (var idx = tid; idx < ${n * n}u; idx += ${workgroupSize}u) {
-    let row = idx / ${n}u;
-    let col = idx % ${n}u;
-    output[base + idx] = select(0, input[base + idx], col <= row);
+    let base = batch * ${n * n}u;
+
+    for (var idx = tid; idx < ${n * n}u; idx += ${workgroupSize}u) {
+      let row = idx / ${n}u;
+      let col = idx % ${n}u;
+      output[base + idx] = select(0, input[base + idx], col <= row);
+    }
+    return;
   }
-  storageBarrier();
 
-  // Cholesky-Crout algorithm: process column by column
-  for (var j = 0u; j < ${n}u; j++) {
-    // Step 1: All threads compute sum for their rows i >= j in parallel
-    // sum = A[i][j] - sum(L[i][k] * L[j][k] for k < j)
-    for (var i = j + tid; i < ${n}u; i += ${workgroupSize}u) {
-      var sum = output[base + i * ${n}u + j];
-      for (var k = 0u; k < j; k++) {
-        sum -= output[base + i * ${n}u + k] * output[base + j * ${n}u + k];
+  if (params.phase == ${CholeskyPhase.FactorBlock}u) {
+    let batch = wg_id.x + wg_id.y * ${gridOffsetY}u;
+    if (batch >= ${batches}u) {
+      return;
+    }
+
+    let base = batch * ${n * n}u;
+    let k0 = params.k;
+    let b = params.block_size;
+
+    for (var j = 0u; j < b; j++) {
+      let col = k0 + j;
+      for (var i = j + tid; i < b; i += ${workgroupSize}u) {
+        let row = k0 + i;
+        var sum = output[mat_idx(base, row, col)];
+        for (var r = 0u; r < j; r++) {
+          sum -= output[mat_idx(base, row, k0 + r)] *
+            output[mat_idx(base, col, k0 + r)];
+        }
+        output[mat_idx(base, row, col)] = sum;
       }
-      output[base + i * ${n}u + j] = sum;
-    }
-    storageBarrier();
+      storageBarrier();
 
-    // Step 2: Thread 0 computes L[j][j] = sqrt(output[j][j])
-    if (tid == 0u) {
-      L_jj = sqrt(output[base + j * ${n}u + j]);
-      output[base + j * ${n}u + j] = L_jj;
-    }
-    workgroupBarrier();
+      if (tid == 0u) {
+        L_jj = sqrt(output[mat_idx(base, col, col)]);
+        output[mat_idx(base, col, col)] = L_jj;
+      }
+      workgroupBarrier();
 
-    // Step 3: All threads divide output[i][j] by L[j][j] for i > j
-    for (var i = j + 1u + tid; i < ${n}u; i += ${workgroupSize}u) {
-      output[base + i * ${n}u + j] /= L_jj;
+      for (var i = j + 1u + tid; i < b; i += ${workgroupSize}u) {
+        output[mat_idx(base, k0 + i, col)] /= L_jj;
+      }
+      storageBarrier();
     }
-    storageBarrier();
+    return;
+  }
+
+  if (params.phase == ${CholeskyPhase.SolvePanel}u) {
+    let rows = params.rows_below;
+    if (rows == 0u) {
+      return;
+    }
+
+    let global = global_id.x + global_id.y * ${gridOffsetY * workgroupSize}u;
+    if (global >= rows * ${batches}u) {
+      return;
+    }
+
+    let batch = global / rows;
+    let row = params.k + params.block_size + (global % rows);
+    let base = batch * ${n * n}u;
+
+    for (var j = 0u; j < params.block_size; j++) {
+      let col = params.k + j;
+      var sum = output[mat_idx(base, row, col)];
+      for (var r = 0u; r < j; r++) {
+        sum -= output[mat_idx(base, row, params.k + r)] *
+          output[mat_idx(base, col, params.k + r)];
+      }
+      output[mat_idx(base, row, col)] =
+        sum / output[mat_idx(base, col, col)];
+    }
+    return;
+  }
+
+  if (params.phase == ${CholeskyPhase.UpdateTrailing}u) {
+    let rows = params.rows_below;
+    if (rows == 0u) {
+      return;
+    }
+
+    let elems_per_batch = rows * rows;
+    let global = global_id.x + global_id.y * ${gridOffsetY * workgroupSize}u;
+    if (global >= elems_per_batch * ${batches}u) {
+      return;
+    }
+
+    let batch = global / elems_per_batch;
+    let elem = global % elems_per_batch;
+    let row_local = elem / rows;
+    let col_local = elem % rows;
+    if (row_local < col_local) {
+      return;
+    }
+
+    let row = params.k + params.block_size + row_local;
+    let col = params.k + params.block_size + col_local;
+    let base = batch * ${n * n}u;
+    var sum = output[mat_idx(base, row, col)];
+    for (var r = 0u; r < params.block_size; r++) {
+      sum -= output[mat_idx(base, row, params.k + r)] *
+        output[mat_idx(base, col, params.k + r)];
+    }
+    output[mat_idx(base, row, col)] = sum;
   }
 }
 `.trim();
 
-  const grid = calculateGrid(batches);
+  const passes: ShaderInfo["passes"] = [];
+  if (!useBlocked) {
+    passes.push({
+      grid: calculateGrid(batches),
+      uniform: choleskyUniform(CholeskyPhase.Unblocked, 0, n, 0),
+    });
+  } else {
+    passes.push({
+      grid: calculateGrid(batches),
+      uniform: choleskyUniform(CholeskyPhase.InitBlocked, 0, blockSize, 0),
+    });
+    for (let k = 0; k < n; k += blockSize) {
+      const b = Math.min(blockSize, n - k);
+      const rowsBelow = n - k - b;
+      passes.push({
+        grid: calculateGrid(batches),
+        uniform: choleskyUniform(CholeskyPhase.FactorBlock, k, b, rowsBelow),
+      });
+      if (rowsBelow > 0) {
+        passes.push({
+          grid: calculateGrid(Math.ceil((rowsBelow * batches) / workgroupSize)),
+          uniform: choleskyUniform(CholeskyPhase.SolvePanel, k, b, rowsBelow),
+        });
+        passes.push({
+          grid: calculateGrid(
+            Math.ceil((rowsBelow * rowsBelow * batches) / workgroupSize),
+          ),
+          uniform: choleskyUniform(
+            CholeskyPhase.UpdateTrailing,
+            k,
+            b,
+            rowsBelow,
+          ),
+        });
+      }
+    }
+  }
+
   return [
     {
       code,
       numInputs: 1,
       numOutputs: 1,
-      hasUniform: false,
-      passes: [{ grid }],
+      hasUniform: true,
+      passes,
     },
   ];
 }
