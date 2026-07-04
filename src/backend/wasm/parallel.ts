@@ -8,6 +8,8 @@
 // Cross-Origin-Embedder-Policy: require-corp
 // ```
 
+import { cpuRoutineJSForWorkers, type Routine } from "../../routine";
+
 /** Check if SharedArrayBuffer is available. */
 export function hasSharedArrayBuffer(): boolean {
   // Node.js has SharedArrayBuffer but not Worker, so check both.
@@ -19,6 +21,8 @@ export function hasSharedArrayBuffer(): boolean {
 const MIN_ELEMS_PER_THREAD = 256;
 
 const WORKER_SOURCE = `
+${cpuRoutineJSForWorkers()}
+
 let memory = null;
 let cachedModule = null;
 let cachedFunc = null;
@@ -31,19 +35,38 @@ self.onmessage = (e) => {
     return;
   }
   try {
-    const { module, ptrs, begin, end } = msg;
-    if (module !== cachedModule) {
-      cachedModule = module;
-      const instance = new WebAssembly.Instance(module, { env: { memory } });
-      cachedFunc = instance.exports.kernel;
+    if (msg.type === "kernel") {
+      const { module, ptrs, begin, end } = msg;
+      if (module !== cachedModule) {
+        cachedModule = module;
+        const instance = new WebAssembly.Instance(module, { env: { memory } });
+        cachedFunc = instance.exports.kernel;
+      }
+      cachedFunc(...ptrs, begin, end);
+    } else if (msg.type === "routine") {
+      const inputs = msg.inputs.map(({ ptr, size }) =>
+        new Uint8Array(memory.buffer, ptr, size)
+      );
+      const outputs = msg.outputs.map(({ ptr, size }) =>
+        new Uint8Array(memory.buffer, ptr, size)
+      );
+      runCpuRoutine(msg.routine, inputs, outputs);
+    } else {
+      throw new Error("Unknown wasm worker message: " + msg.type);
     }
-    cachedFunc(...ptrs, begin, end);
     postMessage({ type: "done", ok: true });
   } catch (err) {
     postMessage({ type: "done", ok: false, error: String(err) });
   }
 };
 `;
+
+interface RoutineBuffer {
+  ptr: number;
+  size: number;
+}
+
+type RoutinePayload = Pick<Routine, "name" | "type" | "params">;
 
 /** Pool of Web Workers for parallel WASM kernel dispatch. */
 export class WasmWorkerPool {
@@ -117,11 +140,31 @@ export class WasmWorkerPool {
     chunkAlignment: number = 16,
     minWorkPerWorker: number = MIN_ELEMS_PER_THREAD,
   ): bigint {
-    this.#ensureInit();
-    this.#epochEnd++;
-    const result = this.#queue.then(() =>
+    return this.#enqueue(() =>
       this.#dispatchNow(module, ptrs, size, chunkAlignment, minWorkPerWorker),
     );
+  }
+
+  /**
+   * Dispatch a CPU fallback routine on a worker.
+   *
+   * This uses the same serial queue as generated wasm kernels so routine reads
+   * observe prior async writes and later kernels observe routine outputs.
+   */
+  dispatchRoutine(
+    routine: RoutinePayload,
+    inputs: RoutineBuffer[],
+    outputs: RoutineBuffer[],
+  ): bigint {
+    return this.#enqueue(() =>
+      this.#dispatchRoutineNow(routine, inputs, outputs),
+    );
+  }
+
+  #enqueue(job: () => Promise<void>): bigint {
+    this.#ensureInit();
+    this.#epochEnd++;
+    const result = this.#queue.then(job);
     this.#queue = result
       .then(
         () => {},
@@ -163,11 +206,26 @@ export class WasmWorkerPool {
             if (e.data.ok) resolve();
             else reject(new Error(`Worker error: ${e.data.error}`));
           };
-          worker.postMessage({ module, ptrs, begin, end });
+          worker.postMessage({ type: "kernel", module, ptrs, begin, end });
         }),
       );
     }
     await Promise.all(promises);
+  }
+
+  async #dispatchRoutineNow(
+    routine: RoutinePayload,
+    inputs: RoutineBuffer[],
+    outputs: RoutineBuffer[],
+  ): Promise<void> {
+    const worker = this.#workers[0];
+    await new Promise<void>((resolve, reject) => {
+      worker.onmessage = (e) => {
+        if (e.data.ok) resolve();
+        else reject(new Error(`Worker error: ${e.data.error}`));
+      };
+      worker.postMessage({ type: "routine", routine, inputs, outputs });
+    });
   }
 }
 

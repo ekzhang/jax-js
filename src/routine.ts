@@ -1,6 +1,6 @@
 // Custom lowering for advanced operations that don't fit into AluExp.
 
-import { DataArray, DType, dtypedArray, isFloatDtype } from "./alu";
+import { byteWidth, DataArray, DType, dtypedArray, isFloatDtype } from "./alu";
 
 /**
  * Advanced operations that don't fit into the `AluExp` compiler representation.
@@ -125,6 +125,24 @@ export function runCpuRoutine(
     default:
       name satisfies never; // Exhaustiveness check
   }
+}
+
+/** JS source for running CPU routines inside a Web Worker. */
+export function cpuRoutineJSForWorkers(): string {
+  return `
+const DType = ${JSON.stringify(DType)};
+const Routines = ${JSON.stringify(Routines)};
+const byteWidth = ${byteWidth.toString()};
+const isFloatDtype = ${isFloatDtype.toString()};
+const dtypedArray = ${dtypedArray.toString()};
+${runCpuRoutine.toString()}
+${runSort.toString()}
+${runArgsort.toString()}
+${runTriangularSolve.toString()}
+${runCholesky.toString()}
+${runLU.toString()}
+${runJacobiEigh.toString()}
+`;
 }
 
 function runSort(type: RoutineType, [x]: DataArray[], [y]: DataArray[]) {

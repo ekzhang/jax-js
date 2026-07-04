@@ -150,7 +150,10 @@ export class WasmBackend implements Backend {
   async prepareRoutine(
     routine: Routine,
   ): Promise<Executable<WasmExecutableData>> {
-    return this.prepareRoutineSync(routine);
+    return new Executable(routine, {
+      program: undefined!,
+      sync: false,
+    });
   }
 
   prepareRoutineSync(routine: Routine): Executable<WasmExecutableData> {
@@ -170,14 +173,55 @@ export class WasmBackend implements Backend {
     const tracing = isTracing();
     const start = tracing ? performance.now() : 0;
 
+    const { sync } = exe.data;
     if (exe.source instanceof Routine) {
-      runCpuRoutine(
-        exe.source,
-        inputs.map((slot) => this.#getBuffer(slot)),
-        outputs.map((slot) => this.#getBuffer(slot)),
-      );
+      if (this.#workerPool && !sync) {
+        const routine = {
+          name: exe.source.name,
+          type: exe.source.type,
+          params: exe.source.params,
+        };
+        const retainedSlots = [...inputs, ...outputs];
+        for (const slot of retainedSlots) this.incRef(slot);
+        const epoch = this.#workerPool.dispatchRoutine(
+          routine,
+          inputs.map((slot) => {
+            const { ptr, size } = this.#buffers.get(slot)!;
+            return { ptr, size };
+          }),
+          outputs.map((slot) => {
+            const { ptr, size } = this.#buffers.get(slot)!;
+            return { ptr, size };
+          }),
+        );
+        for (const slot of outputs) this.#pendingWork.set(slot, epoch);
+        this.#workerPool.waitForEpoch(epoch).then(() => {
+          for (const slot of outputs) {
+            if (this.#pendingWork.get(slot) === epoch) {
+              this.#pendingWork.delete(slot);
+            }
+          }
+          for (const slot of retainedSlots) this.decRef(slot);
+        });
+      } else {
+        if (
+          inputs.some((slot) => {
+            const epoch = this.#pendingWork.get(slot);
+            return epoch && this.#workerPool!.epoch < epoch;
+          })
+        ) {
+          throw new Error(
+            "cannot dispatch wasm routine synchronously with pending async work",
+          );
+        }
+        runCpuRoutine(
+          exe.source,
+          inputs.map((slot) => this.#getBuffer(slot)),
+          outputs.map((slot) => this.#getBuffer(slot)),
+        );
+      }
     } else {
-      const { program, sync } = exe.data;
+      const { program } = exe.data;
       const ptrs = [...inputs, ...outputs].map(
         (slot) => this.#buffers.get(slot)!.ptr,
       );

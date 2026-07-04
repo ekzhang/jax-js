@@ -101,6 +101,13 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
       );
     });
 
+    test("works with lazy random inputs", async () => {
+      const a = random.normal(random.key(0), [16, 16]);
+      const values = (await np.linalg.eigvalsh(a).jsAsync()) as number[];
+      const sumAbs = values.reduce((sum, x) => sum + Math.abs(x), 0);
+      expect(sumAbs).toBeGreaterThan(1);
+    });
+
     test("only forwards symmetrizeInput option", () => {
       const a = np.array([
         [2.0, 100.0],
