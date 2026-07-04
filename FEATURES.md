@@ -16,9 +16,9 @@ Other features just aren't implemented yet. But those can probably be added easi
 
 In the tables below, we use a color legend to refer to functions in JAX:
 
-- 🟢 = supported **(~60%)**
-- 🟡 = supported, with API limitations **(~5%)**
-- 🟠 = not supported, easy to add (<1 day) **(~24%)**
+- 🟢 = supported **(~63%)**
+- 🟡 = supported, with API limitations **(~3%)**
+- 🟠 = not supported, easy to add (<1 day) **(~23%)**
 - 🔴 = not supported **(~11%)**
 - ⚪️ = not applicable, will not be supported (see notes)
 
