@@ -532,8 +532,8 @@ eigenvalues ([issue](https://github.com/ekzhang/jax-js/issues/51)).
 | `qr`               | 🔴      |                                         |
 | `slogdet`          | 🟢      |                                         |
 | `solve`            | 🟢      |                                         |
-| `svd`              | 🔴      |                                         |
-| `svdvals`          | 🔴      |                                         |
+| `svd`              | 🟡      | thin SVD via symmetric eigensolver      |
+| `svdvals`          | 🟡      | thin SVD via symmetric eigensolver      |
 | `tensordot`        | 🟢      |                                         |
 | `tensorinv`        | 🔴      |                                         |
 | `tensorsolve`      | 🔴      |                                         |

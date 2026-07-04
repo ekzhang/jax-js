@@ -6,14 +6,6 @@ import { Array, type ArrayLike, fudgeArray } from "../frontend/array";
 import * as core from "../frontend/core";
 import { checkSquare } from "../utils";
 
-function defaultJacobiMaxSweeps(n: number): number {
-  return Math.max(8, 2 * n);
-}
-
-function jacobiTolerance(dtype: DType): number {
-  return dtype === DType.Float64 ? 1e-12 : 1e-6;
-}
-
 /**
  * Compute the Cholesky decomposition of a symmetric positive-definite matrix.
  *
@@ -83,8 +75,8 @@ export function eigh(
   const batchShape = x.shape.slice(0, -2);
   let v: Array;
   [x, v] = core.jacobiEigh(x, {
-    maxSweeps: defaultJacobiMaxSweeps(n),
-    tolerance: jacobiTolerance(x.dtype),
+    maxSweeps: Math.max(8, 2 * n), // Default maximum number of sweeps
+    tolerance: x.dtype === DType.Float64 ? 1e-12 : 1e-6,
   }) as [Array, Array];
 
   const valuesUnsorted = np.diagonal(x, 0, -2, -1);
@@ -94,6 +86,80 @@ export function eigh(
   const values = np.takeAlongAxis(valuesUnsorted, order.ref, -1);
   const vectors = np.takeAlongAxis(v, order.reshape([...batchShape, 1, n]), -1);
   return [vectors, values];
+}
+
+/**
+ * Singular value decomposition of real matrices.
+ *
+ * This computes a thin SVD using a symmetric eigendecomposition of `A.T @ A`
+ * or `A @ A.T`. It is intended as a baseline implementation; it is less
+ * numerically stable than a dedicated SVD routine for ill-conditioned inputs.
+ *
+ * With `computeUv: true`, returns `[u, s, vh]` such that
+ * `a ~= u @ diag(s) @ vh`. Only `fullMatrices: false` is supported for
+ * non-square matrices.
+ */
+export function svd(
+  a: ArrayLike,
+  {
+    computeUv = true,
+    fullMatrices = false,
+  }: {
+    computeUv?: boolean;
+    fullMatrices?: boolean;
+  } = {},
+): [Array, Array, Array] | Array {
+  a = fudgeArray(a);
+  if (a.ndim < 2) throw new Error(`svd: input must be at least 2D, got ${a}`);
+  if (!isFloatDtype(a.dtype) || a.dtype === DType.Float16) {
+    a = a.astype(np.float32);
+  }
+
+  const [m, n] = a.shape.slice(-2);
+  if (fullMatrices && m !== n) {
+    throw new Error(
+      "svd: fullMatrices=true is only supported for square input",
+    );
+  }
+
+  const batchShape = a.shape.slice(0, -2);
+  const k = Math.min(m, n);
+
+  const singularValues = (values: Array) =>
+    np.sqrt(np.maximum(np.flip(values, -1), 0));
+  const invSingularValues = (s: Array) =>
+    np.where(np.greater(s.ref, 0), np.reciprocal(s.ref), 0);
+
+  if (m >= n) {
+    const gram = np.matmul(np.matrixTranspose(a.ref), a.ref);
+    const [v, values] = eigh(gram, { symmetrizeInput: false });
+    const s = singularValues(values);
+    if (!computeUv) {
+      v.dispose();
+      return s;
+    }
+
+    const vDesc = np.flip(v, -1);
+    const invS = invSingularValues(s.ref);
+    const u = np.matmul(a, vDesc.ref).mul(invS.reshape([...batchShape, 1, k]));
+    const vh = np.matrixTranspose(vDesc);
+    return [u, s, vh];
+  } else {
+    const gram = np.matmul(a.ref, np.matrixTranspose(a.ref));
+    const [u, values] = eigh(gram, { symmetrizeInput: false });
+    const s = singularValues(values);
+    if (!computeUv) {
+      u.dispose();
+      return s;
+    }
+
+    const uDesc = np.flip(u, -1);
+    const invS = invSingularValues(s.ref);
+    const vh = np
+      .matmul(np.matrixTranspose(uDesc.ref), a)
+      .mul(invS.reshape([...batchShape, k, 1]));
+    return [uDesc, s, vh];
+  }
 }
 
 /**

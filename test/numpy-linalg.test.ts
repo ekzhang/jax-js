@@ -125,6 +125,105 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
     });
   });
 
+  suite("numpy.linalg.svd()", () => {
+    test("reconstructs a tall matrix", () => {
+      const a = np.array([
+        [1.0, 2.0],
+        [3.0, 4.0],
+        [5.0, 6.0],
+      ]);
+      const [u, s, vh] = np.linalg.svd(a.ref);
+      const reconstructed = np.matmul(u.ref.mul(s.reshape([1, 2])), vh.ref);
+      const uOrthogonal = np.matmul(np.matrixTranspose(u.ref), u);
+      const vhOrthogonal = np.matmul(vh.ref, np.matrixTranspose(vh.ref));
+
+      expect(s.shape).toEqual([2]);
+      expect(reconstructed).toBeAllclose(a, { rtol: 1e-3, atol: 1e-3 });
+      expect(uOrthogonal).toBeAllclose(np.eye(2), {
+        rtol: 1e-3,
+        atol: 1e-3,
+      });
+      expect(vhOrthogonal).toBeAllclose(np.eye(2), {
+        rtol: 1e-3,
+        atol: 1e-3,
+      });
+    });
+
+    test("reconstructs a wide matrix", () => {
+      const a = np.array([
+        [1.0, 2.0, 3.0],
+        [4.0, 5.0, 6.0],
+      ]);
+      const [u, s, vh] = np.linalg.svd(a.ref);
+      const reconstructed = np.matmul(u.ref.mul(s.reshape([1, 2])), vh.ref);
+      const uOrthogonal = np.matmul(np.matrixTranspose(u.ref), u);
+      const vhOrthogonal = np.matmul(vh.ref, np.matrixTranspose(vh.ref));
+
+      expect(s.shape).toEqual([2]);
+      expect(reconstructed).toBeAllclose(a, { rtol: 1e-3, atol: 1e-3 });
+      expect(uOrthogonal).toBeAllclose(np.eye(2), {
+        rtol: 1e-3,
+        atol: 1e-3,
+      });
+      expect(vhOrthogonal).toBeAllclose(np.eye(2), {
+        rtol: 1e-3,
+        atol: 1e-3,
+      });
+    });
+
+    test("supports batched matrices", () => {
+      const a = np.array([
+        [
+          [1.0, 2.0],
+          [3.0, 4.0],
+          [5.0, 6.0],
+        ],
+        [
+          [2.0, 0.0],
+          [0.0, 3.0],
+          [4.0, 0.0],
+        ],
+      ]);
+      const [u, s, vh] = np.linalg.svd(a.ref);
+      const reconstructed = np.matmul(u.ref.mul(s.reshape([2, 1, 2])), vh.ref);
+
+      expect(s.shape).toEqual([2, 2]);
+      expect(reconstructed).toBeAllclose(a, { rtol: 1e-3, atol: 1e-3 });
+    });
+
+    test("returns singular values only", () => {
+      const a = np.array([
+        [3.0, 0.0],
+        [0.0, 4.0],
+      ]);
+      expect(np.linalg.svdvals(a)).toBeAllclose([4.0, 3.0], {
+        rtol: 1e-4,
+        atol: 1e-4,
+      });
+    });
+
+    test("returns singular values for non-diagonal matrices", () => {
+      const a = np.array([
+        [1.0, 2.0],
+        [3.0, 4.0],
+        [5.0, 6.0],
+      ]);
+      expect(np.linalg.svdvals(a)).toBeAllclose([9.525518, 0.514301], {
+        rtol: 1e-4,
+        atol: 1e-4,
+      });
+    });
+
+    test("rejects fullMatrices for non-square matrices", () => {
+      const a = np.array([
+        [1.0, 2.0],
+        [3.0, 4.0],
+        [5.0, 6.0],
+      ]);
+      expect(() => np.linalg.svd(a, { fullMatrices: true })).toThrow();
+    });
+  });
+
   suite("numpy.linalg.det()", () => {
     test("computes determinant of simple matrix", () => {
       const a = np.array([

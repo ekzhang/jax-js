@@ -224,6 +224,36 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
     });
   });
 
+  suite("jax.lax.linalg.svd()", () => {
+    test("returns u, s, vh for a thin decomposition", () => {
+      const x = np.array([
+        [1.0, 2.0],
+        [3.0, 4.0],
+        [5.0, 6.0],
+      ]);
+      const [u, s, vh] = lax.linalg.svd(x.ref) as [
+        np.Array,
+        np.Array,
+        np.Array,
+      ];
+      const reconstructed = np.matmul(u.ref.mul(s.reshape([1, 2])), vh.ref);
+
+      expect(u.shape).toEqual([3, 2]);
+      expect(s.shape).toEqual([2]);
+      expect(vh.shape).toEqual([2, 2]);
+      expect(reconstructed).toBeAllclose(x, { rtol: 1e-3, atol: 1e-3 });
+    });
+
+    test("can return singular values only", () => {
+      const x = np.array([
+        [3.0, 0.0],
+        [0.0, 4.0],
+      ]);
+      const s = lax.linalg.svd(x, { computeUv: false }) as np.Array;
+      expect(s).toBeAllclose([4.0, 3.0], { rtol: 1e-4, atol: 1e-4 });
+    });
+  });
+
   suite("jax.lax.linalg.lu()", () => {
     test("example with partial pivoting", () => {
       const A = np.array([

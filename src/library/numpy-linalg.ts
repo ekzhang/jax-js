@@ -89,6 +89,38 @@ export function eigvalsh(a: ArrayLike, opts?: EighOpts): Array {
   return values;
 }
 
+/** @inline */
+type SvdOpts = {
+  fullMatrices?: boolean;
+  computeUv?: boolean;
+};
+
+export function svd(a: ArrayLike, opts: SvdOpts & { computeUv: false }): Array;
+export function svd(a: ArrayLike, opts?: SvdOpts): [Array, Array, Array];
+/**
+ * Singular value decomposition of real matrices.
+ *
+ * This currently computes a thin SVD via symmetric eigendecomposition. It
+ * supports `fullMatrices=false`; `fullMatrices=true` is accepted only for
+ * square inputs where thin and full output shapes match.
+ */
+export function svd(
+  a: ArrayLike,
+  opts?: SvdOpts,
+): [Array, Array, Array] | Array {
+  const result = lax.linalg.svd(a, {
+    fullMatrices: opts?.fullMatrices,
+    computeUv: opts?.computeUv,
+  });
+  if (opts?.computeUv === false) return result as Array;
+  return result as [Array, Array, Array];
+}
+
+/** Compute singular values of real matrices. */
+export function svdvals(a: ArrayLike): Array {
+  return lax.linalg.svd(a, { computeUv: false }) as Array;
+}
+
 /** Compute the inverse of a square matrix (batched). */
 export function inv(a: ArrayLike): Array {
   a = fudgeArray(a);
