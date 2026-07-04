@@ -504,8 +504,8 @@ arrays where appropriate.
 Similarly, the `linalg` module has some very important operations for linear algebra and matrices.
 Most of these are implemented as routines with backend-specific lowering.
 
-We have Cholesky and LU decompositions but are missing other building blocks like QR, SVD, and
-eigenvalues ([issue](https://github.com/ekzhang/jax-js/issues/51)).
+We have Cholesky and LU decompositions, as well as eigenvalues (Jacobi iteration) and SVD. But are
+missing some other building blocks like QR decomposition.
 
 | API                | Support | Notes                                   |
 | ------------------ | ------- | --------------------------------------- |
