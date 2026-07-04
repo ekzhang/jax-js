@@ -2,16 +2,7 @@ import * as lax from "./lax";
 import { triangularSolve } from "./lax-linalg";
 import * as np from "./numpy";
 import { Array, ArrayLike, fudgeArray } from "../frontend/array";
-import { checkAxis, generalBroadcast } from "../utils";
-
-function checkSquare(name: string, a: Array) {
-  if (a.ndim < 2 || a.shape[a.ndim - 1] !== a.shape[a.ndim - 2]) {
-    throw new Error(
-      `${name}: input must be at least 2D square matrix, got ${a.aval}`,
-    );
-  }
-  return a.shape[a.ndim - 1];
-}
+import { checkAxis, checkSquare, generalBroadcast } from "../utils";
 
 /**
  * Compute the Cholesky decomposition of a (batched) positive-definite matrix.
@@ -30,7 +21,7 @@ export function cholesky(
   } = {},
 ): Array {
   a = fudgeArray(a);
-  checkSquare("cholesky", a);
+  checkSquare("cholesky", a.shape);
   if (symmetrizeInput) {
     a = a.ref.add(np.matrixTranspose(a)).mul(0.5);
   }
@@ -60,7 +51,7 @@ export function cross(x1: ArrayLike, x2: ArrayLike, axis: number = -1): Array {
 /** Compute the determinant of a square matrix (batched). */
 export function det(a: ArrayLike): Array {
   a = fudgeArray(a);
-  const n = checkSquare("det", a);
+  const n = checkSquare("det", a.shape);
   const [lu, pivots, permutation] = lax.linalg.lu(a);
   permutation.dispose();
 
@@ -72,10 +63,36 @@ export function det(a: ArrayLike): Array {
 
 export { diagonal } from "./numpy";
 
+type EighOpts = {
+  symmetrizeInput?: boolean;
+};
+
+/**
+ * Compute eigenvalues and eigenvectors of real symmetric matrices.
+ *
+ * The returned eigenvalues are sorted in ascending order, and eigenvectors are
+ * returned as columns.
+ */
+export function eigh(a: ArrayLike, opts?: EighOpts): [Array, Array] {
+  const [vectors, values] = lax.linalg.eigh(a, {
+    symmetrizeInput: opts?.symmetrizeInput,
+  });
+  return [values, vectors];
+}
+
+/** Compute eigenvalues of real symmetric matrices. */
+export function eigvalsh(a: ArrayLike, opts?: EighOpts): Array {
+  const [vectors, values] = lax.linalg.eigh(a, {
+    symmetrizeInput: opts?.symmetrizeInput,
+  });
+  vectors.dispose();
+  return values;
+}
+
 /** Compute the inverse of a square matrix (batched). */
 export function inv(a: ArrayLike): Array {
   a = fudgeArray(a);
-  const n = checkSquare("inv", a);
+  const n = checkSquare("inv", a.shape);
   return solve(a, np.eye(n, undefined, { dtype: a.dtype }));
 }
 
@@ -136,7 +153,7 @@ export function matrixPower(a: ArrayLike, n: number): Array {
   if (!Number.isInteger(n))
     throw new Error(`matrixPower: exponent must be an integer, got ${n}`);
   a = fudgeArray(a);
-  const m = checkSquare("matrixPower", a);
+  const m = checkSquare("matrixPower", a.shape);
   if (n === 0) {
     const dtype = a.dtype;
     a.dispose();
@@ -199,7 +216,7 @@ export { outer } from "./numpy";
 /** Return sign and natural logarithm of the determinant of `a`. */
 export function slogdet(a: ArrayLike): [Array, Array] {
   a = fudgeArray(a);
-  const n = checkSquare("slogdet", a);
+  const n = checkSquare("slogdet", a.shape);
   const [lu, pivots, permutation] = lax.linalg.lu(a);
   permutation.dispose();
 
@@ -224,7 +241,7 @@ export function slogdet(a: ArrayLike): [Array, Array] {
 export function solve(a: ArrayLike, b: ArrayLike): Array {
   a = fudgeArray(a);
   b = fudgeArray(b);
-  const n = checkSquare("solve", a);
+  const n = checkSquare("solve", a.shape);
   if (b.ndim === 0) throw new Error(`solve: b cannot be scalar`);
   const bIs1d = b.ndim === 1;
   if (bIs1d) {

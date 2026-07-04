@@ -184,6 +184,16 @@ export function normalizeAxis(
   }
 }
 
+/** Check that a shape ends in square matrix dimensions, and return the size. */
+export function checkSquare(name: string, shape: number[]): number {
+  if (shape.length < 2 || shape[shape.length - 1] !== shape[shape.length - 2]) {
+    throw new Error(
+      `${name}: input must be at least 2D square matrix, got shape ${JSON.stringify(shape)}`,
+    );
+  }
+  return shape[shape.length - 1];
+}
+
 /** Check for an array of integers with no duplicates. */
 export function checkInts(indices: number | number[]) {
   if (typeof indices === "number") {

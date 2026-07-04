@@ -515,9 +515,9 @@ eigenvalues ([issue](https://github.com/ekzhang/jax-js/issues/51)).
 | `det`              | 🟢      |                                         |
 | `diagonal`         | 🟢      |                                         |
 | `eig`              | 🔴      |                                         |
-| `eigh`             | 🔴      |                                         |
+| `eigh`             | 🟡      | real matrices only, fixed sweeps        |
 | `eigvals`          | 🔴      |                                         |
-| `eigvalsh`         | 🔴      |                                         |
+| `eigvalsh`         | 🟡      | real matrices only, fixed sweeps        |
 | `inv`              | 🟢      |                                         |
 | `lstsq`            | 🟡      | Cholesky-based, less stable than QR/SVD |
 | `matmul`           | 🟢      |                                         |

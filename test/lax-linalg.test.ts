@@ -116,6 +116,100 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
     });
   });
 
+  suite("jax.lax.linalg.eigh()", () => {
+    test("returns eigenvectors then sorted eigenvalues", () => {
+      const x = np.array([
+        [3.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 2.0],
+      ]);
+      const [vectors, values] = lax.linalg.eigh(x);
+
+      expect(values).toBeAllclose([1.0, 2.0, 3.0]);
+      expect(vectors).toBeAllclose([
+        [0.0, 0.0, 1.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+      ]);
+    });
+
+    test("reconstructs a symmetric matrix", () => {
+      const x = np.array([
+        [4.0, 1.0, 2.0],
+        [1.0, 3.0, 0.5],
+        [2.0, 0.5, 5.0],
+      ]);
+      const [vectors, values] = lax.linalg.eigh(x.ref);
+      const reconstructed = np.matmul(
+        vectors.ref.mul(values.reshape([1, -1])),
+        vectors.ref.transpose(),
+      );
+      const orthogonal = np.matmul(vectors.ref.transpose(), vectors);
+
+      expect(reconstructed).toBeAllclose(x, { rtol: 1e-3, atol: 1e-3 });
+      expect(orthogonal).toBeAllclose(np.eye(3), { rtol: 1e-3, atol: 1e-3 });
+    });
+
+    test("supports batched matrices", () => {
+      const x = np.array([
+        [
+          [2.0, 1.0],
+          [1.0, 2.0],
+        ],
+        [
+          [3.0, 1.0],
+          [1.0, 3.0],
+        ],
+      ]);
+      const [vectors, values] = lax.linalg.eigh(x.ref);
+
+      expect(values.ref).toBeAllclose([
+        [1.0, 3.0],
+        [2.0, 4.0],
+      ]);
+
+      const reconstructed = np.matmul(
+        vectors.ref.mul(values.reshape([2, 1, 2])),
+        np.matrixTranspose(vectors.ref),
+      );
+      const orthogonal = np.matmul(np.matrixTranspose(vectors.ref), vectors);
+
+      expect(reconstructed).toBeAllclose(x, { rtol: 1e-4, atol: 1e-4 });
+      expect(orthogonal).toBeAllclose(np.broadcastTo(np.eye(2), [2, 2, 2]), {
+        rtol: 1e-4,
+        atol: 1e-4,
+      });
+    });
+
+    test("uses the selected triangle when not symmetrizing", () => {
+      const lowerInput = np.array([
+        [2.0, 100.0],
+        [1.0, 2.0],
+      ]);
+      const upperInput = np.array([
+        [2.0, 100.0],
+        [1.0, 2.0],
+      ]);
+      const [, lowerValues] = lax.linalg.eigh(lowerInput.ref, {
+        symmetrizeInput: false,
+        lower: true,
+      });
+      const [, upperValues] = lax.linalg.eigh(upperInput, {
+        symmetrizeInput: false,
+        lower: false,
+      });
+
+      expect(lowerValues).toBeAllclose([1.0, 3.0], {
+        rtol: 1e-4,
+        atol: 1e-4,
+      });
+      expect(upperValues).toBeAllclose([-98.0, 102.0], {
+        rtol: 1e-4,
+        atol: 1e-4,
+      });
+    });
+  });
+
   suite("jax.lax.linalg.lu()", () => {
     test("example with partial pivoting", () => {
       const A = np.array([

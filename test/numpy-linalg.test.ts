@@ -33,6 +33,91 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
     });
   });
 
+  suite("numpy.linalg.eigh()", () => {
+    test("sorts diagonal eigenvalues and eigenvectors", () => {
+      const a = np.array([
+        [3.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 2.0],
+      ]);
+      const [values, vectors] = np.linalg.eigh(a);
+
+      expect(values.ref).toBeAllclose([1.0, 2.0, 3.0]);
+      expect(vectors).toBeAllclose([
+        [0.0, 0.0, 1.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+      ]);
+      values.dispose();
+    });
+
+    test("reconstructs a symmetric matrix", () => {
+      const a = np.array([
+        [4.0, 1.0, 2.0],
+        [1.0, 3.0, 0.5],
+        [2.0, 0.5, 5.0],
+      ]);
+      const [values, vectors] = np.linalg.eigh(a.ref);
+      const reconstructed = np.matmul(
+        vectors.ref.mul(values.reshape([1, -1])),
+        vectors.ref.transpose(),
+      );
+      const orthogonal = np.matmul(vectors.ref.transpose(), vectors);
+
+      expect(reconstructed).toBeAllclose(a, { rtol: 1e-3, atol: 1e-3 });
+      expect(orthogonal).toBeAllclose(np.eye(3), { rtol: 1e-3, atol: 1e-3 });
+    });
+  });
+
+  suite("numpy.linalg.eigvalsh()", () => {
+    test("returns eigenvalues only", () => {
+      const a = np.array([
+        [2.0, 1.0],
+        [1.0, 2.0],
+      ]);
+      expect(np.linalg.eigvalsh(a)).toBeAllclose([1.0, 3.0], {
+        rtol: 1e-4,
+        atol: 1e-4,
+      });
+    });
+
+    test("supports batched matrices", () => {
+      const a = np.array([
+        [
+          [2.0, 1.0],
+          [1.0, 2.0],
+        ],
+        [
+          [3.0, 1.0],
+          [1.0, 3.0],
+        ],
+      ]);
+      expect(np.linalg.eigvalsh(a)).toBeAllclose(
+        [
+          [1.0, 3.0],
+          [2.0, 4.0],
+        ],
+        { rtol: 1e-4, atol: 1e-4 },
+      );
+    });
+
+    test("only forwards symmetrizeInput option", () => {
+      const a = np.array([
+        [2.0, 100.0],
+        [1.0, 2.0],
+      ]);
+      expect(
+        np.linalg.eigvalsh(a, {
+          symmetrizeInput: false,
+          lower: false,
+        } as { symmetrizeInput: boolean }),
+      ).toBeAllclose([1.0, 3.0], {
+        rtol: 1e-4,
+        atol: 1e-4,
+      });
+    });
+  });
+
   suite("numpy.linalg.det()", () => {
     test("computes determinant of simple matrix", () => {
       const a = np.array([
