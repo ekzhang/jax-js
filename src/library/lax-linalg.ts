@@ -76,12 +76,8 @@ export function eigh(
   }
   if (symmetrizeInput) {
     x = x.ref.add(np.matrixTranspose(x)).mul(0.5);
-  } else if (lower) {
-    const lowerTriangle = np.tril(x.ref);
-    x = lowerTriangle.ref.add(np.matrixTranspose(np.tril(x, -1)));
-  } else {
-    const upperTriangle = np.triu(x.ref);
-    x = upperTriangle.ref.add(np.matrixTranspose(np.triu(x, 1)));
+  } else if (!lower) {
+    x = np.matrixTranspose(x);
   }
 
   const batchShape = x.shape.slice(0, -2);

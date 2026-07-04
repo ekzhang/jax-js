@@ -78,11 +78,11 @@ export enum Routines {
   /**
    * Symmetric eigendecomposition using cyclic Jacobi rotations.
    *
-   * The input is a batch of real symmetric matrices with shape `[..., N, N]`.
-   * The output is a tuple `Diagonalized, Vectors`, both shape `[..., N, N]`.
-   * `Diagonalized` is approximately diagonal and `Vectors` contains the
-   * accumulated eigenvectors as columns. Sorting eigenpairs is handled by the
-   * frontend wrapper.
+   * The input is a batch of real symmetric matrices with shape `[..., N, N]`;
+   * only the lower triangle is read. The output is a tuple `Diagonalized,
+   * Vectors`, both shape `[..., N, N]`. `Diagonalized` is approximately
+   * diagonal and `Vectors` contains the accumulated eigenvectors as columns.
+   * Sorting eigenpairs is handled by the frontend wrapper.
    */
   JacobiEigh = "JacobiEigh",
 }
@@ -296,10 +296,16 @@ function runJacobiEigh(
   if (!isFloatDtype(type.inputDtypes[0]))
     throw new TypeError(`jacobi_eigh: input must be floating-point`);
 
+  function symIndex(i: number, j: number): number {
+    return i >= j ? i * n + j : j * n + i;
+  }
+
   function maxAbsMatrix(a: DataArray): number {
     let maxAbs = 1;
-    for (let i = 0; i < n * n; i++) {
-      maxAbs = Math.max(maxAbs, Math.abs(a[i]));
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j <= i; j++) {
+        maxAbs = Math.max(maxAbs, Math.abs(a[i * n + j]));
+      }
     }
     return maxAbs;
   }
@@ -307,8 +313,8 @@ function runJacobiEigh(
   function maxAbsOffDiagonal(a: DataArray): number {
     let maxAbs = 0;
     for (let i = 0; i < n; i++) {
-      for (let j = 0; j < n; j++) {
-        if (i !== j) maxAbs = Math.max(maxAbs, Math.abs(a[i * n + j]));
+      for (let j = 0; j < i; j++) {
+        maxAbs = Math.max(maxAbs, Math.abs(a[i * n + j]));
       }
     }
     return maxAbs;
@@ -322,7 +328,7 @@ function runJacobiEigh(
   ) {
     const pp = p * n + p;
     const qq = q * n + q;
-    const pq = p * n + q;
+    const pq = symIndex(p, q);
     const app = a[pp];
     const aqq = a[qq];
     const apq = a[pq];
@@ -336,22 +342,19 @@ function runJacobiEigh(
 
     for (let k = 0; k < n; k++) {
       if (k === p || k === q) continue;
-      const kp = k * n + p;
-      const kq = k * n + q;
+      const kp = symIndex(k, p);
+      const kq = symIndex(k, q);
       const akp = a[kp];
       const akq = a[kq];
       const nextKp = c * akp - s * akq;
       const nextKq = s * akp + c * akq;
       a[kp] = nextKp;
-      a[p * n + k] = nextKp;
       a[kq] = nextKq;
-      a[q * n + k] = nextKq;
     }
 
     a[pp] = c * c * app - 2 * s * c * apq + s * s * aqq;
     a[qq] = s * s * app + 2 * s * c * apq + c * c * aqq;
     a[pq] = 0;
-    a[q * n + p] = 0;
 
     for (let k = 0; k < n; k++) {
       const kp = k * n + p;
@@ -368,7 +371,12 @@ function runJacobiEigh(
     const x = input.subarray(offset, offset + matrixSize);
     const a = diagonalized.subarray(offset, offset + matrixSize);
     const v = vectors.subarray(offset, offset + matrixSize);
-    a.set(x);
+    a.fill(0);
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j <= i; j++) {
+        a[i * n + j] = x[i * n + j];
+      }
+    }
     v.fill(0);
     for (let i = 0; i < n; i++) v[i * n + i] = 1;
 

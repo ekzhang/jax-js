@@ -626,6 +626,10 @@ fn mat_idx(base: u32, row: u32, col: u32) -> u32 {
   return base + row * ${n}u + col;
 }
 
+fn sym_idx(base: u32, row: u32, col: u32) -> u32 {
+  return mat_idx(base, max(row, col), min(row, col));
+}
+
 @compute @workgroup_size(${workgroupSize})
 fn main(
   @builtin(workgroup_id) wg_id: vec3<u32>,
@@ -642,7 +646,11 @@ fn main(
   for (var idx = tid; idx < ${n * n}u; idx += ${workgroupSize}u) {
     let row = idx / ${n}u;
     let col = idx % ${n}u;
-    diagonalized[base + idx] = input[base + idx];
+    diagonalized[base + idx] = select(
+      ${ty}(0),
+      input[base + idx],
+      row >= col,
+    );
     vectors[base + idx] = select(${ty}(0), ${ty}(1), row == col);
   }
   storageBarrier();
@@ -656,7 +664,7 @@ fn main(
         let col = idx % ${n}u;
         let value = abs(diagonalized[base + idx]);
         max_abs = max(max_abs, value);
-        if (row != col) {
+        if (row > col) {
           max_offdiag = max(max_offdiag, value);
         }
       }
@@ -672,7 +680,7 @@ fn main(
         if (tid == 0u) {
           rot_app = diagonalized[mat_idx(base, p, p)];
           rot_aqq = diagonalized[mat_idx(base, q, q)];
-          rot_apq = diagonalized[mat_idx(base, p, q)];
+          rot_apq = diagonalized[sym_idx(base, p, q)];
           if (rot_apq == ${ty}(0)) {
             rot_active = 0u;
             rot_c = ${ty}(1);
@@ -691,18 +699,21 @@ fn main(
         if (rot_active != 0u) {
           for (var k = tid; k < ${n}u; k += ${workgroupSize}u) {
             if (k != p && k != q) {
-              let kp = mat_idx(base, k, p);
-              let kq = mat_idx(base, k, q);
-              let pk = mat_idx(base, p, k);
-              let qk = mat_idx(base, q, k);
+              let kp = sym_idx(base, k, p);
+              let kq = sym_idx(base, k, q);
               let akp = diagonalized[kp];
               let akq = diagonalized[kq];
               let next_kp = rot_c * akp - rot_s * akq;
               let next_kq = rot_s * akp + rot_c * akq;
               diagonalized[kp] = next_kp;
-              diagonalized[pk] = next_kp;
               diagonalized[kq] = next_kq;
-              diagonalized[qk] = next_kq;
+            } else if (k == p) {
+              diagonalized[mat_idx(base, p, p)] =
+                rot_c * rot_c * rot_app - ${ty}(2) * rot_s * rot_c * rot_apq + rot_s * rot_s * rot_aqq;
+              diagonalized[sym_idx(base, p, q)] = ${ty}(0);
+            } else {
+              diagonalized[mat_idx(base, q, q)] =
+                rot_s * rot_s * rot_app + ${ty}(2) * rot_s * rot_c * rot_apq + rot_c * rot_c * rot_aqq;
             }
 
             let vp = mat_idx(base, k, p);
@@ -712,16 +723,6 @@ fn main(
             vectors[vp] = rot_c * vkp - rot_s * vkq;
             vectors[vq] = rot_s * vkp + rot_c * vkq;
           }
-        }
-        storageBarrier();
-
-        if (tid == 0u && rot_active != 0u) {
-          diagonalized[mat_idx(base, p, p)] =
-            rot_c * rot_c * rot_app - ${ty}(2) * rot_s * rot_c * rot_apq + rot_s * rot_s * rot_aqq;
-          diagonalized[mat_idx(base, q, q)] =
-            rot_s * rot_s * rot_app + ${ty}(2) * rot_s * rot_c * rot_apq + rot_c * rot_c * rot_aqq;
-          diagonalized[mat_idx(base, p, q)] = ${ty}(0);
-          diagonalized[mat_idx(base, q, p)] = ${ty}(0);
         }
         storageBarrier();
       }
