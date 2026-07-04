@@ -588,6 +588,160 @@ fn main(
   ];
 }
 
+function createJacobiEigh(
+  device: GPUDevice,
+  type: RoutineType,
+  params: { maxSweeps: number; tolerance: number },
+): ShaderInfo[] {
+  const dtype = type.inputDtypes[0];
+  const shape = type.inputShapes[0];
+  const n = shape[shape.length - 1];
+  const batches = prod(shape.slice(0, -2));
+
+  const needsF16 = dtype === DType.Float16;
+  const ty = dtypeToWgsl(dtype, true);
+  const tolerance = `${ty}(${params.tolerance})`;
+  const workgroupSize = findPow2(
+    Math.max(n, 1),
+    device.limits.maxComputeWorkgroupSizeX,
+  );
+
+  const code = `
+${needsF16 ? "enable f16;" : ""}
+${headerWgsl}
+
+@group(0) @binding(0) var<storage, read> input: array<${ty}>;
+@group(0) @binding(1) var<storage, read_write> diagonalized: array<${ty}>;
+@group(0) @binding(2) var<storage, read_write> vectors: array<${ty}>;
+
+var<workgroup> done: u32;
+var<workgroup> rot_active: u32;
+var<workgroup> rot_c: ${ty};
+var<workgroup> rot_s: ${ty};
+var<workgroup> rot_app: ${ty};
+var<workgroup> rot_aqq: ${ty};
+var<workgroup> rot_apq: ${ty};
+
+fn mat_idx(base: u32, row: u32, col: u32) -> u32 {
+  return base + row * ${n}u + col;
+}
+
+@compute @workgroup_size(${workgroupSize})
+fn main(
+  @builtin(workgroup_id) wg_id: vec3<u32>,
+  @builtin(local_invocation_id) local_id: vec3<u32>,
+) {
+  let batch = wg_id.x + wg_id.y * ${gridOffsetY}u;
+  if (batch >= ${batches}u) {
+    return;
+  }
+
+  let base = batch * ${n * n}u;
+  let tid = local_id.x;
+
+  for (var idx = tid; idx < ${n * n}u; idx += ${workgroupSize}u) {
+    let row = idx / ${n}u;
+    let col = idx % ${n}u;
+    diagonalized[base + idx] = input[base + idx];
+    vectors[base + idx] = select(${ty}(0), ${ty}(1), row == col);
+  }
+  storageBarrier();
+
+  for (var sweep = 0u; sweep < ${params.maxSweeps}u; sweep++) {
+    if (tid == 0u) {
+      var max_abs = ${ty}(1);
+      var max_offdiag = ${ty}(0);
+      for (var idx = 0u; idx < ${n * n}u; idx++) {
+        let row = idx / ${n}u;
+        let col = idx % ${n}u;
+        let value = abs(diagonalized[base + idx]);
+        max_abs = max(max_abs, value);
+        if (row != col) {
+          max_offdiag = max(max_offdiag, value);
+        }
+      }
+      done = select(0u, 1u, max_offdiag <= ${tolerance} * max_abs);
+    }
+    let done_uniform = workgroupUniformLoad(&done);
+    if (done_uniform != 0u) {
+      break;
+    }
+
+    for (var p = 0u; p + 1u < ${n}u; p++) {
+      for (var q = p + 1u; q < ${n}u; q++) {
+        if (tid == 0u) {
+          rot_app = diagonalized[mat_idx(base, p, p)];
+          rot_aqq = diagonalized[mat_idx(base, q, q)];
+          rot_apq = diagonalized[mat_idx(base, p, q)];
+          if (rot_apq == ${ty}(0)) {
+            rot_active = 0u;
+            rot_c = ${ty}(1);
+            rot_s = ${ty}(0);
+          } else {
+            let tau = (rot_aqq - rot_app) / (${ty}(2) * rot_apq);
+            let tau_sign = select(${ty}(-1), ${ty}(1), tau >= ${ty}(0));
+            let t = tau_sign / (abs(tau) + sqrt(tau * tau + ${ty}(1)));
+            rot_c = inverseSqrt(t * t + ${ty}(1));
+            rot_s = t * rot_c;
+            rot_active = 1u;
+          }
+        }
+        workgroupBarrier();
+
+        if (rot_active != 0u) {
+          for (var k = tid; k < ${n}u; k += ${workgroupSize}u) {
+            if (k != p && k != q) {
+              let kp = mat_idx(base, k, p);
+              let kq = mat_idx(base, k, q);
+              let pk = mat_idx(base, p, k);
+              let qk = mat_idx(base, q, k);
+              let akp = diagonalized[kp];
+              let akq = diagonalized[kq];
+              let next_kp = rot_c * akp - rot_s * akq;
+              let next_kq = rot_s * akp + rot_c * akq;
+              diagonalized[kp] = next_kp;
+              diagonalized[pk] = next_kp;
+              diagonalized[kq] = next_kq;
+              diagonalized[qk] = next_kq;
+            }
+
+            let vp = mat_idx(base, k, p);
+            let vq = mat_idx(base, k, q);
+            let vkp = vectors[vp];
+            let vkq = vectors[vq];
+            vectors[vp] = rot_c * vkp - rot_s * vkq;
+            vectors[vq] = rot_s * vkp + rot_c * vkq;
+          }
+        }
+        storageBarrier();
+
+        if (tid == 0u && rot_active != 0u) {
+          diagonalized[mat_idx(base, p, p)] =
+            rot_c * rot_c * rot_app - ${ty}(2) * rot_s * rot_c * rot_apq + rot_s * rot_s * rot_aqq;
+          diagonalized[mat_idx(base, q, q)] =
+            rot_s * rot_s * rot_app + ${ty}(2) * rot_s * rot_c * rot_apq + rot_c * rot_c * rot_aqq;
+          diagonalized[mat_idx(base, p, q)] = ${ty}(0);
+          diagonalized[mat_idx(base, q, p)] = ${ty}(0);
+        }
+        storageBarrier();
+      }
+    }
+  }
+}
+`.trim();
+
+  const grid = calculateGrid(batches);
+  return [
+    {
+      code,
+      numInputs: 1,
+      numOutputs: 2,
+      hasUniform: false,
+      passes: [{ grid }],
+    },
+  ];
+}
+
 export function createRoutineShader(
   device: GPUDevice,
   routine: Routine,
@@ -603,6 +757,8 @@ export function createRoutineShader(
       return createCholesky(device, routine.type);
     case Routines.LU:
       return createLU(device, routine.type);
+    case Routines.JacobiEigh:
+      return createJacobiEigh(device, routine.type, routine.params);
     default:
       throw new UnsupportedRoutineError(routine.name, "webgpu");
   }

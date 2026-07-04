@@ -93,6 +93,7 @@ export enum Primitive {
   TriangularSolve = "triangular_solve", // A is upper triangular, A @ X.T = B.T
   Cholesky = "cholesky", // A is positive-definite, A = L @ L^T
   LU = "lu", // LU decomposition with partial pivoting
+  JacobiEigh = "jacobi_eigh", // Symmetric eigendecomposition via Jacobi rotations
 
   // JIT compilation
   Jit = "jit",
@@ -123,6 +124,7 @@ interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
   [Primitive.Shrink]: { slice: Pair[] };
   [Primitive.Pad]: { width: Pair[] };
   [Primitive.TriangularSolve]: { unitDiagonal: boolean };
+  [Primitive.JacobiEigh]: { maxSweeps: number; tolerance: number };
   [Primitive.Jit]: { name: string; jaxpr: Jaxpr; numConsts: number };
 }
 
@@ -147,6 +149,7 @@ export const routinePrimitives = new Map([
   [Primitive.TriangularSolve, Routines.TriangularSolve],
   [Primitive.Cholesky, Routines.Cholesky],
   [Primitive.LU, Routines.LU],
+  [Primitive.JacobiEigh, Routines.JacobiEigh],
 ]);
 
 export function add(x: TracerValue, y: TracerValue) {
@@ -534,6 +537,22 @@ export function lu(x: TracerValue) {
   if (aval.ndim < 2)
     throw new Error(`lu: expected batch of matrices, got ${aval}`);
   return bind(Primitive.LU, [x]);
+}
+
+export function jacobiEigh(
+  x: TracerValue,
+  { maxSweeps, tolerance }: { maxSweeps: number; tolerance: number },
+) {
+  const aval = ShapedArray.fromAval(getAval(x));
+  if (aval.ndim < 2 || aval.shape[aval.ndim - 1] !== aval.shape[aval.ndim - 2])
+    throw new Error(
+      `jacobi_eigh: expected batch of square matrices, got ${aval}`,
+    );
+  if (!isFloatDtype(aval.dtype))
+    throw new TypeError(
+      `jacobi_eigh: expected floating-point input, got ${aval}`,
+    );
+  return bind(Primitive.JacobiEigh, [x], { maxSweeps, tolerance });
 }
 
 export function sort(x: TracerValue) {

@@ -133,6 +133,20 @@ suite.each(devicesWithLinalg)("device:%s", (device) => {
       ]);
     });
 
+    test("can leave eigenvalues unsorted", () => {
+      const x = np.array([
+        [3.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 2.0],
+      ]);
+      const [vectors, values] = lax.linalg.eigh(x, {
+        sortEigenvalues: false,
+      });
+
+      expect(values).toBeAllclose([3.0, 1.0, 2.0]);
+      expect(vectors).toBeAllclose(np.eye(3));
+    });
+
     test("reconstructs a symmetric matrix", () => {
       const x = np.array([
         [4.0, 1.0, 2.0],

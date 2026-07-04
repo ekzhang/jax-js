@@ -1012,6 +1012,17 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
       new ShapedArray([...batch, m], DType.Int32, false),
     ];
   },
+  [Primitive.JacobiEigh]([a]) {
+    if (a.ndim < 2)
+      throw new TypeError(`jacobi_eigh: requires at least 2D input, got ${a}`);
+    if (a.shape[a.ndim - 2] !== a.shape[a.ndim - 1])
+      throw new TypeError(`jacobi_eigh: must be square, got ${a}`);
+    if (!isFloatDtype(a.dtype))
+      throw new TypeError(
+        `jacobi_eigh: requires floating-point input, got ${a}`,
+      );
+    return [ShapedArray.fromAval(a), ShapedArray.fromAval(a)];
+  },
   [Primitive.Jit](args, { jaxpr }) {
     const { inTypes, outTypes } = typecheckJaxpr(jaxpr);
     if (args.length !== inTypes.length) {

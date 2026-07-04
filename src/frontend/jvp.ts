@@ -394,6 +394,9 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
       [lDot.add(uDot), zerosLike(pivots.ref), zerosLike(permutation.ref)],
     ];
   },
+  [Primitive.JacobiEigh]() {
+    throw new Error("JVP rule not implemented for jacobi_eigh");
+  },
   [Primitive.Jit](primals, tangents, { name, jaxpr }) {
     const newJaxpr = jvpJaxpr(jaxpr);
     const outs = bind(

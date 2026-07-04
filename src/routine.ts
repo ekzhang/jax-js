@@ -1,6 +1,6 @@
 // Custom lowering for advanced operations that don't fit into AluExp.
 
-import { DataArray, DType, dtypedArray } from "./alu";
+import { DataArray, DType, dtypedArray, isFloatDtype } from "./alu";
 
 /**
  * Advanced operations that don't fit into the `AluExp` compiler representation.
@@ -74,6 +74,17 @@ export enum Routines {
    *   such that `P = eye(M).slice(Permutation)` -> `P @ A = L @ U`.
    */
   LU = "LU",
+
+  /**
+   * Symmetric eigendecomposition using cyclic Jacobi rotations.
+   *
+   * The input is a batch of real symmetric matrices with shape `[..., N, N]`.
+   * The output is a tuple `Diagonalized, Vectors`, both shape `[..., N, N]`.
+   * `Diagonalized` is approximately diagonal and `Vectors` contains the
+   * accumulated eigenvectors as columns. Sorting eigenpairs is handled by the
+   * frontend wrapper.
+   */
+  JacobiEigh = "JacobiEigh",
 }
 
 export interface RoutineType {
@@ -109,6 +120,8 @@ export function runCpuRoutine(
       return runCholesky(type, inputAr, outputAr);
     case Routines.LU:
       return runLU(type, inputAr, outputAr);
+    case Routines.JacobiEigh:
+      return runJacobiEigh(type, inputAr, outputAr, routine.params);
     default:
       name satisfies never; // Exhaustiveness check
   }
@@ -264,6 +277,114 @@ function runLU(
             out[i * n + col] -= factor * out[j * n + col];
         }
       }
+    }
+  }
+}
+
+function runJacobiEigh(
+  type: RoutineType,
+  [input]: DataArray[],
+  [diagonalized, vectors]: DataArray[],
+  { maxSweeps, tolerance }: { maxSweeps: number; tolerance: number },
+) {
+  const shape = type.inputShapes[0];
+  if (shape.length < 2)
+    throw new Error("jacobi_eigh: input must be at least 2D");
+  const n = shape[shape.length - 1];
+  if (n !== shape[shape.length - 2])
+    throw new Error(`jacobi_eigh: input must be square, got ${shape}`);
+  if (!isFloatDtype(type.inputDtypes[0]))
+    throw new TypeError(`jacobi_eigh: input must be floating-point`);
+
+  function maxAbsMatrix(a: DataArray): number {
+    let maxAbs = 1;
+    for (let i = 0; i < n * n; i++) {
+      maxAbs = Math.max(maxAbs, Math.abs(a[i]));
+    }
+    return maxAbs;
+  }
+
+  function maxAbsOffDiagonal(a: DataArray): number {
+    let maxAbs = 0;
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        if (i !== j) maxAbs = Math.max(maxAbs, Math.abs(a[i * n + j]));
+      }
+    }
+    return maxAbs;
+  }
+
+  function applyJacobiRotation(
+    a: DataArray,
+    v: DataArray,
+    p: number,
+    q: number,
+  ) {
+    const pp = p * n + p;
+    const qq = q * n + q;
+    const pq = p * n + q;
+    const app = a[pp];
+    const aqq = a[qq];
+    const apq = a[pq];
+    if (apq === 0) return;
+
+    const tau = (aqq - app) / (2 * apq);
+    const tauSign = tau >= 0 ? 1 : -1;
+    const t = tauSign / (Math.abs(tau) + Math.sqrt(tau * tau + 1));
+    const c = 1 / Math.sqrt(t * t + 1);
+    const s = t * c;
+
+    for (let k = 0; k < n; k++) {
+      if (k === p || k === q) continue;
+      const kp = k * n + p;
+      const kq = k * n + q;
+      const akp = a[kp];
+      const akq = a[kq];
+      const nextKp = c * akp - s * akq;
+      const nextKq = s * akp + c * akq;
+      a[kp] = nextKp;
+      a[p * n + k] = nextKp;
+      a[kq] = nextKq;
+      a[q * n + k] = nextKq;
+    }
+
+    a[pp] = c * c * app - 2 * s * c * apq + s * s * aqq;
+    a[qq] = s * s * app + 2 * s * c * apq + c * c * aqq;
+    a[pq] = 0;
+    a[q * n + p] = 0;
+
+    for (let k = 0; k < n; k++) {
+      const kp = k * n + p;
+      const kq = k * n + q;
+      const vkp = v[kp];
+      const vkq = v[kq];
+      v[kp] = c * vkp - s * vkq;
+      v[kq] = s * vkp + c * vkq;
+    }
+  }
+
+  const matrixSize = n * n;
+  for (let offset = 0; offset < input.length; offset += matrixSize) {
+    const x = input.subarray(offset, offset + matrixSize);
+    const a = diagonalized.subarray(offset, offset + matrixSize);
+    const v = vectors.subarray(offset, offset + matrixSize);
+    a.set(x);
+    v.fill(0);
+    for (let i = 0; i < n; i++) v[i * n + i] = 1;
+
+    const threshold = tolerance * maxAbsMatrix(a);
+    let maxOffDiagonal = maxAbsOffDiagonal(a);
+    for (
+      let sweep = 0;
+      sweep < maxSweeps && maxOffDiagonal > threshold;
+      sweep++
+    ) {
+      for (let p = 0; p < n - 1; p++) {
+        for (let q = p + 1; q < n; q++) {
+          applyJacobiRotation(a, v, p, q);
+        }
+      }
+      maxOffDiagonal = maxAbsOffDiagonal(a);
     }
   }
 }
