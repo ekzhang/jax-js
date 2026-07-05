@@ -23,6 +23,10 @@ const opts: UserConfig = {
     // https://github.com/rolldown/tsdown/issues/396
     newContext: true,
   },
+  checks: {
+    // Hide warnings about dts generation taking a long time.
+    pluginTimings: false,
+  },
 };
 
 export default defineConfig([

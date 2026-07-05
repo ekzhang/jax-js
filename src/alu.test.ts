@@ -219,6 +219,38 @@ test("AluOp.Idiv", () => {
   expect(e2.max).toBe(-2);
 });
 
+test("AluOp.Idiv simplification preserves negative residuals", () => {
+  const i = AluExp.special(DType.Int32, "i", 3);
+  const e = AluExp.idiv(
+    AluExp.add(AluExp.mul(i, AluExp.i32(2)), AluExp.i32(-1)),
+    AluExp.i32(2),
+  );
+  const values = [0, 1, 2].map((i) => e.evaluate({ i }));
+  const simplified = e.simplify();
+  const normalize = (x: number) => (Object.is(x, -0) ? 0 : x);
+
+  expect(values.map(normalize)).toEqual([0, 0, 1]);
+  expect(
+    [0, 1, 2].map((i) => simplified.evaluate({ i })).map(normalize),
+  ).toEqual(values.map(normalize));
+});
+
+test("AluOp.Idiv simplification preserves negative denominators", () => {
+  const i = AluExp.special(DType.Int32, "i", 3);
+  const e = AluExp.idiv(
+    AluExp.add(AluExp.mul(i, AluExp.i32(-2)), AluExp.i32(1)),
+    AluExp.i32(-2),
+  );
+  const values = [0, 1, 2].map((i) => e.evaluate({ i }));
+  const simplified = e.simplify();
+  const normalize = (x: number) => (Object.is(x, -0) ? 0 : x);
+
+  expect(values.map(normalize)).toEqual([0, 0, 1]);
+  expect(
+    [0, 1, 2].map((i) => simplified.evaluate({ i })).map(normalize),
+  ).toEqual(values.map(normalize));
+});
+
 test("AluOp.Mod", () => {
   // Make sure that mod uses the sign of the numerator.
   const e = AluExp.mod(AluExp.i32(7), AluExp.i32(3));

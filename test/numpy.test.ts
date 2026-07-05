@@ -1851,6 +1851,17 @@ suite.each(devices)("device:%s", (device) => {
       expect(b.js()).toEqual([0, 3, 4, 5, 0]);
     });
 
+    test("slices a padded lazy nested stack", () => {
+      const row = (a: number, b: number) =>
+        np.stack([np.array(a), np.array(b)]);
+      const x = np.stack([row(1, 2), row(3, 4), row(5, 6)]);
+      const y = np.pad(x.slice([0, 2]), [
+        [1, 0],
+        [0, 0],
+      ]);
+      expect(y.slice([], [1, 2]).js()).toEqual([[0], [2], [4]]);
+    });
+
     test("pad with explicit indices", () => {
       const x = np.zeros([2, 3, 4, 5]);
       const y = np.pad(x, { 1: [0, 2], [-1]: [3, 0] });
@@ -2053,6 +2064,18 @@ suite.each(devices)("device:%s", (device) => {
       const x = np.array([1, 2, 3, 4, 5]);
       const y = np.roll(x, 20);
       expect(y.js()).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    test("rolls a 3x3 lazy nested stack over two axes", () => {
+      const row = (a: number, b: number, c: number) =>
+        np.stack([np.array(a), np.array(b), np.array(c)]);
+      const x = np.stack([row(1, 2, 3), row(4, 5, 6), row(7, 8, 9)]);
+      const y = np.roll(np.roll(x, 1, 0), 1, 1);
+      expect(y.js()).toEqual([
+        [9, 7, 8],
+        [3, 1, 2],
+        [6, 4, 5],
+      ]);
     });
   });
 

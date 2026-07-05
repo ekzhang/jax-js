@@ -806,7 +806,7 @@ export class AluExp implements FpHashable {
             return ret.simplify(cache);
           }
         }
-        // (x * A + C) / B => x * (A / B) + trunc(C / B)
+        // (x * A + y) / B => x * (A / B) + trunc(y / B)
         for (let j = 0; j < 2; j++) {
           if (
             numer.op === AluOp.Add &&
@@ -818,11 +818,23 @@ export class AluExp implements FpHashable {
               let ret = numer.src[j].src[1 - i]; // x
               if (A / B !== 1)
                 ret = AluExp.mul(ret, AluExp.const(ret.dtype, A / B));
-              ret = AluExp.add(
-                ret,
-                AluExp.idiv(numer.src[1 - j], AluExp.const(ret.dtype, B)),
-              );
-              return ret.simplify(cache);
+              const y = numer.src[1 - j];
+              const yOverB = y.divides(B);
+              if (yOverB !== null) {
+                return AluExp.add(ret, yOverB).simplify(cache);
+              } else if (
+                B > 0 &&
+                ((ret.min >= 0 && y.min >= 0) || (ret.max <= 0 && y.max <= 0))
+              ) {
+                // For trunc-toward-zero division, `trunc(q + y/B)` is not always
+                // `q + trunc(y/B)`. Counterexample: q=1, y=-1, B=2.
+                // Only split non-exact y terms when the quotient and fractional part
+                // cannot point in opposite directions.
+                return AluExp.add(
+                  ret,
+                  AluExp.idiv(y, AluExp.const(ret.dtype, B)),
+                ).simplify(cache);
+              }
             }
           }
         }
