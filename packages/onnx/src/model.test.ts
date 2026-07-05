@@ -936,3 +936,225 @@ test("should evaluate LayerNormalization", async () => {
   expect(result.Y.shape).toEqual([1, 2, 2]);
   expect(await result.Y.data()).toEqual(new Float32Array([-1, 1, -1, 1]));
 });
+
+test("should evaluate ArgMin", async () => {
+  const model = create(ModelProtoSchema, {
+    irVersion: 8n,
+    opsetImport: [create(OperatorSetIdProtoSchema, { version: 13n })],
+    graph: create(GraphProtoSchema, {
+      name: "argmin_graph",
+      input: [floatTensorInfo("X", [2, 2]), floatTensorInfo("X_ties", [2, 2])],
+      output: [
+        intTensorInfo("default_axes_keepdims", [1, 2]),
+        intTensorInfo("keepdims", [2, 1]),
+        intTensorInfo("no_keepdims", [2]),
+        intTensorInfo("negative_axis_keepdims", [2, 1]),
+        intTensorInfo("select_last_default_axes", [1, 2]),
+        intTensorInfo("select_last_keepdims", [2, 1]),
+        intTensorInfo("select_last_no_keepdims", [2]),
+        intTensorInfo("select_last_negative_axis_keepdims", [2, 1]),
+      ],
+      node: [
+        create(NodeProtoSchema, {
+          opType: "ArgMin",
+          input: ["X"],
+          output: ["default_axes_keepdims"],
+          attribute: [intAttr("keepdims", 1)],
+        }),
+        create(NodeProtoSchema, {
+          opType: "ArgMin",
+          input: ["X"],
+          output: ["keepdims"],
+          attribute: [intAttr("axis", 1), intAttr("keepdims", 1)],
+        }),
+        create(NodeProtoSchema, {
+          opType: "ArgMin",
+          input: ["X"],
+          output: ["no_keepdims"],
+          attribute: [intAttr("axis", 1), intAttr("keepdims", 0)],
+        }),
+        create(NodeProtoSchema, {
+          opType: "ArgMin",
+          input: ["X"],
+          output: ["negative_axis_keepdims"],
+          attribute: [intAttr("axis", -1), intAttr("keepdims", 1)],
+        }),
+        create(NodeProtoSchema, {
+          opType: "ArgMin",
+          input: ["X_ties"],
+          output: ["select_last_default_axes"],
+          attribute: [intAttr("keepdims", 1), intAttr("selectLastIndex", 1)],
+        }),
+        create(NodeProtoSchema, {
+          opType: "ArgMin",
+          input: ["X_ties"],
+          output: ["select_last_keepdims"],
+          attribute: [
+            intAttr("axis", 1),
+            intAttr("keepdims", 1),
+            intAttr("selectLastIndex", 1),
+          ],
+        }),
+        create(NodeProtoSchema, {
+          opType: "ArgMin",
+          input: ["X_ties"],
+          output: ["select_last_no_keepdims"],
+          attribute: [
+            intAttr("axis", 1),
+            intAttr("keepdims", 0),
+            intAttr("selectLastIndex", 1),
+          ],
+        }),
+        create(NodeProtoSchema, {
+          opType: "ArgMin",
+          input: ["X_ties"],
+          output: ["select_last_negative_axis_keepdims"],
+          attribute: [
+            intAttr("axis", -1),
+            intAttr("keepdims", 1),
+            intAttr("selectLastIndex", 1),
+          ],
+        }),
+      ],
+    }),
+  });
+
+  const onnxModel = new ONNXModel(toBinary(ModelProtoSchema, model));
+  onTestFinished(() => onnxModel.dispose());
+
+  const result = onnxModel.run({
+    X: np.array([2, 1, 3, 10]).reshape([2, 2]),
+    X_ties: np.array([2, 2, 3, 10]).reshape([2, 2]),
+  });
+
+  expect(await result.default_axes_keepdims.data()).toEqual(
+    new Int32Array([0, 0]),
+  );
+  expect(await result.keepdims.data()).toEqual(new Int32Array([1, 0]));
+  expect(await result.no_keepdims.data()).toEqual(new Int32Array([1, 0]));
+  expect(await result.negative_axis_keepdims.data()).toEqual(
+    new Int32Array([1, 0]),
+  );
+  expect(await result.select_last_default_axes.data()).toEqual(
+    new Int32Array([0, 0]),
+  );
+  expect(await result.select_last_keepdims.data()).toEqual(
+    new Int32Array([1, 0]),
+  );
+  expect(await result.select_last_no_keepdims.data()).toEqual(
+    new Int32Array([1, 0]),
+  );
+  expect(await result.select_last_negative_axis_keepdims.data()).toEqual(
+    new Int32Array([1, 0]),
+  );
+});
+
+test("should evaluate ArgMax", async () => {
+  const model = create(ModelProtoSchema, {
+    irVersion: 8n,
+    opsetImport: [create(OperatorSetIdProtoSchema, { version: 13n })],
+    graph: create(GraphProtoSchema, {
+      name: "argmax_graph",
+      input: [floatTensorInfo("X", [2, 2])],
+      output: [
+        intTensorInfo("default_axes_keepdims", [1, 2]),
+        intTensorInfo("keepdims", [2, 1]),
+        intTensorInfo("no_keepdims", [2]),
+        intTensorInfo("negative_axis_keepdims", [2, 1]),
+        intTensorInfo("select_last_default_axes", [1, 2]),
+        intTensorInfo("select_last_keepdims", [2, 1]),
+        intTensorInfo("select_last_no_keepdims", [2]),
+        intTensorInfo("select_last_negative_axis_keepdims", [2, 1]),
+      ],
+      node: [
+        create(NodeProtoSchema, {
+          opType: "ArgMax",
+          input: ["X"],
+          output: ["default_axes_keepdims"],
+          attribute: [intAttr("keepdims", 1)],
+        }),
+        create(NodeProtoSchema, {
+          opType: "ArgMax",
+          input: ["X"],
+          output: ["keepdims"],
+          attribute: [intAttr("axis", 1), intAttr("keepdims", 1)],
+        }),
+        create(NodeProtoSchema, {
+          opType: "ArgMax",
+          input: ["X"],
+          output: ["no_keepdims"],
+          attribute: [intAttr("axis", 1), intAttr("keepdims", 0)],
+        }),
+        create(NodeProtoSchema, {
+          opType: "ArgMax",
+          input: ["X"],
+          output: ["negative_axis_keepdims"],
+          attribute: [intAttr("axis", -1), intAttr("keepdims", 1)],
+        }),
+        create(NodeProtoSchema, {
+          opType: "ArgMax",
+          input: ["X"],
+          output: ["select_last_default_axes"],
+          attribute: [intAttr("keepdims", 1), intAttr("selectLastIndex", 1)],
+        }),
+        create(NodeProtoSchema, {
+          opType: "ArgMax",
+          input: ["X"],
+          output: ["select_last_keepdims"],
+          attribute: [
+            intAttr("axis", 1),
+            intAttr("keepdims", 1),
+            intAttr("selectLastIndex", 1),
+          ],
+        }),
+        create(NodeProtoSchema, {
+          opType: "ArgMax",
+          input: ["X"],
+          output: ["select_last_no_keepdims"],
+          attribute: [
+            intAttr("axis", 1),
+            intAttr("keepdims", 0),
+            intAttr("selectLastIndex", 1),
+          ],
+        }),
+        create(NodeProtoSchema, {
+          opType: "ArgMax",
+          input: ["X"],
+          output: ["select_last_negative_axis_keepdims"],
+          attribute: [
+            intAttr("axis", -1),
+            intAttr("keepdims", 1),
+            intAttr("selectLastIndex", 1),
+          ],
+        }),
+      ],
+    }),
+  });
+
+  const onnxModel = new ONNXModel(toBinary(ModelProtoSchema, model));
+  onTestFinished(() => onnxModel.dispose());
+
+  const x = np.array([2, 2, 3, 10]).reshape([2, 2]);
+  const result = onnxModel.run({ X: x });
+
+  expect(await result.default_axes_keepdims.data()).toEqual(
+    new Int32Array([1, 1]),
+  );
+  expect(await result.keepdims.data()).toEqual(new Int32Array([0, 1]));
+  expect(await result.no_keepdims.data()).toEqual(new Int32Array([0, 1]));
+  expect(await result.negative_axis_keepdims.data()).toEqual(
+    new Int32Array([0, 1]),
+  );
+  expect(await result.select_last_default_axes.data()).toEqual(
+    new Int32Array([1, 1]),
+  );
+  expect(await result.select_last_keepdims.data()).toEqual(
+    new Int32Array([1, 1]),
+  );
+  expect(await result.select_last_no_keepdims.data()).toEqual(
+    new Int32Array([1, 1]),
+  );
+  expect(await result.select_last_negative_axis_keepdims.data()).toEqual(
+    new Int32Array([1, 1]),
+  );
+});

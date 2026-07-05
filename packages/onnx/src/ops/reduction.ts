@@ -174,3 +174,49 @@ export function TopK(
   const values = np.takeAlongAxis(x, indices.ref, normAxis);
   return [values, indices];
 }
+
+export function ArgMax(
+  [xOp]: Operand[],
+  {
+    axis = 0,
+    keepdims = 1,
+    selectLastIndex = 0,
+  }: { axis?: number; keepdims?: number; selectLastIndex?: number },
+): Operand[] {
+  const x = operandToJax(xOp);
+  if (axis < -x.ndim || axis >= x.ndim) {
+    throw new Error(
+      `ArgMax: axis ${axis} is out of bounds for tensor of ndim ${x.ndim}`,
+    );
+  }
+  if (!selectLastIndex) {
+    return [np.argmax(x, axis, { keepdims: Boolean(keepdims) })];
+  }
+  const normAxis = axis < 0 ? axis + x.ndim : axis;
+  const flipped = np.flip(x, normAxis);
+  const idx = np.argmax(flipped, normAxis, { keepdims: Boolean(keepdims) });
+  return [idx.neg().add(x.shape[normAxis] - 1)];
+}
+
+export function ArgMin(
+  [xOp]: Operand[],
+  {
+    axis = 0,
+    keepdims = 1,
+    selectLastIndex = 0,
+  }: { axis?: number; keepdims?: number; selectLastIndex?: number },
+): Operand[] {
+  const x = operandToJax(xOp);
+  if (axis < -x.ndim || axis >= x.ndim) {
+    throw new Error(
+      `ArgMin: axis ${axis} is out of bounds for tensor of ndim ${x.ndim}`,
+    );
+  }
+  if (!selectLastIndex) {
+    return [np.argmin(x, axis, { keepdims: Boolean(keepdims) })];
+  }
+  const normAxis = axis < 0 ? axis + x.ndim : axis;
+  const flipped = np.flip(x, normAxis);
+  const idx = np.argmin(flipped, normAxis, { keepdims: Boolean(keepdims) });
+  return [idx.neg().add(x.shape[normAxis] - 1)];
+}
