@@ -180,8 +180,8 @@ export function ArgMax(
   {
     axis = 0,
     keepdims = 1,
-    selectLastIndex = 0,
-  }: { axis?: number; keepdims?: number; selectLastIndex?: number },
+    select_last_index = 0,
+  }: { axis?: number; keepdims?: number; select_last_index?: number },
 ): Operand[] {
   const x = operandToJax(xOp);
   if (axis < -x.ndim || axis >= x.ndim) {
@@ -189,7 +189,7 @@ export function ArgMax(
       `ArgMax: axis ${axis} is out of bounds for tensor of ndim ${x.ndim}`,
     );
   }
-  if (!selectLastIndex) {
+  if (!select_last_index) {
     return [np.argmax(x, axis, { keepdims: Boolean(keepdims) })];
   }
   const normAxis = axis < 0 ? axis + x.ndim : axis;
@@ -203,8 +203,8 @@ export function ArgMin(
   {
     axis = 0,
     keepdims = 1,
-    selectLastIndex = 0,
-  }: { axis?: number; keepdims?: number; selectLastIndex?: number },
+    select_last_index = 0,
+  }: { axis?: number; keepdims?: number; select_last_index?: number },
 ): Operand[] {
   const x = operandToJax(xOp);
   if (axis < -x.ndim || axis >= x.ndim) {
@@ -212,7 +212,7 @@ export function ArgMin(
       `ArgMin: axis ${axis} is out of bounds for tensor of ndim ${x.ndim}`,
     );
   }
-  if (!selectLastIndex) {
+  if (!select_last_index) {
     return [np.argmin(x, axis, { keepdims: Boolean(keepdims) })];
   }
   const normAxis = axis < 0 ? axis + x.ndim : axis;

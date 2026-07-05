@@ -983,7 +983,7 @@ test("should evaluate ArgMin", async () => {
           opType: "ArgMin",
           input: ["X_ties"],
           output: ["select_last_default_axes"],
-          attribute: [intAttr("keepdims", 1), intAttr("selectLastIndex", 1)],
+          attribute: [intAttr("keepdims", 1), intAttr("select_last_index", 1)],
         }),
         create(NodeProtoSchema, {
           opType: "ArgMin",
@@ -992,7 +992,7 @@ test("should evaluate ArgMin", async () => {
           attribute: [
             intAttr("axis", 1),
             intAttr("keepdims", 1),
-            intAttr("selectLastIndex", 1),
+            intAttr("select_last_index", 1),
           ],
         }),
         create(NodeProtoSchema, {
@@ -1002,7 +1002,7 @@ test("should evaluate ArgMin", async () => {
           attribute: [
             intAttr("axis", 1),
             intAttr("keepdims", 0),
-            intAttr("selectLastIndex", 1),
+            intAttr("select_last_index", 1),
           ],
         }),
         create(NodeProtoSchema, {
@@ -1012,7 +1012,7 @@ test("should evaluate ArgMin", async () => {
           attribute: [
             intAttr("axis", -1),
             intAttr("keepdims", 1),
-            intAttr("selectLastIndex", 1),
+            intAttr("select_last_index", 1),
           ],
         }),
       ],
@@ -1095,7 +1095,7 @@ test("should evaluate ArgMax", async () => {
           opType: "ArgMax",
           input: ["X"],
           output: ["select_last_default_axes"],
-          attribute: [intAttr("keepdims", 1), intAttr("selectLastIndex", 1)],
+          attribute: [intAttr("keepdims", 1), intAttr("select_last_index", 1)],
         }),
         create(NodeProtoSchema, {
           opType: "ArgMax",
@@ -1104,7 +1104,7 @@ test("should evaluate ArgMax", async () => {
           attribute: [
             intAttr("axis", 1),
             intAttr("keepdims", 1),
-            intAttr("selectLastIndex", 1),
+            intAttr("select_last_index", 1),
           ],
         }),
         create(NodeProtoSchema, {
@@ -1114,7 +1114,7 @@ test("should evaluate ArgMax", async () => {
           attribute: [
             intAttr("axis", 1),
             intAttr("keepdims", 0),
-            intAttr("selectLastIndex", 1),
+            intAttr("select_last_index", 1),
           ],
         }),
         create(NodeProtoSchema, {
@@ -1124,7 +1124,7 @@ test("should evaluate ArgMax", async () => {
           attribute: [
             intAttr("axis", -1),
             intAttr("keepdims", 1),
-            intAttr("selectLastIndex", 1),
+            intAttr("select_last_index", 1),
           ],
         }),
       ],
