@@ -376,6 +376,7 @@ const CholeskyPhase = {
 
 const CHOLESKY_BLOCK_SIZE = 16;
 const CHOLESKY_BLOCK_THRESHOLD = 256;
+const CHOLESKY_UPDATE_TILE_SIZE = 16;
 
 function choleskyUniform(
   phase: number,
@@ -394,14 +395,9 @@ function choleskyUniform(
 /**
  * Generate a Cholesky decomposition shader.
  *
- * Computes the lower triangular matrix L such that A = L * L^T for each
- * positive semi-definite matrix in the batch. Uses the Cholesky-Crout
- * algorithm which processes column-by-column.
- *
- * For each column j:
- *   1. All threads compute their row's sum in parallel and store to output
- *   2. Thread 0 computes L[j][j] = sqrt(output[j][j]) and stores to shared memory
- *   3. All threads divide their output[i][j] by L[j][j] in parallel
+ * Small matrices use the original one-pass Cholesky-Crout kernel. Larger
+ * matrices use a blocked multi-pass variant so the trailing update can run
+ * across many workgroups.
  */
 function createCholesky(device: GPUDevice, type: RoutineType): ShaderInfo[] {
   const dtype = type.inputDtypes[0];
@@ -577,16 +573,24 @@ fn main(
       return;
     }
 
-    let elems_per_batch = rows * rows;
-    let global = global_id.x + global_id.y * ${gridOffsetY * workgroupSize}u;
-    if (global >= elems_per_batch * ${batches}u) {
+    let tile_count = (rows + ${CHOLESKY_UPDATE_TILE_SIZE - 1}u) / ${CHOLESKY_UPDATE_TILE_SIZE}u;
+    let tiles_per_batch = tile_count * (tile_count + 1u) / 2u;
+    let wg_global = wg_id.x + wg_id.y * ${gridOffsetY}u;
+    if (wg_global >= tiles_per_batch * ${batches}u) {
       return;
     }
 
-    let batch = global / elems_per_batch;
-    let elem = global % elems_per_batch;
-    let row_local = elem / rows;
-    let col_local = elem % rows;
+    let batch = wg_global / tiles_per_batch;
+    let tile = wg_global % tiles_per_batch;
+    let tile_row = u32((sqrt(f32(8u * tile + 1u)) - 1.0) * 0.5);
+    let tile_col = tile - tile_row * (tile_row + 1u) / 2u;
+    let local_row = tid / ${CHOLESKY_UPDATE_TILE_SIZE}u;
+    let local_col = tid % ${CHOLESKY_UPDATE_TILE_SIZE}u;
+    let row_local = tile_row * ${CHOLESKY_UPDATE_TILE_SIZE}u + local_row;
+    let col_local = tile_col * ${CHOLESKY_UPDATE_TILE_SIZE}u + local_col;
+    if (row_local >= rows || col_local >= rows) {
+      return;
+    }
     if (row_local < col_local) {
       return;
     }
@@ -629,7 +633,10 @@ fn main(
         });
         passes.push({
           grid: calculateGrid(
-            Math.ceil((rowsBelow * rowsBelow * batches) / workgroupSize),
+            (Math.ceil(rowsBelow / CHOLESKY_UPDATE_TILE_SIZE) *
+              (Math.ceil(rowsBelow / CHOLESKY_UPDATE_TILE_SIZE) + 1) *
+              batches) /
+              2,
           ),
           uniform: choleskyUniform(
             CholeskyPhase.UpdateTrailing,

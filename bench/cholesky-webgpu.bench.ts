@@ -13,7 +13,7 @@ const devices = await init("webgpu");
 suite.skipIf(!devices.includes("webgpu"))("webgpu cholesky", async () => {
   defaultDevice("webgpu");
 
-  const inputs = [128, 256, 512, 1024].map((n) => {
+  const inputs = [128, 256, 512, 1024, 2048].map((n) => {
     const a = random.normal(random.key(n), [n, n]);
     const spd = np
       .matmul(np.matrixTranspose(a.ref), a.ref)
