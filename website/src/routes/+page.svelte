@@ -72,6 +72,12 @@
       description: "Explore principal components of a 3D point cloud.",
     },
     {
+      title: "Heat Method Geodesics",
+      href: resolve("/heat-method"),
+      description:
+        "Compute surface distances with interactive geometry processing.",
+    },
+    {
       title: "D-FINE Detection",
       href: resolve("/d-fine"),
       description: "Run an ONNX object detector locally with WebGPU.",

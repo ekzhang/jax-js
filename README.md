@@ -81,6 +81,7 @@ Demos on the jax-js website:
 - [Fluid simulation (Navier-Stokes)](https://jax-js.com/fluid-sim)
 - [Neural cellular automata](https://jax-js.com/nca-growing)
 - [Principal component analysis](https://jax-js.com/pca)
+- [Heat method for geodesic distances](https://jax-js.com/heat-method)
 - [Mandelbrot set](https://jax-js.com/mandelbrot)
 - [In-browser REPL](https://jax-js.com/repl)
 - [Benchmark suite](https://jax-js.com/bench)
