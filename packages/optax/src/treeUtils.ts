@@ -48,8 +48,15 @@ export function treeBiasCorrection(
   decay: number,
   count: np.Array,
 ): JsTree<np.Array> {
-  const correction = 1 / (1 - Math.pow(decay, count.item()));
-  return tree.map((t: np.Array) => t.mul(correction), moments);
+  // Computed in-graph rather than via count.item(): a data read throws on
+  // tracers, which made every optimizer built on bias correction (adam,
+  // adamw, ...) impossible to wrap in jit().
+  const correction = np.reciprocal(
+    np.subtract(1.0, np.power(decay, count.astype(np.float32))),
+  );
+  const result = tree.map((t: np.Array) => t.mul(correction.ref), moments);
+  correction.dispose();
+  return result;
 }
 
 /** Sum all elements across all arrays in a pytree. */
