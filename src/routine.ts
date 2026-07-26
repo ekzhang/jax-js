@@ -236,6 +236,7 @@ function runCholesky(type: RoutineType, [x]: DataArray[], [y]: DataArray[]) {
   if (n !== m)
     throw new Error(`cholesky: input must be square, got [${n}, ${m}]`);
 
+  y.fill(0);
   for (let offset = 0; offset < y.length; offset += n * n) {
     const ar = x.subarray(offset, offset + n * n);
     const out = y.subarray(offset, offset + n * n);

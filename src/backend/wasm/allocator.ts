@@ -21,7 +21,6 @@ export class WasmAllocator {
     let ptr: number;
     if (freeList && freeList.length > 0) {
       ptr = freeList.pop()!;
-      new Uint8Array(this.#memory.buffer, ptr, sizeClass).fill(0);
     } else {
       ptr = this.#bumpAlloc(sizeClass);
     }

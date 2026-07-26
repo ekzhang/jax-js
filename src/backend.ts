@@ -162,7 +162,11 @@ export interface Backend {
   /** Maximum number of arguments per dispatched kernel. */
   readonly maxArgs: number;
 
-  /** Allocate a new slot with reference count 1. */
+  /**
+   * Allocate a new slot with reference count 1.
+   *
+   * Contents are unspecified unless initialData is provided.
+   */
   malloc(size: number, initialData?: Uint8Array): Slot;
 
   /** Increment the reference count of the slot. */

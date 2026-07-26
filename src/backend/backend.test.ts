@@ -10,6 +10,7 @@ import {
   Reduction,
 } from "../alu";
 import { devices, getBackend, init } from "../backend";
+import { Routine, Routines } from "../routine";
 import { ShapeTracker, unravelAlu } from "../shape";
 import { range } from "../utils";
 
@@ -82,6 +83,38 @@ suite.each(devices)("device:%s", (device) => {
       backend.decRef(c);
     }
   });
+
+  if (device !== "webgl") {
+    test("routines initialize partially written outputs", async () => {
+      const backend = getBackend(device);
+      const bytes = (values: Float32Array) => new Uint8Array(values.buffer);
+      const input = backend.malloc(
+        4 * 4,
+        bytes(new Float32Array([4, 2, 2, 3])),
+      );
+      const output = backend.malloc(
+        4 * 4,
+        bytes(new Float32Array([9, 9, 9, 9])),
+      );
+
+      try {
+        const routine = new Routine(Routines.Cholesky, {
+          inputShapes: [[2, 2]],
+          inputDtypes: [DType.Float32],
+          outputShapes: [[2, 2]],
+          outputDtypes: [DType.Float32],
+        });
+        const exe = await backend.prepareRoutine(routine);
+        backend.dispatch(exe, [input], [output]);
+
+        const result = new Float32Array((await backend.read(output)).buffer);
+        expect(result).toEqual(new Float32Array([2, 0, 1, Math.sqrt(2)]));
+      } finally {
+        backend.decRef(input);
+        backend.decRef(output);
+      }
+    });
+  }
 
   test("can create array from index", async () => {
     const backend = getBackend(device);
