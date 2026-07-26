@@ -14,6 +14,7 @@ import {
   generalBroadcast,
   invertPermutation,
   partitionList,
+  prod,
   range,
   toposort,
   unzip2,
@@ -26,6 +27,7 @@ import {
   broadcast,
   concatenate,
   conv,
+  dot,
   flattenFun,
   flattenFunWithAux,
   flip,
@@ -667,6 +669,34 @@ function unbroadcast(x: Tracer, target: UndefPrimal): Tracer {
   return result;
 }
 
+/** Transpose a dot, treating every axis as either batch or contracting. */
+function transposeDot(ct: Tracer, known: Tracer, target: UndefPrimal): Tracer {
+  const broadcastShape = generalBroadcast(target.aval.shape, known.shape);
+  const ndim = broadcastShape.length;
+  const align = (shape: number[]) =>
+    Array(ndim - shape.length)
+      .fill(1)
+      .concat(shape);
+  const targetShape = align(target.aval.shape);
+  const knownShape = align(known.shape);
+  const contractingDims = range(ndim).filter((axis) => targetShape[axis] === 1);
+  const batchDims = range(ndim).filter((axis) => targetShape[axis] !== 1);
+  const perm = [...batchDims, ...contractingDims];
+  const dotShape = (shape: number[]) => [
+    ...batchDims.map((axis) => shape[axis]),
+    prod(contractingDims.map((axis) => shape[axis])),
+  ];
+
+  return dot(
+    // ct -> [...ct, reduceSize] -> [...batch dims, contracting dims (1 in target)]
+    transpose(broadcast(ct, broadcastShape, [-1]), perm).reshape(
+      dotShape(broadcastShape),
+    ),
+    // known -> [...batch dims, contracting dims (1 in target)]
+    transpose(known.reshape(knownShape), perm).reshape(dotShape(knownShape)),
+  ).reshape(target.aval.shape); // any inserted axes are size 1
+}
+
 class NonlinearError extends TypeError {
   constructor(primitive: Primitive) {
     super(`Nonlinear operation in backward pass for ${primitive}`);
@@ -735,12 +765,9 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
   [Primitive.Dot]([ct], [x, y]) {
     if (x instanceof UndefPrimal === y instanceof UndefPrimal)
       throw new NonlinearError(Primitive.Dot);
-    const axisSize = generalBroadcast(x.aval.shape, y.aval.shape).slice(-1)[0];
-    ct = broadcast(ct, ct.shape.concat(axisSize), [-1]); // Undo the contraction.
-    return [
-      x instanceof UndefPrimal ? unbroadcast(mul(ct, y as Tracer), x) : null,
-      y instanceof UndefPrimal ? unbroadcast(mul(x as Tracer, ct), y) : null,
-    ];
+    return x instanceof UndefPrimal
+      ? [transposeDot(ct, y as Tracer, x), null]
+      : [null, transposeDot(ct, x as Tracer, y as UndefPrimal)];
   },
   [Primitive.Conv]([ct], [lhs, rhs], params) {
     if (lhs instanceof UndefPrimal === rhs instanceof UndefPrimal)

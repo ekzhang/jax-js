@@ -72,6 +72,50 @@ suite("jax.makeJaxpr()", () => {
     `);
   });
 
+  // Regression test for https://github.com/ekzhang/jax-js/issues/150
+  //
+  // Backprop should never cause a 'dot' rule to be run as a broadcast,
+  // multiply and reduce[sum], as that may materialize a large [M, N, K]
+  // intermediate array in some cases, causing OOM.
+  test("grad of dot transposes to dots", () => {
+    const x = np.ones([2, 3]);
+    const w = np.ones([3, 4]);
+    const f = (xx: np.Array, ww: np.Array) => np.sum(np.dot(xx, ww));
+    const { jaxpr } = makeJaxpr(grad(f, { argnums: [0, 1] }))(x, w);
+
+    try {
+      expect(jaxpr.consts).toEqual([]);
+      expect(jaxpr.toString()).toMatchInlineSnapshot(`
+        "{ lambda a:float32[2,3], b:float32[3,4] .
+          let c:float32[4,3] = transpose [ perm=1,0 ] b
+              d:float32[2,1,3] = reshape [ shape=2,1,3 ] a
+              e:float32[1,4,3] = reshape [ shape=1,4,3 ] c
+              f:float32[2,4] = broadcast [ shape=2,4
+                                           axis=0,1 ] 1
+              g:float32[2,4,3] = broadcast [ shape=2,4,3
+                                             axis=2 ] f
+              h:float32[2,3,4] = transpose [ perm=0,2,1 ] g
+              i:float32[1,3,4] = transpose [ perm=0,2,1 ] e
+              j:float32[2,3] = dot h i
+              k:float32[2,1,3] = reshape [ shape=2,1,3 ] j
+              l:float32[2,3] = reshape [ shape=2,3 ] k
+              m:float32[2,4,3] = broadcast [ shape=2,4,3
+                                             axis=2 ] f
+              n:float32[4,3,2] = transpose [ perm=1,2,0 ] m
+              o:float32[1,3,2] = transpose [ perm=1,2,0 ] d
+              p:float32[4,3] = dot n o
+              q:float32[1,4,3] = reshape [ shape=1,4,3 ] p
+              r:float32[4,3] = reshape [ shape=4,3 ] q
+              s:float32[3,4] = transpose [ perm=1,0 ] r
+          in ( l, s ) }"
+      `);
+    } finally {
+      jaxpr.dispose();
+      x.dispose();
+      w.dispose();
+    }
+  });
+
   test("can flatten() nested Jaxprs", () => {
     const f = (x: np.Array) => {
       const y = x.ref.add(2);
