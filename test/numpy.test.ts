@@ -2747,6 +2747,26 @@ suite.each(devices)("device:%s", (device) => {
         expect(dy.js()).toEqual([20, 30, 10]);
       });
 
+      test("works with jvp for batched inputs", () => {
+        const x = np.array([
+          [3, 1, 2],
+          [4, 6, 5],
+        ]);
+        const dx = np.array([
+          [10, 20, 30],
+          [40, 60, 50],
+        ]);
+        const [y, dy] = jvp((x) => np.sort(x, 1), [x], [dx]);
+        expect(y.js()).toEqual([
+          [1, 2, 3],
+          [4, 5, 6],
+        ]);
+        expect(dy.js()).toEqual([
+          [20, 30, 10],
+          [40, 50, 60],
+        ]);
+      });
+
       // Won't work until scatter is implemented.
       test.fails("works with grad", () => {
         const x = np.array([3, 1, 4, 2]);

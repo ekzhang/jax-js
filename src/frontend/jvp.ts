@@ -6,7 +6,7 @@ import {
   map as treeMap,
   unflatten as treeUnflatten,
 } from "../tree";
-import { checkAxis, unzip2, zip } from "../utils";
+import { checkAxis, range, rep, unzip2, zip } from "../utils";
 import { arange, eye, pureArray, tril, triu, zerosLike } from "./array";
 import {
   AbstractValue,
@@ -144,6 +144,18 @@ function zeroTangentsJvp<P extends Primitive>(primitive: P): JvpRule<P> {
     const ys = bind(primitive, primals, params);
     return [ys, ys.map((y) => zerosLike(y.ref))];
   };
+}
+
+/** Gather values along the final axis while preserving leading coordinates. */
+function takeAlongLastAxis(x: Tracer, indices: Tracer): Tracer {
+  const coords: Tracer[] = [];
+  for (let axis = 0; axis < x.ndim - 1; axis++) {
+    const shape = rep(x.ndim, 1);
+    shape[axis] = x.shape[axis];
+    coords.push(arange(x.shape[axis]).reshape(shape));
+  }
+  coords.push(indices);
+  return gather(x, coords, range(x.ndim), 0);
 }
 
 /** Compute `a @ b.T`, batched to last two axes. */
@@ -316,13 +328,13 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
   [Primitive.Sort]([x], [dx]) {
     // Propagate both primals and derivatives along the sorted order.
     const [y, idx] = argsort(x);
-    return [[y], [gather(dx, [idx], [-1], -1)]];
+    return [[y], [takeAlongLastAxis(dx, idx)]];
   },
   [Primitive.Argsort]([x], [dx]) {
     const [y, idx] = argsort(x);
     return [
       [y, idx.ref],
-      [gather(dx, [idx.ref], [-1], -1), zerosLike(idx)],
+      [takeAlongLastAxis(dx, idx.ref), zerosLike(idx)],
     ];
   },
   [Primitive.TriangularSolve]([a, b], [da, db], { unitDiagonal }) {
