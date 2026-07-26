@@ -775,6 +775,7 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   [Primitive.Pad]: reshapeJit((st, { width }) => st.pad(width)),
   [Primitive.Sort]: routineNoJit(),
   [Primitive.Argsort]: routineNoJit(),
+  [Primitive.Scatter]: routineNoJit(),
   [Primitive.TriangularSolve]: routineNoJit(),
   [Primitive.Cholesky]: routineNoJit(),
   [Primitive.LU]: routineNoJit(),

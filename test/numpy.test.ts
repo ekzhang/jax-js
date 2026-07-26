@@ -2767,12 +2767,28 @@ suite.each(devices)("device:%s", (device) => {
         ]);
       });
 
-      // Won't work until scatter is implemented.
-      test.fails("works with grad", () => {
+      test("works with grad", () => {
         const x = np.array([3, 1, 4, 2]);
         const f = (x: np.Array) => np.sort(x).slice([0, 2]).sum();
         const dx = grad(f)(x);
         expect(dx.js()).toEqual([0, 1, 0, 1]);
+      });
+
+      test("works with grad for batched inputs", () => {
+        const weights = np.array([
+          [10, 20, 30],
+          [40, 50, 60],
+        ]);
+        const dx = grad((x: np.Array) => np.sort(x, 1).mul(weights).sum())(
+          np.array([
+            [3, 1, 2],
+            [4, 6, 5],
+          ]),
+        );
+        expect(dx.js()).toEqual([
+          [30, 10, 20],
+          [40, 60, 50],
+        ]);
       });
 
       test("works inside a jit function", () => {
@@ -2894,6 +2910,87 @@ suite.each(devices)("device:%s", (device) => {
         [90, 70],
       ]);
     });
+
+    if (device !== "webgl") {
+      test("works with grad and repeated indices", () => {
+        const x = np.arange(10).astype(np.float32).reshape([5, 2]);
+        const indices = np.array([3, 0, 3, 1], { dtype: np.int32 });
+        const dx = grad((x: np.Array) => np.take(x, indices, 0).sum())(x);
+        expect(dx).toBeAllclose([
+          [1, 1],
+          [1, 1],
+          [0, 0],
+          [2, 2],
+          [0, 0],
+        ]);
+      });
+
+      test("works with grad inside jit", () => {
+        const f = jit(
+          grad((x: np.Array) =>
+            np
+              .take(x, np.array([3, 1, 3], { dtype: np.int32 }), 0)
+              .mul(2)
+              .sum(),
+          ),
+        );
+        const dx = f(np.zeros([5, 2]));
+        expect(dx).toBeAllclose([
+          [0, 0],
+          [2, 2],
+          [0, 0],
+          [4, 4],
+          [0, 0],
+        ]);
+      });
+
+      test("vmaps gradients with mapped indices", () => {
+        const f = vmap(
+          grad((x: np.Array, indices: np.Array) => np.take(x, indices).sum()),
+          [0, 0],
+        );
+        const dx = f(
+          np.ones([2, 5]),
+          np.array(
+            [
+              [0, 0, 2],
+              [1, 3, 3],
+            ],
+            { dtype: np.int32 },
+          ),
+        );
+        expect(dx).toBeAllclose([
+          [2, 0, 1, 0, 0],
+          [0, 1, 0, 2, 0],
+        ]);
+      });
+
+      test("vmaps gradients with shared indices", () => {
+        const indices = np.array([0, 0, 2], { dtype: np.int32 });
+        const f = vmap(
+          grad((x: np.Array) => np.take(x, indices).sum()),
+          0,
+        );
+        const dx = f(np.ones([2, 5]));
+        expect(dx).toBeAllclose([
+          [2, 0, 1, 0, 0],
+          [2, 0, 1, 0, 0],
+        ]);
+      });
+
+      if (device === "cpu" || device === "webgpu") {
+        test("supports float16 gradients", () => {
+          const indices = np.array([1, 1, 3], { dtype: np.int32 });
+          const dx = grad((x: np.Array) =>
+            np
+              .take(x, indices)
+              .mul(np.array([0.5, 1.25, 2], { dtype: np.float16 }))
+              .sum(),
+          )(np.zeros([4], { dtype: np.float16 }));
+          expect(dx).toBeAllclose([0, 1.75, 0, 2]);
+        });
+      }
+    }
   });
 
   suite("jax.numpy.append()", () => {
@@ -2987,6 +3084,25 @@ suite.each(devices)("device:%s", (device) => {
       const y = np.takeAlongAxis(x, indices);
       expect(y.js()).toEqual([[20], [40]]);
     });
+
+    if (device !== "webgl") {
+      test("works with grad and repeated indices", () => {
+        const indices = np.array(
+          [
+            [2, 0],
+            [1, 1],
+          ],
+          { dtype: np.int32 },
+        );
+        const dx = grad((x: np.Array) => np.takeAlongAxis(x, indices, 1).sum())(
+          np.zeros([2, 3]),
+        );
+        expect(dx).toBeAllclose([
+          [1, 0, 1],
+          [0, 2, 0],
+        ]);
+      });
+    }
 
     test("rejects rank mismatches", () => {
       expect(() => np.takeAlongAxis(np.ones([2, 3]), np.ones([2]), 1)).toThrow(

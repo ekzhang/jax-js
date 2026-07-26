@@ -1174,6 +1174,7 @@ export class Array extends Tracer {
       },
       [Primitive.Sort]: Array.#routine(Primitive.Sort),
       [Primitive.Argsort]: Array.#routine(Primitive.Argsort),
+      [Primitive.Scatter]: Array.#routine(Primitive.Scatter),
       [Primitive.TriangularSolve]: Array.#routine(Primitive.TriangularSolve),
       [Primitive.Cholesky]: Array.#routine(Primitive.Cholesky),
       [Primitive.LU]: Array.#routine(Primitive.LU),

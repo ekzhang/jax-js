@@ -42,6 +42,12 @@ export enum Routines {
   Argsort = "Argsort",
 
   /**
+   * Scatter updates into a zero-filled output, either replacing or adding at
+   * each destination according to `ScatterOp`.
+   */
+  Scatter = "Scatter",
+
+  /**
    * Solve a triangular system of equations.
    *
    * The first batch of inputs `A` should be of shape `[..., N, N]` and upper
@@ -95,6 +101,20 @@ export enum Routines {
   Fft = "Fft",
 }
 
+/** Operation applied when scattering an update into its destination. */
+export enum ScatterOp {
+  Update = "update",
+  Add = "add",
+}
+
+export interface ScatterParams {
+  op: ScatterOp;
+  shape: number[];
+  axis: number[];
+  outDim: number;
+  uniqueIndices: boolean;
+}
+
 export interface RoutineType {
   inputShapes: number[][];
   inputDtypes: DType[];
@@ -122,6 +142,8 @@ export function runCpuRoutine(
       return runSort(type, inputAr, outputAr);
     case Routines.Argsort:
       return runArgsort(type, inputAr, outputAr);
+    case Routines.Scatter:
+      return runScatter(type, inputAr, outputAr, routine.params);
     case Routines.TriangularSolve:
       return runTriangularSolve(type, inputAr, outputAr, routine.params);
     case Routines.Cholesky:
@@ -145,9 +167,12 @@ const Routines = ${JSON.stringify(Routines)};
 const ${byteWidth.name} = ${byteWidth.toString()};
 const ${isFloatDtype.name} = ${isFloatDtype.toString()};
 const ${dtypedArray.name} = ${dtypedArray.toString()};
+const ScatterOp = ${JSON.stringify(ScatterOp)};
 ${runCpuRoutine.toString()}
 ${runSort.toString()}
 ${runArgsort.toString()}
+${shapeStrides.toString()}
+${runScatter.toString()}
 ${runTriangularSolve.toString()}
 ${runCholesky.toString()}
 ${runLU.toString()}
@@ -185,6 +210,88 @@ function runArgsort(type: RoutineType, [x]: DataArray[], [y, yi]: DataArray[]) {
       return x === y ? 0 : x < y ? -1 : 1;
     });
     for (let i = 0; i < n; i++) out[i] = ar[outi[i]];
+  }
+}
+
+function shapeStrides(shape: number[]): number[] {
+  const strides = new Array(shape.length);
+  let stride = 1;
+  for (let i = shape.length - 1; i >= 0; i--) {
+    strides[i] = stride;
+    stride *= shape[i];
+  }
+  return strides;
+}
+
+function runScatter(
+  type: RoutineType,
+  [updates, ...indices]: DataArray[],
+  [output]: DataArray[],
+  {
+    op,
+    shape: outputShape,
+    axis: indexedAxes,
+    outDim,
+    uniqueIndices,
+  }: ScatterParams,
+) {
+  output.fill(0);
+  const accumulate = op !== ScatterOp.Update && !uniqueIndices;
+
+  // Updates have the non-indexed output dimensions, with the broadcasted
+  // index dimensions inserted at outDim.
+  const updateShape = type.inputShapes[0];
+  const indexShapes = type.inputShapes.slice(1);
+  const indexRank = Math.max(...indexShapes.map((s) => s.length));
+
+  const updateStrides = shapeStrides(updateShape);
+  const outputStrides = shapeStrides(outputShape);
+  const indexStrides = indexShapes.map(shapeStrides);
+  const outputAxisToIndex = outputShape.map((_, d) => indexedAxes.indexOf(d));
+  const freeUpdateDims = updateShape
+    .map((_, i) => i)
+    .filter((i) => i < outDim || i >= outDim + indexRank);
+
+  // Translate every update coordinate into its destination output coordinate.
+  for (let i = 0; i < updates.length; i++) {
+    let outputIndex = 0;
+    let valid = true;
+    let freeDim = 0;
+    for (let outputAxis = 0; outputAxis < outputShape.length; outputAxis++) {
+      const indexInput = outputAxisToIndex[outputAxis];
+      let coord: number;
+      if (indexInput === -1) {
+        const updateDim = freeUpdateDims[freeDim++];
+        coord =
+          Math.floor(i / updateStrides[updateDim]) % updateShape[updateDim];
+      } else {
+        const indexShape = indexShapes[indexInput];
+        const firstUpdateDim = outDim + indexRank - indexShape.length;
+        let indexOffset = 0;
+        for (let j = 0; j < indexShape.length; j++) {
+          if (indexShape[j] === 1) continue;
+          const updateDim = firstUpdateDim + j;
+          const updateCoord =
+            Math.floor(i / updateStrides[updateDim]) % updateShape[updateDim];
+          indexOffset += updateCoord * indexStrides[indexInput][j];
+        }
+        coord = indices[indexInput][indexOffset];
+      }
+      if (coord < 0 || coord >= outputShape[outputAxis]) {
+        valid = false;
+        break;
+      }
+      outputIndex += coord * outputStrides[outputAxis];
+    }
+    if (!valid) continue;
+
+    if (accumulate && type.inputDtypes[0] === DType.Bool) {
+      output[outputIndex] |= updates[i];
+    } else if (accumulate) {
+      output[outputIndex] += updates[i];
+    } else {
+      output[outputIndex] = updates[i];
+    }
   }
 }
 

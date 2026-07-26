@@ -10,8 +10,15 @@ import {
 } from "./codegen";
 import { DType, isFloatDtype } from "../../alu";
 import { UnsupportedRoutineError } from "../../backend";
-import { Routine, Routines, RoutineType } from "../../routine";
-import { findPow2, prod } from "../../utils";
+import {
+  Routine,
+  Routines,
+  RoutineType,
+  ScatterOp,
+  type ScatterParams,
+} from "../../routine";
+import { View } from "../../shape";
+import { findPow2, prod, range } from "../../utils";
 
 type BitonicSortPass = {
   kind: "sort" | "merge"; // sort = full sort (stages 0..k), merge is only merge steps
@@ -267,6 +274,231 @@ function createArgsort(device: GPUDevice, type: RoutineType): ShaderInfo[] {
   const n = shape[shape.length - 1];
   const batches = prod(shape.slice(0, -1));
   return bitonicSortShader(device, dtype, n, batches, true);
+}
+
+function wgslCoordinate(linearIndex: string, view: View, axis: number): string {
+  if (view.shape[axis] <= 1) return "0u";
+  const stride = view.strides[axis];
+  const divided = stride === 1 ? linearIndex : `(${linearIndex} / ${stride}u)`;
+  return `(${divided} % ${view.shape[axis]}u)`;
+}
+
+function wgslBroadcastIndex(
+  linearIndex: string,
+  updateView: View,
+  indexView: View,
+  outDim: number,
+  indexRank: number,
+): string {
+  const firstUpdateDim = outDim + indexRank - indexView.ndim;
+  const terms: string[] = [];
+  for (let i = 0; i < indexView.ndim; i++) {
+    const stride = indexView.strides[i];
+    if (stride === 0) continue;
+    const coord = wgslCoordinate(linearIndex, updateView, firstUpdateDim + i);
+    terms.push(stride === 1 ? coord : `(${coord} * ${stride}u)`);
+  }
+  return terms.length === 0 ? "0u" : terms.join(" + ");
+}
+
+type ScatterUpdateSource = {
+  statement: string;
+  helpers: string;
+};
+
+/**
+ * Generate the update statement for scatter-add.
+ *
+ * WGSL only has native integer atomics. Float32 uses a compare-exchange loop,
+ * while float16 updates one lane of a packed u32 with the same technique.
+ */
+function scatterAddWgsl(dtype: DType): ScatterUpdateSource {
+  switch (dtype) {
+    case DType.Float32:
+      return {
+        statement: "atomic_add_f32(&output[output_index], updates[global]);",
+        helpers: `
+fn atomic_add_f32(address: ptr<storage, atomic<u32>, read_write>, value: f32) {
+  var old_bits = atomicLoad(address);
+  loop {
+    let new_bits = bitcast<u32>(bitcast<f32>(old_bits) + value);
+    let result = atomicCompareExchangeWeak(address, old_bits, new_bits);
+    if (result.exchanged) {
+      break;
+    }
+    old_bits = result.old_value;
+  }
+}`,
+      };
+    case DType.Float16:
+      return {
+        statement: `
+  atomic_add_f16(
+    &output[output_index / 2u],
+    output_index % 2u != 0u,
+    updates[global],
+  );`.trim(),
+        helpers: `
+fn atomic_add_f16(
+  address: ptr<storage, atomic<u32>, read_write>,
+  high: bool,
+  value: f16,
+) {
+  var old_bits = atomicLoad(address);
+  loop {
+    var pair = unpack2x16float(old_bits);
+    if (high) {
+      pair.y += f32(value);
+    } else {
+      pair.x += f32(value);
+    }
+    let new_bits = pack2x16float(pair);
+    let result = atomicCompareExchangeWeak(address, old_bits, new_bits);
+    if (result.exchanged) {
+      break;
+    }
+    old_bits = result.old_value;
+  }
+}`,
+      };
+    case DType.Uint32:
+    case DType.Int32:
+      return {
+        statement: "atomicAdd(&output[output_index], updates[global]);",
+        helpers: "",
+      };
+    case DType.Bool:
+      return {
+        statement: "atomicOr(&output[output_index], updates[global]);",
+        helpers: "",
+      };
+    default:
+      throw new Error(`Unsupported atomic Scatter dtype for WebGPU: ${dtype}`);
+  }
+}
+
+function createScatter(
+  device: GPUDevice,
+  type: RoutineType,
+  {
+    op,
+    shape: outputShape,
+    axis: indexedAxes,
+    outDim,
+    uniqueIndices,
+  }: ScatterParams,
+): ShaderInfo[] {
+  const dtype = type.inputDtypes[0];
+  const updateView = View.create(type.inputShapes[0]);
+  const indexViews = type.inputShapes
+    .slice(1)
+    .map((shape) => View.create(shape));
+  const indexRank = Math.max(...indexViews.map((view) => view.ndim));
+  const updateCount = updateView.size;
+  const elementType = dtypeToWgsl(dtype, true);
+  const needsF16 = dtype === DType.Float16;
+  if (needsF16 && !device.features.has("shader-f16")) {
+    throw new Error("WebGPU device does not support shader-f16 feature");
+  }
+
+  // Updates have the free output dimensions, with the broadcasted index
+  // dimensions inserted at outDim.
+  const freeUpdateDims = [
+    ...range(outDim),
+    ...range(outDim + indexRank, updateView.ndim),
+  ];
+
+  // Each index input is right-aligned within the broadcasted index dimensions.
+  const indexLoads = indexViews.map((indexView, i) => {
+    const indexOffset = wgslBroadcastIndex(
+      "global",
+      updateView,
+      indexView,
+      outDim,
+      indexRank,
+    );
+    return `  let scatter_index_${i} = i32(index_${i}[${indexOffset}]);`;
+  });
+  const bounds = indexedAxes.map(
+    (outputAxis, i) =>
+      `scatter_index_${i} < 0 || scatter_index_${i} >= ${outputShape[outputAxis]}`,
+  );
+
+  const outputView = View.create(outputShape);
+  // Indexed output axes come from index buffers; all others come directly from
+  // the corresponding update coordinate.
+  let freeDim = 0;
+  const outputTerms = range(outputShape.length).map((outputAxis) => {
+    const indexInput = indexedAxes.indexOf(outputAxis);
+    let coord: string;
+    if (indexInput === -1) {
+      coord = wgslCoordinate("global", updateView, freeUpdateDims[freeDim++]);
+    } else {
+      coord = `u32(scatter_index_${indexInput})`;
+    }
+    return outputView.strides[outputAxis] === 1
+      ? coord
+      : `(${coord} * ${outputView.strides[outputAxis]}u)`;
+  });
+  const outputIndex = outputTerms.join(" + ");
+
+  const atomicAdd = op === ScatterOp.Add && !uniqueIndices;
+  const usesSignedAtomics = dtype === DType.Int32 || dtype === DType.Bool;
+  const outputStorageType = atomicAdd
+    ? `atomic<${usesSignedAtomics ? "i32" : "u32"}>`
+    : elementType;
+  const updateSource = atomicAdd
+    ? scatterAddWgsl(dtype)
+    : {
+        statement: "output[output_index] = updates[global];",
+        helpers: "",
+      };
+
+  const maxThreads = device.limits.maxComputeWorkgroupSizeX;
+  const dispatchSize = Math.max(updateCount, 1);
+  const workgroupSize = findPow2(
+    Math.min(dispatchSize, maxThreads),
+    maxThreads,
+  );
+  const code = `
+${needsF16 ? "enable f16;" : ""}
+${headerWgsl}
+${updateSource.helpers}
+
+@group(0) @binding(0) var<storage, read> updates: array<${elementType}>;
+${indexViews
+  .map(
+    (_, i) =>
+      `@group(0) @binding(${i + 1}) var<storage, read> index_${i}: array<${dtypeToWgsl(type.inputDtypes[i + 1], true)}>;`,
+  )
+  .join("\n")}
+@group(0) @binding(${type.inputShapes.length}) var<storage, read_write> output: array<${outputStorageType}>;
+
+@compute @workgroup_size(${workgroupSize})
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+  let global = global_id.x + global_id.y * ${gridOffsetY * workgroupSize}u;
+  if (global >= ${updateCount}u) {
+    return;
+  }
+${indexLoads.join("\n")}
+  if (${bounds.join(" || ")}) {
+    return;
+  }
+  let output_index = ${outputIndex};
+  ${updateSource.statement}
+}
+`.trim();
+
+  return [
+    {
+      code,
+      numInputs: type.inputShapes.length,
+      numOutputs: 1,
+      hasUniform: false,
+      clearOutputs: true,
+      passes: [{ grid: calculateGrid(Math.ceil(updateCount / workgroupSize)) }],
+    },
+  ];
 }
 
 /**
@@ -1128,6 +1360,8 @@ export function createRoutineShader(
       return createSort(device, routine.type);
     case Routines.Argsort:
       return createArgsort(device, routine.type);
+    case Routines.Scatter:
+      return createScatter(device, routine.type, routine.params);
     case Routines.TriangularSolve:
       return createTriangularSolve(device, routine.type, routine.params);
     case Routines.Cholesky:

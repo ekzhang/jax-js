@@ -44,6 +44,7 @@ import {
   PrimitiveParams,
   reciprocal,
   reduce,
+  scatter,
   sin,
   sqrt,
   Trace,
@@ -155,7 +156,7 @@ function takeAlongLastAxis(x: Tracer, indices: Tracer): Tracer {
     coords.push(arange(x.shape[axis]).reshape(shape));
   }
   coords.push(indices);
-  return gather(x, coords, range(x.ndim), 0);
+  return gather(x, coords, range(x.ndim), 0, true);
 }
 
 /** Compute `a @ b.T`, batched to last two axes. */
@@ -310,13 +311,14 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
   [Primitive.Concatenate]: linearTangentsJvp(Primitive.Concatenate),
   [Primitive.Split]: linearTangentsJvp(Primitive.Split),
   [Primitive.RandomBits]: zeroTangentsJvp(Primitive.RandomBits),
-  [Primitive.Gather]([x, ...indices], [dx, ..._], { axis, outDim }) {
+  [Primitive.Gather]([x, ...indices], [dx, ...dindices], params) {
     // d(gather(x, indices)) = gather(dx, indices).
     // Note: We ignore the tangents for indices, since they are not differentiable.
-    const indicesRef = indices.map((t) => t.ref);
+    dindices.forEach((index) => index.dispose());
+    const tangentIndices = indices.map((index) => index.ref);
     return [
-      [gather(x, indices, axis, outDim)],
-      [gather(dx, indicesRef, axis, outDim)],
+      bind(Primitive.Gather, [x, ...indices], params),
+      bind(Primitive.Gather, [dx, ...tangentIndices], params),
     ];
   },
   [Primitive.Transpose]: linearTangentsJvp(Primitive.Transpose),
@@ -335,6 +337,14 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     return [
       [y, idx.ref],
       [takeAlongLastAxis(dx, idx.ref), zerosLike(idx)],
+    ];
+  },
+  [Primitive.Scatter]([updates, ...indices], [dupdates, ...dindices], params) {
+    dindices.forEach((index) => index.dispose());
+    const tangentIndices = indices.map((index) => index.ref);
+    return [
+      [scatter(updates, indices, params)],
+      [scatter(dupdates, tangentIndices, params)],
     ];
   },
   [Primitive.TriangularSolve]([a, b], [da, db], { unitDiagonal }) {

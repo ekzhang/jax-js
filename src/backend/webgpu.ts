@@ -547,6 +547,10 @@ function pipelineSubmit(
       );
     }
 
+    if (shader.clearOutputs) {
+      for (const output of outputs) commandEncoder.clearBuffer(output);
+    }
+
     const filteredPasses = shader.passes.filter(({ grid }) => prod(grid) > 0);
     if (filteredPasses.length === 0) continue; // No work to do.
 

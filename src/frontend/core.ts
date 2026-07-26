@@ -1,7 +1,7 @@
 /** @file Core library internals and interpreter stack, based on Autodidax. */
 
 import { AluGroup, AluOp, DType, isFloatDtype, promoteTypes } from "../alu";
-import { Routines } from "../routine";
+import { Routines, type ScatterParams } from "../routine";
 import { type Pair } from "../shape";
 import {
   JsTreeDef,
@@ -90,6 +90,7 @@ export enum Primitive {
   // Routines (custom lowering)
   Sort = "sort", // sort(x, axis=-1), unstable
   Argsort = "argsort", // argsort(x, axis=-1), stable
+  Scatter = "scatter",
   TriangularSolve = "triangular_solve", // A is upper triangular, A @ X.T = B.T
   Cholesky = "cholesky", // A is positive-definite, A = L @ L^T
   LU = "lu", // LU decomposition with partial pivoting
@@ -117,13 +118,18 @@ interface PrimitiveParamsImpl extends Record<Primitive, Record<string, any>> {
   [Primitive.Concatenate]: { axis: number };
   [Primitive.Split]: { axis: number; sizes: number[] };
   [Primitive.RandomBits]: { shape: number[]; mode: "xor" | 0 | 1 };
-  [Primitive.Gather]: { axis: number[]; outDim: number };
+  [Primitive.Gather]: {
+    axis: number[];
+    outDim: number;
+    uniqueIndices: boolean;
+  };
   [Primitive.Transpose]: { perm: number[] };
   [Primitive.Broadcast]: { shape: number[]; axis: number[] };
   [Primitive.Reshape]: { shape: number[] };
   [Primitive.Flip]: { axis: number[] };
   [Primitive.Shrink]: { slice: Pair[] };
   [Primitive.Pad]: { width: Pair[] };
+  [Primitive.Scatter]: ScatterParams;
   [Primitive.TriangularSolve]: { unitDiagonal: boolean };
   [Primitive.JacobiEigh]: { maxSweeps: number; tolerance: number };
   [Primitive.Fft]: { factors: number[]; inverse: boolean };
@@ -148,6 +154,7 @@ export enum CompareOp {
 export const routinePrimitives = new Map([
   [Primitive.Sort, Routines.Sort],
   [Primitive.Argsort, Routines.Argsort],
+  [Primitive.Scatter, Routines.Scatter],
   [Primitive.TriangularSolve, Routines.TriangularSolve],
   [Primitive.Cholesky, Routines.Cholesky],
   [Primitive.LU, Routines.LU],
@@ -381,30 +388,49 @@ export function randomBits(
   return bind1(Primitive.RandomBits, [k0, k1], { shape, mode });
 }
 
-export function gather(
-  x: TracerValue,
-  indices: TracerValue[],
-  axis: number[], // one for each index
+function normalizeGatherIndexing(
+  operandNdim: number,
+  indexCount: number,
+  axis: number[],
   outDim: number,
-) {
-  // Evaluate advanced indexing x[:, ...indices, :], with the index dimensions
-  // starting at axis `outDim` in the output.
-  if (indices.length === 0) {
+): [number[], number] {
+  if (indexCount === 0) {
     throw new Error("gather() requires at least one index");
   }
-  if (!Array.isArray(axis) || axis.length !== indices.length) {
+  if (!Array.isArray(axis) || axis.length !== indexCount) {
     throw new Error(
-      `Invalid gather() axis: expected ${indices.length} axes, got ${JSON.stringify(axis)}`,
+      `Invalid gather() axis: expected ${indexCount} axes, got ${JSON.stringify(axis)}`,
     );
   }
-  axis = axis.map((a) => checkAxis(a, ndim(x)));
+  axis = axis.map((a) => checkAxis(a, operandNdim));
   if (new Set(axis).size !== axis.length) {
     throw new Error(
       `Invalid gather() axis: duplicate axes ${JSON.stringify(axis)}`,
     );
   }
-  outDim = checkAxis(outDim, ndim(x) - axis.length + 1);
-  return bind1(Primitive.Gather, [x, ...indices], { axis, outDim });
+  return [axis, checkAxis(outDim, operandNdim - axis.length + 1)];
+}
+
+export function gather(
+  x: TracerValue,
+  indices: TracerValue[],
+  axis: number[], // one for each index
+  outDim: number,
+  uniqueIndices: boolean = false,
+) {
+  // Evaluate advanced indexing x[:, ...indices, :], with the index dimensions
+  // starting at axis `outDim` in the output.
+  [axis, outDim] = normalizeGatherIndexing(
+    ndim(x),
+    indices.length,
+    axis,
+    outDim,
+  );
+  return bind1(Primitive.Gather, [x, ...indices], {
+    axis,
+    outDim,
+    uniqueIndices,
+  });
 }
 
 export function transpose(x: TracerValue, perm?: number[]) {
@@ -576,6 +602,14 @@ export function argsort(x: TracerValue) {
   const nd = ndim(x);
   if (nd === 0) throw new Error("argsort: requires at least 1D input");
   return bind(Primitive.Argsort, [x]);
+}
+
+export function scatter(
+  updates: TracerValue,
+  indices: TracerValue[],
+  params: ScatterParams,
+) {
+  return bind1(Primitive.Scatter, [updates, ...indices], params);
 }
 
 export function bind1<P extends Primitive>(

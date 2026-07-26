@@ -770,6 +770,35 @@ function vectorizedUnopAbstractEval([x]: ShapedArray[]) {
   return [ShapedArray.fromAval(x)];
 }
 
+/** Shape for the output of a gather operation. */
+function gatherShape(
+  operandShape: number[],
+  indices: ShapedArray[],
+  { axis, outDim }: { axis: number[]; outDim: number },
+) {
+  for (const a of indices) {
+    if (a.dtype !== DType.Int32 && a.dtype !== DType.Uint32) {
+      throw new TypeError(`indices must be Int32 or Uint32, got ${a.dtype}`);
+    }
+  }
+  if (axis.length !== indices.length)
+    throw new TypeError(`got ${axis} axes but ${indices.length} indices`);
+  if (indices.length === 0) throw new TypeError(`must have at least one index`);
+  if (axis.some((a) => a < 0 || a >= operandShape.length))
+    throw new TypeError(`axis out of bounds`);
+  if (outDim < 0 || outDim > operandShape.length - axis.length)
+    throw new TypeError(`outDim out of bounds`);
+  const axisSet = new Set(axis);
+  if (axisSet.size !== axis.length) throw new TypeError(`axes are not unique`);
+  const indexShape = indices.reduce<number[]>(
+    (result, a) => generalBroadcast(result, a.shape),
+    [],
+  );
+  const result = operandShape.filter((_, i) => !axisSet.has(i));
+  result.splice(outDim, 0, ...indexShape);
+  return result;
+}
+
 export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
   [Primitive.Add]: binopAbstractEval,
   [Primitive.Mul]: binopAbstractEval,
@@ -915,29 +944,8 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
     return [new ShapedArray(shape, DType.Uint32, false)];
   },
   [Primitive.Gather]([x, ...indices], { axis, outDim }) {
-    for (const a of indices)
-      if (a.dtype !== DType.Int32 && a.dtype !== DType.Uint32)
-        throw new TypeError(
-          `Gather indices must be Int32 or Uint32, got ${a.dtype}`,
-        );
-    if (axis.length !== indices.length)
-      throw new TypeError(`Gather: ${axis} axes but ${indices.length} indices`);
-    if (indices.length === 0)
-      throw new TypeError("Gather must have 1+ indices with same shape");
-    if (axis.some((a) => a < 0 || a >= x.shape.length))
-      throw new TypeError("Gather axis out of bounds");
-    if (outDim < 0 || outDim > x.shape.length - axis.length)
-      throw new TypeError("Gather outDim out of bounds");
-    const axisSet = new Set(axis);
-    if (axisSet.size !== axis.length)
-      throw new TypeError("Gather axes are not unique");
-    const gatherShape = indices.reduce<number[]>(
-      (shape, a) => generalBroadcast(shape, a.shape),
-      [],
-    );
-    const newShape = x.shape.filter((_, i) => !axisSet.has(i));
-    newShape.splice(outDim, 0, ...gatherShape);
-    return [new ShapedArray(newShape, x.dtype, x.weakType)];
+    const shape = gatherShape(x.shape, indices, { axis, outDim });
+    return [new ShapedArray(shape, x.dtype, x.weakType)];
   },
   [Primitive.Transpose]([x], { perm }) {
     return [
@@ -976,6 +984,15 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
       ShapedArray.fromAval(x),
       new ShapedArray(x.shape, DType.Int32, false),
     ];
+  },
+  [Primitive.Scatter]([updates, ...indices], { shape, axis, outDim }) {
+    const expectedUpdatesShape = gatherShape(shape, indices, { axis, outDim });
+    if (!deepEqual(updates.shape, expectedUpdatesShape)) {
+      throw new TypeError(
+        `Scatter updates shape ${updates.shape} does not match expected shape ${expectedUpdatesShape}`,
+      );
+    }
+    return [new ShapedArray(shape, updates.dtype, updates.weakType)];
   },
   [Primitive.TriangularSolve]([a, b]) {
     if (a.ndim < 2)

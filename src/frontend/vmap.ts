@@ -20,6 +20,7 @@ import {
   randomBits,
   reduce,
   reshape,
+  scatter,
   ShapedArray,
   shrink,
   split,
@@ -236,6 +237,32 @@ function lastDimsBatcher<P extends Primitive>(
   };
 }
 
+function batchIndexArrays(
+  axisSize: number,
+  indices: Tracer[],
+  batchDims: (number | null)[],
+): [Tracer[], number] {
+  const rank = Math.max(
+    ...indices.map((index, i) => index.ndim + (batchDims[i] === null ? 1 : 0)),
+  );
+  return [
+    indices.map((index, i) => {
+      const batchDim = batchDims[i];
+      if (batchDim === null) return index;
+      index = moveBatchAxis(axisSize, batchDim, 0, index);
+      if (index.ndim < rank) {
+        index = index.reshape([
+          index.shape[0],
+          ...rep(rank - index.ndim, 1),
+          ...index.shape.slice(1),
+        ]);
+      }
+      return index;
+    }),
+    rank,
+  ];
+}
+
 const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
   [Primitive.Add]: broadcastBatcher(Primitive.Add),
   [Primitive.Mul]: broadcastBatcher(Primitive.Mul),
@@ -305,7 +332,7 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
     axisSize,
     [x, ...indices],
     [xBdim, ...indicesBdim],
-    { axis, outDim },
+    { axis, outDim, uniqueIndices },
   ) {
     if (indicesBdim.every((d) => d === null)) {
       // If none of the indices are mapped, this is an ordinary Gather on larger
@@ -316,34 +343,33 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
       let newOutDim = outDim;
       if (newOutDim < newBdim) newBdim += axis.length;
       else newOutDim += 1;
-      return [[gather(x, indices, newAxis, newOutDim)], [newBdim]];
+      return [
+        [gather(x, indices, newAxis, newOutDim, uniqueIndices)],
+        [newBdim],
+      ];
     }
     // If indices are mapped, move those mapped axes to front.
-    const nd = Math.max(
-      ...indices.map((m, i) => ndim(m) + (indicesBdim[i] === null ? 1 : 0)),
+    const [batchedIndices, indexRank] = batchIndexArrays(
+      axisSize,
+      indices,
+      indicesBdim,
     );
-    indices = indices.map((m, i) => {
-      if (indicesBdim[i] === null) return m;
-      m = moveBatchAxis(axisSize, indicesBdim[i], 0, m);
-      if (m.ndim < nd)
-        m = m.reshape([
-          m.shape[0],
-          ...rep(nd - m.ndim, 1),
-          ...m.shape.slice(1),
-        ]);
-      return m;
-    });
+    indices = batchedIndices;
     // Now there are two cases. If x is not mapped, dispatch directly.
     if (xBdim === null) {
-      return [[gather(x, indices, axis, outDim)], [outDim]];
+      // Indices may overlap between vmap lanes even if each lane is unique.
+      return [[gather(x, indices, axis, outDim, false)], [outDim]];
     } else {
       // Otherwise, we need a new `arange(axisSize)` index.
       // For simplicity, let's also move x's batch axis to the front.
       x = moveBatchAxis(axisSize, xBdim, 0, x);
       const newAxis = [0, ...axis.map((ax) => ax + 1)];
-      const extraBatchIndex = arange(axisSize).reshape([-1, ...rep(nd - 1, 1)]);
+      const extraBatchIndex = arange(axisSize).reshape([
+        -1,
+        ...rep(indexRank - 1, 1),
+      ]);
       indices.splice(0, 0, extraBatchIndex);
-      return [[gather(x, indices, newAxis, outDim)], [outDim]];
+      return [[gather(x, indices, newAxis, outDim, uniqueIndices)], [outDim]];
     }
   },
   [Primitive.Transpose](axisSize, [x], [xBdim], { perm }) {
@@ -380,6 +406,36 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
   },
   [Primitive.Sort]: lastDimsBatcher(Primitive.Sort, 1),
   [Primitive.Argsort]: lastDimsBatcher(Primitive.Argsort, 1, 2),
+  [Primitive.Scatter]: (
+    axisSize,
+    [updates, ...indices],
+    [updatesBdim, ...indicesBdim],
+    { op, shape, axis, outDim, uniqueIndices },
+  ) => {
+    // Put mapped index dimensions first and align their remaining dimensions
+    // so ordinary broadcasting produces one index set per vmap lane.
+    const [batchedIndices, indexRank] = batchIndexArrays(
+      axisSize,
+      indices,
+      indicesBdim,
+    );
+    indices = batchedIndices;
+    // Represent the vmap lane as another indexed destination axis. Unmapped
+    // indices broadcast across it, while mapped indices select per-lane values.
+    updates = moveBatchAxis(axisSize, updatesBdim, outDim, updates);
+    const batchIndex = arange(axisSize).reshape([
+      axisSize,
+      ...rep(indexRank - 1, 1),
+    ]);
+    const result = scatter(updates, [batchIndex, ...indices], {
+      op,
+      shape: [axisSize, ...shape],
+      axis: [0, ...axis.map((a) => a + 1)],
+      outDim,
+      uniqueIndices,
+    });
+    return [[result], [0]];
+  },
   [Primitive.TriangularSolve](
     axisSize,
     [a, b],

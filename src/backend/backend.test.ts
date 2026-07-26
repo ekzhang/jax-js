@@ -10,7 +10,7 @@ import {
   Reduction,
 } from "../alu";
 import { devices, getBackend, init } from "../backend";
-import { Routine, Routines } from "../routine";
+import { Routine, Routines, ScatterOp } from "../routine";
 import { ShapeTracker, unravelAlu } from "../shape";
 import { range } from "../utils";
 
@@ -111,6 +111,77 @@ suite.each(devices)("device:%s", (device) => {
         expect(result).toEqual(new Float32Array([2, 0, 1, Math.sqrt(2)]));
       } finally {
         backend.decRef(input);
+        backend.decRef(output);
+      }
+    });
+
+    test("scatter clears an existing output slot", async () => {
+      const backend = getBackend(device);
+      const bytes = (values: Float32Array | Int32Array) =>
+        new Uint8Array(values.buffer);
+      const updates = backend.malloc(4, bytes(new Float32Array([7])));
+      const firstIndex = backend.malloc(4, bytes(new Int32Array([1])));
+      const secondIndex = backend.malloc(4, bytes(new Int32Array([2])));
+      const emptyUpdates = backend.malloc(0);
+      const emptyIndex = backend.malloc(0);
+      const output = backend.malloc(
+        4 * 4,
+        bytes(new Float32Array([9, 9, 9, 9])),
+      );
+
+      try {
+        const routine = new Routine(
+          Routines.Scatter,
+          {
+            inputShapes: [[1], [1]],
+            inputDtypes: [DType.Float32, DType.Int32],
+            outputShapes: [[4]],
+            outputDtypes: [DType.Float32],
+          },
+          {
+            op: ScatterOp.Update,
+            shape: [4],
+            axis: [0],
+            outDim: 0,
+            uniqueIndices: true,
+          },
+        );
+        const exe = await backend.prepareRoutine(routine);
+
+        backend.dispatch(exe, [updates, firstIndex], [output]);
+        let result = new Float32Array((await backend.read(output)).buffer);
+        expect(result).toEqual(new Float32Array([0, 7, 0, 0]));
+
+        backend.dispatch(exe, [updates, secondIndex], [output]);
+        result = new Float32Array((await backend.read(output)).buffer);
+        expect(result).toEqual(new Float32Array([0, 0, 7, 0]));
+
+        const emptyRoutine = new Routine(
+          Routines.Scatter,
+          {
+            inputShapes: [[0], [0]],
+            inputDtypes: [DType.Float32, DType.Int32],
+            outputShapes: [[4]],
+            outputDtypes: [DType.Float32],
+          },
+          {
+            op: ScatterOp.Update,
+            shape: [4],
+            axis: [0],
+            outDim: 0,
+            uniqueIndices: true,
+          },
+        );
+        const emptyExe = await backend.prepareRoutine(emptyRoutine);
+        backend.dispatch(emptyExe, [emptyUpdates, emptyIndex], [output]);
+        result = new Float32Array((await backend.read(output)).buffer);
+        expect(result).toEqual(new Float32Array([0, 0, 0, 0]));
+      } finally {
+        backend.decRef(updates);
+        backend.decRef(firstIndex);
+        backend.decRef(secondIndex);
+        backend.decRef(emptyUpdates);
+        backend.decRef(emptyIndex);
         backend.decRef(output);
       }
     });

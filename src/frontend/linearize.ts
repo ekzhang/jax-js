@@ -1,6 +1,7 @@
 /** @file Implementations of vjp() and partial evaluation. */
 
 import { AluOp, isFloatDtype } from "../alu";
+import { ScatterOp } from "../routine";
 import {
   dispose as treeDispose,
   flatten as treeFlatten,
@@ -32,6 +33,7 @@ import {
   flattenFunWithAux,
   flip,
   fullRaise,
+  gather,
   mul,
   ndim,
   neg,
@@ -41,6 +43,7 @@ import {
   PrimitiveParams,
   reduce,
   reshape,
+  scatter,
   ShapedArray,
   shrink,
   split,
@@ -864,14 +867,20 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
     if (!(x instanceof UndefPrimal)) throw new NonlinearError(Primitive.Split);
     return [concatenate(cts, axis)];
   },
-  [Primitive.Gather]([ct], [x, ...indices], { axis, outDim }) {
+  [Primitive.Gather]([ct], [x, ...indices], { axis, outDim, uniqueIndices }) {
     if (!(x instanceof UndefPrimal)) throw new NonlinearError(Primitive.Gather);
     if (indices.some((i) => i instanceof UndefPrimal))
       throw new NonlinearError(Primitive.Gather);
-    void [ct, axis, outDim];
-    throw new Error(
-      "Gather transpose rule is not yet implemented, requires complex Scatter sum operation",
-    );
+    return [
+      scatter(ct, indices as Tracer[], {
+        op: ScatterOp.Add,
+        shape: x.aval.shape,
+        axis,
+        outDim,
+        uniqueIndices,
+      }),
+      ...indices.map(() => null),
+    ];
   },
   [Primitive.Transpose]([ct], [x], { perm }) {
     if (!(x instanceof UndefPrimal))
@@ -905,6 +914,20 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
       ([s, _e], i) => [s, s + x.aval.shape[i]] as [number, number],
     );
     return [shrink(ct, slice)];
+  },
+  [Primitive.Scatter](
+    [ct],
+    [updates, ...indices],
+    { axis, outDim, uniqueIndices },
+  ) {
+    if (!(updates instanceof UndefPrimal))
+      throw new NonlinearError(Primitive.Scatter);
+    if (indices.some((i) => i instanceof UndefPrimal))
+      throw new NonlinearError(Primitive.Scatter);
+    return [
+      gather(ct, indices as Tracer[], axis, outDim, uniqueIndices),
+      ...indices.map(() => null),
+    ];
   },
   [Primitive.TriangularSolve]([ct], [a, b], { unitDiagonal }) {
     if (a instanceof UndefPrimal || !(b instanceof UndefPrimal))

@@ -10,6 +10,7 @@ export interface ShaderInfo {
   numInputs: number;
   numOutputs: number;
   hasUniform: boolean;
+  clearOutputs?: boolean; // Zero-fill output buffers before the first pass.
   passes: {
     grid: [number, number]; // Grid size (number of workgroups) in x and y.
     uniform?: Uint8Array<ArrayBuffer>; // Optional uniform value.

@@ -1,9 +1,11 @@
 import { beforeEach, expect, suite, test } from "vitest";
 
-import { defaultDevice, devices, init } from "../backend";
-import { arange, array, eye, ones, zeros } from "./array";
 import { hasStrictNumerics } from "../../test/setup";
 import { DType } from "../alu";
+import { defaultDevice, devices, init } from "../backend";
+import { ScatterOp } from "../routine";
+import { arange, array, eye, Array as JaxArray, ones, zeros } from "./array";
+import { scatter } from "./core";
 
 const devicesAvailable = await init();
 
@@ -45,6 +47,132 @@ suite.each(devices)("device:%s", (device) => {
     expect(ar3.dtype).toEqual("float32");
     expect(await ar3.data()).toEqual(new Float32Array([2, 2, 2, 2]));
   });
+
+  if (device !== "webgl") {
+    test("scatter maps multiple indexed axes", () => {
+      const result = scatter(
+        array([
+          [10, 20],
+          [30, 40],
+          [50, 60],
+        ]),
+        [
+          array([1, 3], { dtype: DType.Int32 }),
+          array([0, 1], { dtype: DType.Int32 }),
+        ],
+        {
+          op: ScatterOp.Update,
+          shape: [2, 3, 4],
+          axis: [2, 0],
+          outDim: 1,
+          uniqueIndices: true,
+        },
+      ) as JaxArray;
+      expect(result.js()).toEqual([
+        [
+          [0, 10, 0, 0],
+          [0, 30, 0, 0],
+          [0, 50, 0, 0],
+        ],
+        [
+          [0, 0, 0, 20],
+          [0, 0, 0, 40],
+          [0, 0, 0, 60],
+        ],
+      ]);
+    });
+
+    test("scatterAdd sums repeated indices", async () => {
+      const result = scatter(
+        array([1, 2, 3]),
+        [array([1, 1, 3], { dtype: DType.Int32 })],
+        {
+          op: ScatterOp.Add,
+          shape: [4],
+          axis: [0],
+          outDim: 0,
+          uniqueIndices: false,
+        },
+      ) as JaxArray;
+      expect(Array.from(await result.data())).toEqual([0, 3, 0, 3]);
+    });
+
+    if (device === "cpu" || device === "webgpu") {
+      test("scatterAdd preserves adjacent float16 destinations", () => {
+        const result = scatter(
+          array([1, 2, 3, 4], { dtype: DType.Float16 }),
+          [array([0, 1, 0, 1], { dtype: DType.Int32 })],
+          {
+            op: ScatterOp.Add,
+            shape: [2],
+            axis: [0],
+            outDim: 0,
+            uniqueIndices: false,
+          },
+        ) as JaxArray;
+        expect(result.js()).toEqual([4, 6]);
+      });
+    }
+
+    test.each([
+      [DType.Int32, [1, 2, 3], [0, 3, 0, 3]],
+      [DType.Uint32, [1, 2, 3], [0, 3, 0, 3]],
+      [DType.Bool, [false, true, true], [false, true, false, true]],
+    ])("scatterAdd supports %s", (dtype, updates, expected) => {
+      const result = scatter(
+        array(updates, { dtype }),
+        [array([1, 1, 3], { dtype: DType.Int32 })],
+        {
+          op: ScatterOp.Add,
+          shape: [4],
+          axis: [0],
+          outDim: 0,
+          uniqueIndices: false,
+        },
+      ) as JaxArray;
+      expect(result.js()).toEqual(expected);
+    });
+
+    test("scatterAdd accepts a unique-index promise", () => {
+      const result = scatter(
+        array([10, 20, 30]),
+        [array([3, 0, 2], { dtype: DType.Int32 })],
+        {
+          op: ScatterOp.Add,
+          shape: [4],
+          axis: [0],
+          outDim: 0,
+          uniqueIndices: true,
+        },
+      ) as JaxArray;
+      expect(result.js()).toEqual([20, 0, 30, 10]);
+    });
+
+    test("scatterAdd broadcasts index arrays", () => {
+      const result = scatter(
+        array([
+          [1, 2, 3],
+          [4, 5, 6],
+        ]),
+        [
+          array([[0], [2]], { dtype: DType.Int32 }),
+          array([[0, 1, 1]], { dtype: DType.Int32 }),
+        ],
+        {
+          op: ScatterOp.Add,
+          shape: [3, 4],
+          axis: [0, 1],
+          outDim: 0,
+          uniqueIndices: false,
+        },
+      ) as JaxArray;
+      expect(result.js()).toEqual([
+        [1, 5, 0, 0],
+        [0, 0, 0, 0],
+        [4, 11, 0, 0],
+      ]);
+    });
+  }
 
   test("can construct arrays from data", () => {
     const a = array([1, 2, 3, 4]);
