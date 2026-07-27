@@ -7,6 +7,7 @@ import {
   init,
   jit,
   lax,
+  makeJaxpr,
   numpy as np,
   vmap,
 } from "@jax-js/jax";
@@ -66,6 +67,188 @@ suite.each(devices)("device:%s", (device) => {
     const result = convFn(x, y);
     expect(result.js()).toEqual([[[-1.5, 0, 1.5, 3, 10.5]]]);
   });
+
+  test("lax ConvTranspose lowers to ordinary primitives", () => {
+    const fn = (x: np.Array, kernel: np.Array) =>
+      lax.convGeneralDilated(x, kernel, [1], [[2, 2]], {
+        lhsDilation: [2],
+      });
+    const x = np.array([[[1, 2, 3]]]);
+    const kernel = np.array([[[1, 10, 100]]]);
+
+    const eager = fn(x.ref, kernel.ref);
+    expect(eager.js()).toEqual([[[100, 10, 201, 20, 302, 30, 3]]]);
+
+    const { jaxpr } = makeJaxpr(fn)(x.ref, kernel.ref);
+    const loweredPrimitives = jaxpr.jaxpr.eqns.map((eqn) => eqn.primitive);
+    expect(loweredPrimitives).not.toContain("conv");
+    expect(loweredPrimitives).toContain("dot");
+    expect(loweredPrimitives).toContain("shrink");
+    expect(loweredPrimitives).toContain("add");
+    jaxpr.dispose();
+
+    const compiled = jit(fn);
+    const actual = compiled(x, kernel);
+    expect(actual.js()).toEqual([[[100, 10, 201, 20, 302, 30, 3]]]);
+    compiled.dispose();
+  });
+
+  test.each([
+    { dilation: 2, padding: [[2, 1]] },
+    { dilation: 3, padding: [[0, 2]] },
+    { dilation: 2, padding: [[-1, 2]] },
+  ])(
+    "jit ConvTranspose lowering: dilation=$dilation padding=$padding",
+    ({ dilation, padding }) => {
+      const convTransposeFn = jit((a: np.Array, b: np.Array) =>
+        lax.convGeneralDilated(a, b, [1], padding as [[number, number]], {
+          lhsDilation: [dilation],
+        }),
+      );
+      const x = np
+        .array([
+          [
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+          ],
+          [
+            [2, 4, 6, 8],
+            [1, 3, 5, 7],
+          ],
+        ])
+        .reshape([2, 2, 4]);
+      const kernel = np
+        .array([
+          [
+            [1, 0, -1],
+            [2, 1, 0],
+          ],
+          [
+            [0, 1, 2],
+            [-1, 0, 1],
+          ],
+          [
+            [2, -1, 1],
+            [1, 1, -2],
+          ],
+        ])
+        .reshape([3, 2, 3]);
+
+      const expected = lax.convGeneralDilated(
+        x.ref,
+        kernel.ref,
+        [1],
+        padding as [[number, number]],
+        { lhsDilation: [dilation] },
+      );
+      const actual = convTransposeFn(x, kernel);
+      expect(actual).toBeAllclose(expected);
+    },
+  );
+
+  test("jit ConvTranspose result supports downstream operations", () => {
+    const postprocess = (x: np.Array, kernel: np.Array) => {
+      const y = lax
+        .convGeneralDilated(x, kernel, [1], [[2, 1]], {
+          lhsDilation: [2],
+        })
+        .add(1);
+      return np.split(y, [3], 2);
+    };
+    const compiled = jit(postprocess);
+    const x = np.array([
+      [
+        [1, 2, 3],
+        [4, 5, 6],
+      ],
+    ]);
+    const kernel = np.array([
+      [
+        [1, 0, -1],
+        [2, 1, 0],
+      ],
+      [
+        [0, 1, 2],
+        [-1, 0, 1],
+      ],
+    ]);
+
+    const expected = postprocess(x.ref, kernel.ref);
+    const actual = compiled(x, kernel);
+    expect(actual[0]).toBeAllclose(expected[0]);
+    expect(actual[1]).toBeAllclose(expected[1]);
+  });
+
+  test("jit ConvTranspose lowering preserves integer dtype", () => {
+    const convTransposeFn = jit((a: np.Array, b: np.Array) =>
+      lax.convGeneralDilated(a, b, [1], [[2, 1]], {
+        lhsDilation: [2],
+      }),
+    );
+    const x = np.array(
+      [
+        [
+          [1, 2, 3],
+          [4, 5, 6],
+        ],
+      ],
+      { dtype: np.int32 },
+    );
+    const kernel = np.array(
+      [
+        [
+          [1, 0, -1],
+          [2, 1, 0],
+        ],
+        [
+          [0, 1, 2],
+          [-1, 0, 1],
+        ],
+      ],
+      { dtype: np.int32 },
+    );
+
+    const expected = lax.convGeneralDilated(x.ref, kernel.ref, [1], [[2, 1]], {
+      lhsDilation: [2],
+    });
+    const actual = convTransposeFn(x, kernel);
+    expect(actual.dtype).toBe(np.int32);
+    expect(actual.js()).toEqual(expected.js());
+  });
+
+  test.each([
+    {
+      name: "kernel larger than twice the stride",
+      dilation: 2,
+      padding: [[4, 3]] as [[number, number]],
+      kernel: [[[1, -1, 2, 0, 3]]],
+    },
+    {
+      name: "kernel smaller than the stride",
+      dilation: 4,
+      padding: [[1, 2]] as [[number, number]],
+      kernel: [[[2, -1]]],
+    },
+  ])(
+    "jit ConvTranspose lowering supports $name",
+    ({ dilation, padding, kernel: kernelValues }) => {
+      const convTransposeFn = jit((a: np.Array, b: np.Array) =>
+        lax.convGeneralDilated(a, b, [1], padding, {
+          lhsDilation: [dilation],
+        }),
+      );
+      const x = np.array([[[1, 2, 3, 4]]]);
+      const kernel = np
+        .array(kernelValues)
+        .reshape([1, 1, kernelValues[0][0].length]);
+
+      const expected = lax.convGeneralDilated(x.ref, kernel.ref, [1], padding, {
+        lhsDilation: [dilation],
+      });
+      const actual = convTransposeFn(x, kernel);
+      expect(actual).toBeAllclose(expected);
+    },
+  );
 
   test("0d convolution", () => {
     const x = np.array([

@@ -48,7 +48,7 @@ interface WasmCodegenResult {
   bytes: Uint8Array<ArrayBuffer>;
   workSize: number;
   chunkAlignment: number;
-  minWorkPerWorker: number;
+  minWorkPerWorker?: number;
 }
 
 type ReductionPointerPlan = ReductionPointerCandidate & SimdPointerPlan;
@@ -1035,6 +1035,6 @@ export function codegenWasm(kernel: Kernel): WasmCodegenResult {
     minWorkPerWorker:
       tiledPlan && kernel.size / tiledPlan.tileSize >= 1024
         ? tiledPlan.tileSize * 32
-        : 256,
+        : undefined,
   };
 }

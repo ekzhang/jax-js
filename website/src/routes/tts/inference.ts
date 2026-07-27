@@ -9,12 +9,20 @@ import {
   runMimiDecode,
 } from "./pocket-tts";
 
+export interface TTSSamplingProgress {
+  framesGenerated: number;
+  elapsedMs: number;
+  framesPerSecond: number;
+  realTimeFactor: number;
+}
+
 export interface PlayTTSOptions {
   framesAfterEos: number;
   seed: number | null;
   lsdDecodeSteps: number;
   temperature: number;
   noiseClamp: number | null;
+  onProgress: (progress: TTSSamplingProgress) => void;
 }
 
 export async function playTTS(
@@ -27,6 +35,7 @@ export async function playTTS(
     lsdDecodeSteps = 1,
     temperature = 0.7,
     noiseClamp = null,
+    onProgress,
   }: Partial<PlayTTSOptions> = {},
 ): Promise<void> {
   let lastLatent = model.flowLM.bosEmb.ref.reshape([1, -1]); // [1, 32]
@@ -42,6 +51,10 @@ export async function playTTS(
 
     console.log("Starting TTS generation...");
     let lastTimestamp = performance.now();
+    const samplingStart = lastTimestamp;
+    let lastFrameTimestamp = samplingStart;
+    const recentFrameDurationsMs: number[] = [];
+    let framesGenerated = 0;
 
     for (let step = 0; step < 1000; step++) {
       let stepKey: np.Array;
@@ -108,6 +121,25 @@ export async function playTTS(
             `expected 1920 audio samples, got ${audioPcm.length}`,
           );
         }
+
+        // Update progress metrics for audio playback.
+        framesGenerated++;
+        const frameTimestamp = performance.now();
+        recentFrameDurationsMs.push(frameTimestamp - lastFrameTimestamp);
+        lastFrameTimestamp = frameTimestamp;
+        if (recentFrameDurationsMs.length > 10) recentFrameDurationsMs.shift();
+        const windowElapsedSeconds =
+          recentFrameDurationsMs.reduce((sum, duration) => sum + duration, 0) /
+          1000;
+        const framesPerSecond =
+          recentFrameDurationsMs.length / windowElapsedSeconds;
+        onProgress?.({
+          framesGenerated,
+          elapsedMs: frameTimestamp - samplingStart,
+          framesPerSecond,
+          realTimeFactor: framesPerSecond / 12.5,
+        });
+
         await lastAudioPromise;
         await player.playChunk(audioPcm);
       })();

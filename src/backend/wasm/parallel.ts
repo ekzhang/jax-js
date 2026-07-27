@@ -18,14 +18,32 @@ export function hasSharedArrayBuffer(): boolean {
   );
 }
 
-const MIN_ELEMS_PER_THREAD = 256;
+// A worker message has meaningful fixed overhead. Spreading smaller kernels
+// across more workers costs more than the extra parallelism saves.
+const MIN_ELEMS_PER_THREAD = 512;
+const MAX_CACHED_KERNELS_PER_WORKER = 256;
 
 const WORKER_SOURCE = `
 ${cpuRoutineJSForWorkers()}
 
 let memory = null;
-let cachedModule = null;
-let cachedFunc = null;
+
+const kernelLru = new Map();
+function kernelFunc(kernelHash, module) {
+  let func = kernelLru.get(kernelHash);
+  if (func !== undefined) {
+    kernelLru.delete(kernelHash);
+    kernelLru.set(kernelHash, func);
+    return func;
+  }
+  const instance = new WebAssembly.Instance(module, { env: { memory } });
+  func = instance.exports.kernel;
+  kernelLru.set(kernelHash, func);
+  if (kernelLru.size > ${MAX_CACHED_KERNELS_PER_WORKER}) {
+    kernelLru.delete(kernelLru.keys().next().value);
+  }
+  return func;
+}
 
 self.onmessage = (e) => {
   const msg = e.data;
@@ -36,13 +54,8 @@ self.onmessage = (e) => {
   }
   try {
     if (msg.type === "kernel") {
-      const { module, ptrs, begin, end } = msg;
-      if (module !== cachedModule) {
-        cachedModule = module;
-        const instance = new WebAssembly.Instance(module, { env: { memory } });
-        cachedFunc = instance.exports.kernel;
-      }
-      cachedFunc(...ptrs, begin, end);
+      const { kernelHash, module, ptrs, begin, end } = msg;
+      kernelFunc(kernelHash, module)(...ptrs, begin, end);
     } else if (msg.type === "routine") {
       const inputs = msg.inputs.map(({ ptr, size }) =>
         new Uint8Array(memory.buffer, ptr, size)
@@ -134,6 +147,7 @@ export class WasmWorkerPool {
    * which is guaranteed to be monotonically increasing.
    */
   dispatch(
+    kernelHash: string,
     module: WebAssembly.Module,
     ptrs: number[],
     size: number,
@@ -141,7 +155,14 @@ export class WasmWorkerPool {
     minWorkPerWorker: number = MIN_ELEMS_PER_THREAD,
   ): bigint {
     return this.#enqueue(() =>
-      this.#dispatchNow(module, ptrs, size, chunkAlignment, minWorkPerWorker),
+      this.#dispatchNow(
+        kernelHash,
+        module,
+        ptrs,
+        size,
+        chunkAlignment,
+        minWorkPerWorker,
+      ),
     );
   }
 
@@ -182,6 +203,7 @@ export class WasmWorkerPool {
   }
 
   async #dispatchNow(
+    kernelHash: string,
     module: WebAssembly.Module,
     ptrs: number[],
     size: number,
@@ -206,7 +228,14 @@ export class WasmWorkerPool {
             if (e.data.ok) resolve();
             else reject(new Error(`Worker error: ${e.data.error}`));
           };
-          worker.postMessage({ type: "kernel", module, ptrs, begin, end });
+          worker.postMessage({
+            type: "kernel",
+            kernelHash,
+            module,
+            ptrs,
+            begin,
+            end,
+          });
         }),
       );
     }

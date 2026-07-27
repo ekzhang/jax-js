@@ -7,6 +7,7 @@ const JsArray = globalThis.Array;
 
 import { DType } from "../alu";
 import { Array, ArrayLike, fudgeArray, zerosLike } from "../frontend/array";
+import { checkConvShape } from "../frontend/convolution";
 import * as core from "../frontend/core";
 import { bind1, Primitive } from "../frontend/core";
 import { moveaxis, vmap } from "../frontend/vmap";
@@ -164,6 +165,103 @@ function padtypeToPads(
 }
 
 /**
+ * Lower a supported 1D ConvTranspose into a dense channel contraction and
+ * stride-phase overlap-add. Returns null to use the generic Conv otherwise.
+ *
+ * This is a specialized fast path for transposed convolutions.
+ */
+function lowerConvTranspose1d(
+  lhs: Array,
+  rhs: Array,
+  windowStrides: number[],
+  padding: Pair[],
+  lhsDilation: number[],
+  rhsDilation: number[],
+): Array | null {
+  if (
+    lhs.ndim !== 3 ||
+    rhs.ndim !== 3 ||
+    windowStrides.length !== 1 ||
+    windowStrides[0] !== 1 ||
+    lhsDilation.length !== 1 ||
+    lhsDilation[0] <= 1 ||
+    rhsDilation.length !== 1 ||
+    rhsDilation[0] !== 1 ||
+    padding.length !== 1 ||
+    padding[0][0] < 0 ||
+    padding[0][1] < 0 ||
+    lhs.shape.some((size) => size <= 0) ||
+    rhs.shape.some((size) => size <= 0)
+  ) {
+    return null;
+  }
+
+  const outputShape = checkConvShape(lhs.shape, rhs.shape, {
+    vmapDims: 0,
+    strides: windowStrides,
+    padding,
+    lhsDilation,
+    rhsDilation,
+  });
+  if (outputShape.some((size) => size <= 0)) return null;
+
+  const [batchSize, inputChannels, inputLength] = lhs.shape;
+  const [outputChannels, , kernelSize] = rhs.shape;
+  const stride = lhsDilation[0];
+  const contributionCount = Math.ceil(kernelSize / stride);
+  if (contributionCount > 8) return null;
+
+  // Produce [N, C_out, kernel, input] without materializing input dilation.
+  lhs = lhs
+    .transpose([0, 2, 1])
+    .reshape([batchSize, 1, 1, inputLength, inputChannels]);
+  rhs = rhs
+    .transpose([0, 2, 1])
+    .reshape([1, outputChannels, kernelSize, 1, inputChannels]);
+  let columns = core.dot(lhs, rhs) as Array;
+
+  // Split the reversed kernel into [contribution, stride phase].
+  columns = core.flip(columns.transpose([0, 1, 3, 2]), [3]) as Array;
+  columns = core.pad(columns, {
+    3: [0, contributionCount * stride - kernelSize],
+  }) as Array;
+  columns = columns.reshape([
+    batchSize,
+    outputChannels,
+    inputLength,
+    contributionCount,
+    stride,
+  ]);
+
+  // Shift each contribution by one input block and sum the overlaps.
+  const terms = core
+    .split(columns, 3, rep(contributionCount, 1))
+    .map((term, index) => {
+      term = term.reshape([batchSize, outputChannels, inputLength, stride]);
+      return core.pad(term, {
+        2: [index, contributionCount - 1 - index],
+      }) as Array;
+    });
+  let output = terms
+    .reduce((lhs, rhs) => lhs.add(rhs))
+    .reshape([batchSize, outputChannels, -1]);
+
+  // Remove phase padding, then select the convolution's requested range.
+  const fullLength = (inputLength - 1) * stride + kernelSize;
+  output = output.slice([], [], [0, fullLength]);
+  const outputLength = outputShape[2];
+  const offset = kernelSize - 1 - padding[0][0];
+  const padLeft = Math.max(0, -offset);
+  const padRight = Math.max(0, offset + outputLength - fullLength);
+  output = core.pad(output, { 2: [padLeft, padRight] }) as Array;
+  return output.slice(
+    [],
+    [],
+    [offset + padLeft, offset + padLeft + outputLength],
+  );
+}
+
+/**
  * General n-dimensional convolution operator, with optional dilation.
  *
  * The semantics of this operation mimic the `jax.lax.conv_general_dilated`
@@ -205,6 +303,19 @@ export function convGeneralDilated(
       rhsDilation ?? rep(rhs.ndim - 2, 1),
       padding,
     );
+  }
+  if (featureGroupCount === 1) {
+    // Fast path for handling common transposed convolutions.
+    const spatialDims = lhs.ndim - 2;
+    const lowered = lowerConvTranspose1d(
+      lhs,
+      rhs,
+      windowStrides,
+      padding,
+      lhsDilation ?? rep(spatialDims, 1),
+      rhsDilation ?? rep(spatialDims, 1),
+    );
+    if (lowered !== null) return lowered;
   }
   if (featureGroupCount !== 1) {
     // We implement grouped convolutions by using leading vmapDims in the

@@ -8,10 +8,10 @@ export type KVCache = {
   value: np.Array; // [T_cache, H, D]
 };
 
-export function emptyKVCache(): KVCache {
+export function emptyKVCache(dtype: np.DType = np.float32): KVCache {
   return {
-    key: np.zeros([0], { dtype: np.float16 }),
-    value: np.zeros([0], { dtype: np.float16 }),
+    key: np.zeros([0], { dtype }),
+    value: np.zeros([0], { dtype }),
   };
 }
 
@@ -40,7 +40,7 @@ export type FlowLMState = {
 
 export function createFlowLMState(model: FlowLMModel): FlowLMState {
   return {
-    kvCaches: model.transformer.map(() => emptyKVCache()),
+    kvCaches: model.transformer.map(() => emptyKVCache(model.bosEmb.dtype)),
     kvCacheLen: 0,
   };
 }
@@ -117,7 +117,7 @@ export function runFlowLMStep(
 
   const noiseShape = [1, ldim]; // [T, ldim] with T=1
   const std = Math.sqrt(temperature);
-  let noise = random.normal(key, noiseShape).mul(std);
+  let noise = random.normal(key, noiseShape).astype(sequence.dtype).mul(std);
   if (noiseClamp !== null) {
     // Truncated normal - clamp to [-noiseClamp, noiseClamp]
     noise = np.clip(noise, -noiseClamp, noiseClamp);
@@ -579,7 +579,7 @@ export function runMimiEncode(
   x = x.transpose([1, 0]); // [C, T] -> [T, C]
   const offset = np.array(0, { dtype: np.int32, device: x.device });
   for (const layer of encoderTransformer) {
-    let kvCache = emptyKVCache();
+    let kvCache = emptyKVCache(x.dtype);
     [x, kvCache] = runStreamingTransformerLayer(
       layer,
       kvCache,
@@ -617,7 +617,9 @@ export type SEANetDecoderState = {
 
 export function createMimiDecodeState(mimi: MimiModel): MimiDecodeState {
   return {
-    kvCaches: mimi.decoderTransformer.map(() => emptyKVCache()),
+    kvCaches: mimi.decoderTransformer.map((block) =>
+      emptyKVCache(block.selfAttn.inProj.weight.dtype),
+    ),
     kvCacheLen: 0,
     offset: 0,
     initialConvState: createConvTranspose1dState(mimi.upsample.convtr, 16, 512),
@@ -722,8 +724,12 @@ export function lsdDecode(
   for (let i = 0; i < numSteps; i++) {
     const s = i / numSteps;
     const t = (i + 1) / numSteps;
-    const sArr = np.full(x0.shape.slice(0, -1).concat([1]), s);
-    const tArr = np.full(x0.shape.slice(0, -1).concat([1]), t);
+    const sArr = np.full(x0.shape.slice(0, -1).concat([1]), s, {
+      dtype: x0.dtype,
+    });
+    const tArr = np.full(x0.shape.slice(0, -1).concat([1]), t, {
+      dtype: x0.dtype,
+    });
     const flowDir = flowNet(sArr, tArr, current.ref);
     current = current.add(flowDir.div(numSteps));
   }
@@ -860,7 +866,7 @@ export function createConv1dState(
       weight.shape[1], // in channels
       weight.shape[2] - stride, // kernel size - stride
     ],
-    { dtype: np.float16 },
+    { dtype: weight.dtype },
   );
 }
 
@@ -895,7 +901,7 @@ export function createConvTranspose1dState(
       weight.shape[1] * groups, // out channels
       weight.shape[2] - stride, // kernel size - stride
     ],
-    { dtype: np.float16 },
+    { dtype: weight.dtype },
   );
 }
 
@@ -965,15 +971,27 @@ const weightMapper = new WeightMapper({
   autoCamelCase: true,
 });
 
-export function fromSafetensors(file: safetensors.File): PocketTTS {
+export function fromSafetensors(
+  file: safetensors.File,
+  dtype: np.DType = np.float32,
+): PocketTTS {
   const mappedWeights = weightMapper.mapObject(file.tensors);
   const hydrated: Record<string, np.Array> = {};
   for (const [key, value] of Object.entries(mappedWeights)) {
     if (value.dtype === "F16") {
-      hydrated[key] = np.array(value.data as Float16Array<ArrayBuffer>, {
-        dtype: np.float16,
-        shape: value.shape,
-      });
+      if (dtype === np.float16) {
+        hydrated[key] = np.array(value.data as Float16Array<ArrayBuffer>, {
+          dtype,
+          shape: value.shape,
+        });
+      } else if (dtype === np.float32) {
+        hydrated[key] = np.array(
+          new Float32Array(value.data as Float16Array<ArrayBuffer>),
+          { dtype, shape: value.shape },
+        );
+      } else {
+        throw new Error(`Unsupported Pocket TTS dtype ${dtype}`);
+      }
     } else {
       throw new Error(`Unexpected dtype ${value.dtype} for weight ${key}`);
     }

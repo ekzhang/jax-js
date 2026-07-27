@@ -900,7 +900,7 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
     Primitive.Shrink,
     Primitive.Pad,
   ];
-  const materializeForReusedReduction = new Set<Var>();
+  const materializedProducers = new Set<Var>();
   const reductionInputHasReuse = (
     shape: number[],
     promoted: number[],
@@ -923,7 +923,7 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
       if (!input) return;
       current = input;
     }
-    materializeForReusedReduction.add(current);
+    materializedProducers.add(current);
   };
   for (const eqn of jaxpr.eqns) {
     let inputShapes: [number[], number[]] | null = null;
@@ -987,13 +987,23 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
     // effect is to pad the intermediate with 1s instead of 0s!
     Primitive.Pad,
   ];
+  for (const eqn of jaxpr.eqns) {
+    if (
+      needsCleanShapePrimitives.includes(eqn.primitive) ||
+      routinePrimitives.has(eqn.primitive)
+    ) {
+      for (const input of eqn.inputs) {
+        if (input instanceof Var) markNonViewProducer(input);
+      }
+    }
+  }
   for (let i = jaxpr.eqns.length - 1; i >= 0; i--) {
     const eqn = jaxpr.eqns[i];
     if (
       reductionEndpointEqns.has(i) ||
       heterogeneousViewPrimitives.includes(eqn.primitive) ||
       routinePrimitives.has(eqn.primitive) ||
-      eqn.outBinders.some((v) => materializeForReusedReduction.has(v)) ||
+      eqn.outBinders.some((v) => materializedProducers.has(v)) ||
       eqn.outBinders.some((v) => blackNodes.has(v))
     ) {
       for (const v of eqn.outBinders) {
@@ -1003,23 +1013,15 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
       continue;
     }
     const reach = new Set<Var>();
-    let needsCleanOutput = false;
-    outer: for (const v of eqn.outBinders) {
+    for (const v of eqn.outBinders) {
       for (const j of varToUsages.get(v) ?? []) {
-        if (
-          needsCleanShapePrimitives.includes(jaxpr.eqns[j].primitive) ||
-          routinePrimitives.has(jaxpr.eqns[j].primitive)
-        ) {
-          needsCleanOutput = true;
-          break outer;
-        }
         for (const o of jaxpr.eqns[j].outBinders) {
           const u = p1NextBlack.get(o);
           if (u) reach.add(u);
         }
       }
     }
-    if (reach.size > 1 || needsCleanOutput) {
+    if (reach.size > 1) {
       for (const v of eqn.outBinders) {
         blackNodes.add(v);
         p1NextBlack.set(v, v);

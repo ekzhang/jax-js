@@ -23,10 +23,11 @@ interface WasmExecutableData {
 }
 
 interface WasmProgram {
+  kernelHash: string;
   module: WebAssembly.Module;
   workSize: number;
   chunkAlignment: number;
-  minWorkPerWorker: number;
+  minWorkPerWorker?: number;
 }
 
 const compiledProgramCache = new Map<string, WasmProgram>();
@@ -122,27 +123,25 @@ export class WasmBackend implements Backend {
   }
 
   async prepareKernel(kernel: Kernel): Promise<Executable<WasmExecutableData>> {
-    const kernelHash = FpHash.hash(kernel);
-    const hashKey = kernelHash.toString();
+    const kernelHash = FpHash.hash(kernel).toString();
     const program = await runWithCacheAsync(
       compiledProgramCache,
-      hashKey,
+      kernelHash,
       async () => {
         const { bytes, ...metadata } = codegenWasm(kernel);
         const module = await WebAssembly.compile(bytes);
-        return { module, ...metadata };
+        return { kernelHash, module, ...metadata };
       },
     );
     return new Executable(kernel, { program, sync: false });
   }
 
   prepareKernelSync(kernel: Kernel): Executable<WasmExecutableData> {
-    const kernelHash = FpHash.hash(kernel);
-    const hashKey = kernelHash.toString();
-    const compiled = runWithCache(compiledProgramCache, hashKey, () => {
+    const kernelHash = FpHash.hash(kernel).toString();
+    const compiled = runWithCache(compiledProgramCache, kernelHash, () => {
       const { bytes, ...metadata } = codegenWasm(kernel);
       const module = new WebAssembly.Module(bytes);
-      return { module, ...metadata };
+      return { kernelHash, module, ...metadata };
     });
     return new Executable(kernel, { program: compiled, sync: true });
   }
@@ -229,6 +228,7 @@ export class WasmBackend implements Backend {
         const retainedSlots = [...inputs, ...outputs];
         for (const slot of retainedSlots) this.incRef(slot);
         const epoch = this.#workerPool.dispatch(
+          program.kernelHash,
           program.module,
           ptrs,
           program.workSize,

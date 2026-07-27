@@ -6,6 +6,7 @@ import {
   init,
   jit,
   jvp,
+  lax,
   nn,
   numpy as np,
 } from "@jax-js/jax";
@@ -80,5 +81,42 @@ suite.each(devices)("device:%s", (device) => {
     y = np.sum(x);
     expect(y.dtype).toBe(np.float16);
     expect(y.dataSync()).toEqual(new Float16Array([16008]));
+  });
+
+  test("jit ConvTranspose lowering supports f16", () => {
+    const convTransposeFn = jit((x: np.Array, kernel: np.Array) =>
+      lax.convGeneralDilated(x, kernel, [1], [[2, 1]], {
+        lhsDilation: [2],
+      }),
+    );
+    const x = np.array(
+      [
+        [
+          [1, 2, 3],
+          [4, 5, 6],
+        ],
+      ],
+      { dtype: np.float16 },
+    );
+    const kernel = np.array(
+      [
+        [
+          [1, 0, -1],
+          [2, 1, 0],
+        ],
+        [
+          [0, 1, 2],
+          [-1, 0, 1],
+        ],
+      ],
+      { dtype: np.float16 },
+    );
+
+    const expected = lax.convGeneralDilated(x.ref, kernel.ref, [1], [[2, 1]], {
+      lhsDilation: [2],
+    });
+    const actual = convTransposeFn(x, kernel);
+    expect(actual.dtype).toBe(np.float16);
+    expect(actual).toBeAllclose(expected, { rtol: 1e-3, atol: 1e-3 });
   });
 });
