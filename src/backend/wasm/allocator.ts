@@ -1,3 +1,11 @@
+const ALLOCATION_ALIGNMENT = 64;
+const WASM_PAGE_SIZE = 65536;
+const MAX_MEMORY32_BYTES = 2 ** 32;
+
+function alignTo(size: number, alignment: number): number {
+  return Math.ceil(size / alignment) * alignment;
+}
+
 /** Simple tensor memory allocator for WebAssembly linear memory. */
 export class WasmAllocator {
   #memory: WebAssembly.Memory;
@@ -45,26 +53,31 @@ export class WasmAllocator {
 
   #bumpAlloc(size: number): number {
     const ptr = this.#headPtr;
-    size = (size + 63) & -64; // Align to 64 bytes, like Arrow.
-    this.#headPtr += size;
-    if (ptr + size > this.#memory.buffer.byteLength) {
-      // Note: 4 GiB = max memory32 size
-      // https://spidermonkey.dev/blog/2025/01/15/is-memory64-actually-worth-using.html
-      this.#memory.grow(
-        ((ptr + size + 65535) >> 16) - (this.#memory.buffer.byteLength >> 16),
-      );
+    const endPtr = ptr + alignTo(size, ALLOCATION_ALIGNMENT);
+    if (endPtr > MAX_MEMORY32_BYTES) {
+      throw new RangeError("Allocation exceeds the 4 GiB memory32 limit");
     }
+
+    const currentBytes = this.#memory.buffer.byteLength;
+    if (endPtr > currentBytes) {
+      const requiredPages = Math.ceil(endPtr / WASM_PAGE_SIZE);
+      const currentPages = currentBytes / WASM_PAGE_SIZE;
+      this.#memory.grow(requiredPages - currentPages);
+    }
+
+    // Only advance the allocator after memory growth succeeds.
+    this.#headPtr = endPtr;
     return ptr;
   }
 
   #findSizeClass(size: number): number {
     // Small sizes: 64-byte increments from 64 to 512.
     if (size <= 512) {
-      return (size + 63) & -64;
+      return alignTo(size, 64);
     }
     // Medium sizes: 768 (512+256), then 256-byte increments from 1024 to 2048.
     if (size <= 2048) {
-      return (size + 511) & -512;
+      return alignTo(size, 512);
     }
     // Large sizes: powers of 2 from 4 KiB to 64 KiB.
     if (size <= 65536) {
@@ -73,7 +86,7 @@ export class WasmAllocator {
       return sizeClass;
     }
     // Very large sizes: 64 KiB increments starting from 128 KiB.
-    return (size + 65535) & -65536;
+    return alignTo(size, WASM_PAGE_SIZE);
   }
 
   // Debug methods
