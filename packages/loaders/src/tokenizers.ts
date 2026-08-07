@@ -295,7 +295,7 @@ export class BpeEncoding {
         const piece = nextSpecial[0];
         const token = this.specialTokensEncoder.get(piece)!;
         ret.push(token);
-        start = nextSpecial.index + nextSpecial.length;
+        start = nextSpecial.index + nextSpecial[0].length;
       } else {
         break;
       }

@@ -97,6 +97,9 @@ suite("tiktoken encodings", () => {
     const enc = await getBpe("r50k_base");
     expect(enc.encode("hello world")).toEqual([31373, 995]);
     expect(enc.encode("")).toEqual([]);
+    expect(enc.encodeWithSpecialTokens("a<|endoftext|>b")).toEqual([
+      64, 50256, 65,
+    ]);
   });
 
   test("p50k_base", async () => {
