@@ -19,11 +19,11 @@ import {
   negative,
   onesLike,
   reciprocal,
+  repeat,
   sqrt,
   square,
   squeeze,
   tanh,
-  tile,
   where,
   zerosLike,
 } from "./numpy";
@@ -512,8 +512,8 @@ export function dotProductAttention(
         `divisible by number of key/value heads K=${K} for GQA`,
     );
   const G = N / K; // number of query groups
-  key = tile(key, [1, 1, G, 1]);
-  value = tile(value, [1, 1, G, 1]);
+  key = repeat(key, G, 2);
+  value = repeat(value, G, 2);
 
   const scale = opts.scale ?? 1 / Math.sqrt(H);
   let scores = einsum("BLNH,BSNH->BNLS", query, key).mul(scale);

@@ -409,6 +409,15 @@ suite.each(devices)("device:%s", (device) => {
       expect(out.shape).toEqual([1, 2, 4, 2]);
     });
 
+    test("grouped-query attention repeats adjacent key/value heads", () => {
+      const query = np.zeros([1, 1, 4, 1]);
+      const key = np.zeros([1, 1, 2, 1]);
+      const value = np.array([[[[10], [20]]]]);
+
+      const out = nn.dotProductAttention(query, key, value);
+      expect(out).toBeAllclose([[[[10], [10], [20], [20]]]]);
+    });
+
     test("multi-query attention (MQA)", () => {
       // Q: B=1, L=2, N=4 (query heads), H=2
       // K/V: B=1, S=2, K=1 (single key/value head), H=2
