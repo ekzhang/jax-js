@@ -28,7 +28,7 @@
     description: string;
   }[] = [
     {
-      title: "Gemma 3 Chat",
+      title: "LLM Chat",
       href: resolve("/chat"),
       thumbnail: "chat",
       description:

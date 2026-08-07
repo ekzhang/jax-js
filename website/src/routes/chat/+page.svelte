@@ -1,34 +1,19 @@
 <script lang="ts">
-  import { defaultDevice, init, numpy as np, tree } from "@jax-js/jax";
-  import { safetensors, tokenizers } from "@jax-js/loaders";
+  import { defaultDevice, init, numpy as np } from "@jax-js/jax";
   import { GithubIcon } from "@lucide/svelte";
   import { onMount, tick } from "svelte";
 
   import DownloadManager from "$lib/common/DownloadManager.svelte";
   import MarkdownMessage from "./MarkdownMessage.svelte";
   import {
-    createGemmaState,
-    fromSafetensors,
-    GEMMA_CONFIG,
-    type GemmaModel,
-    runGemmaPrefill,
-    runGemmaStep,
-  } from "./gemma";
-
-  const MODEL_BASE =
-    "https://huggingface.co/ekzhang/jax-js-models/resolve/main/gemma-3-270m";
-  const WEIGHTS_URL = `${MODEL_BASE}/model-it-fp16.safetensors`;
-  const TOKENIZER_URL = `${MODEL_BASE}/tokenizer.model`;
-
-  // Gemma chat-template control tokens in tokenizer.model.
-  const START_OF_TURN_TOKEN = 105;
-  const END_OF_TURN_TOKEN = 106;
-
-  type ChatMessage = {
-    id: number;
-    role: "user" | "assistant";
-    content: string;
-  };
+    CHAT_MODEL_IDS,
+    CHAT_MODELS,
+    type ChatMessage,
+    type ChatModelId,
+    type ChatTokenizer,
+    DEFAULT_CHAT_MODEL_ID,
+    type LoadedChatModel,
+  } from "./chat-model";
 
   type ChatBackend = "webgpu" | "wasm";
 
@@ -37,10 +22,12 @@
     wasm: "Wasm",
   };
   const CHAT_BACKENDS: ChatBackend[] = ["webgpu", "wasm"];
+  const INITIAL_SAMPLING = CHAT_MODELS[DEFAULT_CHAT_MODEL_ID].defaults;
 
-  let _model: GemmaModel | null = null;
+  let _model: LoadedChatModel | null = null;
   let _modelBackend: ChatBackend | null = null;
-  let _tokenizer: tokenizers.SentencePiece | null = null;
+  let _tokenizer: ChatTokenizer | null = null;
+  let _tokenizerModelId: ChatModelId | null = null;
 
   let downloadManager: DownloadManager;
   let scrollContainer: HTMLElement;
@@ -57,9 +44,11 @@
   let decodeElapsedMs = $state(0);
 
   let maxNewTokens = $state(2048);
-  let temperature = $state(0.8);
-  let topK = $state(64);
-  let topP = $state(0.95);
+  let temperature = $state(INITIAL_SAMPLING.temperature);
+  let topK = $state(INITIAL_SAMPLING.topK);
+  let topP = $state(INITIAL_SAMPLING.topP);
+  let repetitionPenalty = $state(INITIAL_SAMPLING.repetitionPenalty);
+  let modelId = $state<ChatModelId>(DEFAULT_CHAT_MODEL_ID);
   let backend = $state<ChatBackend>("webgpu");
   let availableBackends = $state<ChatBackend[]>([]);
   let checkedBackends = $state(false);
@@ -99,10 +88,23 @@
   }
 
   function disposeModel() {
-    if (_model) tree.dispose(_model);
+    _model?.dispose();
     _model = null;
     _modelBackend = null;
     hasModel = false;
+  }
+
+  function handleModelChange(event: Event) {
+    const nextModelId = (event.currentTarget as HTMLSelectElement)
+      .value as ChatModelId;
+    if (nextModelId === modelId) return;
+    modelId = nextModelId;
+    const defaults = CHAT_MODELS[modelId].defaults;
+    temperature = defaults.temperature;
+    topK = defaults.topK;
+    topP = defaults.topP;
+    repetitionPenalty = defaults.repetitionPenalty;
+    disposeModel();
   }
 
   function handleBackendChange(event: Event) {
@@ -132,68 +134,41 @@
     defaultDevice(selectedBackend);
   }
 
-  async function getTokenizer(): Promise<tokenizers.SentencePiece> {
-    if (_tokenizer) return _tokenizer;
+  async function getTokenizer(): Promise<ChatTokenizer> {
+    if (_tokenizer && _tokenizerModelId === modelId) return _tokenizer;
+    const definition = CHAT_MODELS[modelId];
     status = "Downloading tokenizer…";
-    const data = await downloadManager.fetch("Gemma tokenizer", TOKENIZER_URL);
-    _tokenizer = tokenizers.SentencePiece.fromBinary(data);
+    const data = await downloadManager.fetch(
+      `${definition.label} tokenizer`,
+      definition.tokenizerUrl,
+    );
+    _tokenizer = definition.createTokenizer(data);
+    _tokenizerModelId = modelId;
     return _tokenizer;
   }
 
-  async function getModel(): Promise<GemmaModel> {
-    if (_model && _modelBackend === backend) return _model;
+  async function getModel(): Promise<LoadedChatModel> {
+    if (_model?.definition.id === modelId && _modelBackend === backend) {
+      return _model;
+    }
     if (_model) disposeModel();
 
+    const definition = CHAT_MODELS[modelId];
     status = "Downloading model weights…";
     const data = await downloadManager.fetch(
-      "Gemma 3 270M weights",
-      WEIGHTS_URL,
+      `${definition.label} weights`,
+      definition.weightsUrl,
     );
-
-    status = "Parsing checkpoint…";
-    const weights = safetensors.parse(data);
 
     const weightDtype = backend === "wasm" ? np.float32 : np.float16;
     status =
       backend === "wasm"
         ? "Preparing float32 weights for Wasm…"
         : "Uploading weights to WebGPU…";
-    _model = await fromSafetensors(weights, weightDtype);
+    _model = await definition.loadCheckpoint(data, weightDtype);
     _modelBackend = backend;
     hasModel = true;
     return _model;
-  }
-
-  function visibleTokens(
-    tokenizer: tokenizers.SentencePiece,
-    tokens: number[],
-  ) {
-    return tokens.filter(
-      (token) =>
-        token !== GEMMA_CONFIG.padTokenId &&
-        token !== tokenizer.bosToken &&
-        token !== tokenizer.eosToken &&
-        token !== START_OF_TURN_TOKEN &&
-        token !== END_OF_TURN_TOKEN,
-    );
-  }
-
-  function decodeTokens(tokenizer: tokenizers.SentencePiece, tokens: number[]) {
-    return tokenizer.decode(visibleTokens(tokenizer, tokens));
-  }
-
-  function formatPrompt(history: ChatMessage[]) {
-    // Matches the Gemma chat template, excluding the BOS token; we add BOS as
-    // token ID separately so SentencePiece doesn't treat it as normal text.
-    let text = "";
-    for (const message of history) {
-      const content = message.content.trim();
-      if (content === "") continue;
-      const role = message.role === "assistant" ? "model" : "user";
-      text += `<start_of_turn>${role}\n${content}<end_of_turn>\n`;
-    }
-    text += "<start_of_turn>model\n";
-    return text;
   }
 
   function updateMessage(id: number, content: string) {
@@ -208,14 +183,23 @@
       temperature: number;
       topK: number;
       topP: number;
+      repetitionPenalty: number;
+      previousTokens: number[];
     },
   ): number {
     const k = Math.max(1, Math.min(opts.topK, logits.length));
     const candidates: { id: number; logit: number }[] = [];
+    const previousTokens = new Set(opts.previousTokens);
 
     for (let id = 0; id < logits.length; id++) {
-      const logit = logits[id];
+      let logit = logits[id];
       if (Number.isNaN(logit)) continue;
+      if (opts.repetitionPenalty !== 1 && previousTokens.has(id)) {
+        logit =
+          logit < 0
+            ? logit * opts.repetitionPenalty
+            : logit / opts.repetitionPenalty;
+      }
 
       // Keep the candidates in order of descending logit value, maintain insertion.
       if (
@@ -269,12 +253,17 @@
     return candidates[kept - 1].id;
   }
 
-  async function sampleNextToken(logits: np.Array): Promise<number> {
+  async function sampleNextToken(
+    logits: np.Array,
+    previousTokens: number[],
+  ): Promise<number> {
     const data = await logits.data();
     return sampleLogits(data as Float32Array, {
       temperature,
       topK,
       topP,
+      repetitionPenalty,
+      previousTokens,
     });
   }
 
@@ -285,34 +274,33 @@
     await setupDevice();
     const tokenizer = await getTokenizer();
     const model = await getModel();
+    const definition = model.definition;
 
-    const promptTokens = [
-      tokenizer.bosToken,
-      ...tokenizer.encode(formatPrompt(history)),
-    ];
+    const promptTokens = definition.encodePrompt(tokenizer, history);
     const generatedTokens: number[] = [];
-    const state = createGemmaState({
-      dtype: backend === "wasm" ? np.float32 : np.float16,
-    });
     const inputIds = np.array(promptTokens, { dtype: np.uint32 });
+    const session = model.createSession();
+    const stopTokens = definition.stopTokens(tokenizer);
     let logits: np.Array | null = null;
     const startTime = performance.now();
 
     try {
       status = `Reading ${promptTokens.length} context tokens…`;
-      logits = runGemmaPrefill(tree.ref(model), inputIds, state);
+      logits = session.prefill(inputIds);
       scrollToBottom();
 
       for (let i = 0; i < maxNewTokens; i++) {
         status = `Sampling ${i + 1}/${maxNewTokens}…`;
         const sampledLogits = logits;
         logits = null; // logits.data() consumes this array; avoid disposing it again in finally.
-        const stopTokens = [tokenizer.eosToken, END_OF_TURN_TOKEN];
         // if (i === 4 || i === 5) profiler.startTrace();
-        const nextToken = await sampleNextToken(sampledLogits);
+        const nextToken = await sampleNextToken(sampledLogits, [
+          ...promptTokens,
+          ...generatedTokens,
+        ]);
         // if (i === 4 || i === 5) profiler.stopTrace();
 
-        console.debug("Gemma sampled token", {
+        console.debug(`${definition.label} sampled token`, {
           nextToken,
           piece: tokenizer.decode([nextToken]),
         });
@@ -331,13 +319,13 @@
         }
         updateMessage(
           assistantMessageId,
-          decodeTokens(tokenizer, generatedTokens),
+          tokenizer.decodeGenerated(generatedTokens),
         );
         scrollToBottom();
 
         if (i === maxNewTokens - 1) break;
         status = `Running token ${i + 1}/${maxNewTokens}…`;
-        logits = runGemmaStep(tree.ref(model), nextToken, state);
+        logits = session.step(nextToken);
       }
 
       status = "✔️ Done";
@@ -345,7 +333,7 @@
         updateMessage(assistantMessageId, "(end of text)");
     } finally {
       logits?.dispose();
-      tree.dispose(state);
+      session.dispose();
     }
   }
 
@@ -420,7 +408,7 @@
           Chat
           <span
             class="font-normal border rounded-md px-1 ml-1 text-sm text-gray-500 border-gray-300"
-            >Gemma 3 270M</span
+            >{CHAT_MODELS[modelId].label}</span
           >
         </h1>
         <p class="text-sm text-gray-500">
@@ -439,6 +427,28 @@
             class="absolute right-0 z-10 mt-2 w-72 rounded-2xl border border-gray-200 bg-white p-4 shadow-xl"
           >
             <div class="space-y-4 text-sm">
+              <div>
+                <label class="block text-gray-700">
+                  Model
+                  <select
+                    class="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1"
+                    value={modelId}
+                    onchange={handleModelChange}
+                    disabled={running}
+                  >
+                    {#each CHAT_MODEL_IDS as id}
+                      <option value={id}>{CHAT_MODELS[id].label}</option>
+                    {/each}
+                  </select>
+                </label>
+
+                <p class="mt-2 text-xs text-gray-500">
+                  Switching models keeps each checkpoint cached in your browser.
+                </p>
+              </div>
+
+              <hr class="border-gray-200" />
+
               <div>
                 <label class="block text-gray-700">
                   Backend
@@ -511,6 +521,18 @@
                 />
               </label>
 
+              <label class="block text-gray-700">
+                Repetition penalty: {repetitionPenalty.toFixed(2)}
+                <input
+                  type="range"
+                  min="1"
+                  max="1.5"
+                  step="0.01"
+                  class="mt-1 w-full"
+                  bind:value={repetitionPenalty}
+                />
+              </label>
+
               <p class="text-xs text-gray-500">
                 KV cache is allocated dynamically for the current chat.
               </p>
@@ -542,8 +564,9 @@
         <div class="py-24 text-center">
           <h2 class="text-2xl font-semibold mb-2">Talk to an LLM</h2>
           <p class="text-gray-500 max-w-md mx-auto">
-            The first message downloads and caches a 536&nbsp;MB fp16
-            checkpoint. Everything runs locally in your browser.
+            The first message downloads and caches a
+            {CHAT_MODELS[modelId].downloadSize} fp16 checkpoint. Everything runs locally
+            in your browser.
           </p>
         </div>
       {:else}
