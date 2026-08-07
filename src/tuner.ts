@@ -291,7 +291,7 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
     const choices: number[][] = [];
     const composedSts = sts.map((st) => st.compose(dim.st));
     for (let axis = 0; axis < dim.groups; axis++) {
-      for (const amount of [3, 4, 5]) {
+      for (const [priority, amount] of [4, 3, 5].entries()) {
         // Axis is not upcasted, divisible, and has a buffer with stride 0 on
         // that axis (mem coalescing) while not already a stride-0 upcast.
         if (
@@ -309,13 +309,13 @@ export function tuneWebgpu(kernel: Kernel): TuneResult {
             nonzeroStrides += st.lastStrides[axis] > 0 ? 1 : 0;
             totalStrides += st.lastStrides[axis];
           }
-          choices.push([nonzeroStrides, totalStrides, axis, amount]);
+          choices.push([nonzeroStrides, totalStrides, axis, priority, amount]);
         }
       }
     }
     if (choices.length > 0) {
       choices.sort(lexCompare);
-      dim.applyUpcast(choices[0][2], choices[0][3]);
+      dim.applyUpcast(choices[0][2], choices[0][4]);
       upcastedAxis.add(choices[0][2]);
     } else {
       break;
