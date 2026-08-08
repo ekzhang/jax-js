@@ -218,6 +218,44 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.mean()", () => {
+    test("promotes integer input to float", () => {
+      // Regression test: mean() used to cast the result back to the input
+      // dtype, truncating the fractional part (e.g. mean([1,2,3,4]) -> 2).
+      const x = np.array([1, 2, 3, 4], { dtype: np.int32 });
+      const y = np.mean(x);
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toBeCloseTo(2.5);
+    });
+
+    test("promotes boolean input to float", () => {
+      const x = np.array([true, false, true], { dtype: np.bool });
+      const y = np.mean(x);
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toBeCloseTo(2 / 3);
+    });
+
+    test("keeps float32 dtype", () => {
+      const x = np.array([1, 2, 3, 4], { dtype: np.float32 });
+      const y = np.mean(x);
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toBeCloseTo(2.5);
+    });
+
+    test("works along an axis", () => {
+      const x = np.array(
+        [
+          [1, 2, 3],
+          [4, 5, 6],
+        ],
+        { dtype: np.int32 },
+      );
+      const y = np.mean(x, 1);
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toEqual([2, 5]);
+    });
+  });
+
   suite("jax.numpy.cumsum()", () => {
     test("computes cumsum along axis", () => {
       const x = np.array([

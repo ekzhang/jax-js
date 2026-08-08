@@ -884,7 +884,12 @@ export abstract class Tracer {
     const originalDtype = this.dtype;
     const castDtype = promoteTypes(originalDtype, DType.Float32);
     const result = reduce(this.astype(castDtype), AluOp.Add, axis, opts);
-    return result.mul(1 / n).astype(originalDtype) as this;
+    const out = result.mul(1 / n);
+    // JAX promotes integer and boolean inputs to float; only cast back to the
+    // original dtype when it is already floating-point (e.g. float16).
+    return (
+      isFloatDtype(originalDtype) ? out.astype(originalDtype) : out
+    ) as this;
   }
 
   /** Minimum of the elements of the array along a given axis. */
