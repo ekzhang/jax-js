@@ -872,6 +872,7 @@ export class Array extends Tracer {
       for (const p of pending) p.submit();
     }
     const backend = this.#backend as import("../backend/webgpu").WebGPUBackend;
+    backend.flush(); // flush batched work so the buffer is current
     const { buffer } = backend.buffers.get(this.#source as Slot)!;
     this.dispose();
     return buffer;
@@ -887,6 +888,7 @@ export class Array extends Tracer {
       p.submit();
     }
     const backend = this.#backend as import("../backend/webgpu").WebGPUBackend;
+    backend.flush();
     const { buffer } = backend.buffers.get(this.#source as Slot)!;
     this.dispose();
     return buffer;
