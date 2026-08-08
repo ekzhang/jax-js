@@ -273,7 +273,7 @@ Most operations behave the same way as they do in JAX.
 | `iinfo`               | 🟢      |                                         |
 | `imag`                | ⚪️      | complex numbers                         |
 | `index_exp`           | ⚪️      | Python-specific                         |
-| `indices`             | 🟠      |                                         |
+| `indices`             | 🟢      |                                         |
 | `inner`               | 🟢      |                                         |
 | `insert`              | 🟠      |                                         |
 | `interp`              | 🟠      |                                         |

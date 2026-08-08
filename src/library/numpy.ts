@@ -6,6 +6,7 @@ import {
   Array,
   array,
   type ArrayLike,
+  type DTypeAndDevice,
   DTypeShapeAndDevice,
   eye,
   fudgeArray,
@@ -2068,6 +2069,48 @@ export function meshgrid(
         ...range(i + 1, xs.length),
       ]) as Array,
   );
+}
+
+/**
+ * Return an array representing the indices of a grid.
+ *
+ * Computes an array where the subarrays contain index values 0, 1, … varying
+ * only along the corresponding axis. The result has shape
+ * `[dimensions.length, ...dimensions]`.
+ *
+ * If `sparse` is set, returns one array per dimension instead, each with shape
+ * 1 in all dimensions except its own.
+ */
+export function indices(
+  dimensions: number[],
+  opts?: DTypeAndDevice & { sparse?: false },
+): Array;
+export function indices(
+  dimensions: number[],
+  opts: DTypeAndDevice & { sparse: true },
+): Array[];
+export function indices(
+  dimensions: number[],
+  opts: DTypeAndDevice & { sparse: boolean },
+): Array | Array[];
+export function indices(
+  dimensions: number[],
+  { dtype, device, sparse }: DTypeAndDevice & { sparse?: boolean } = {},
+): Array | Array[] {
+  dtype = dtype ?? int32;
+  if (dimensions.some((d) => !Number.isInteger(d) || d < 0)) {
+    throw new Error(
+      `indices: dimensions must be non-negative integers, got ${JSON.stringify(dimensions)}`,
+    );
+  }
+  const output = dimensions.map((dim, i) => {
+    const shape = rep(dimensions.length, 1);
+    shape[i] = dim;
+    const x = arange(0, dim, 1, { dtype, device }).reshape(shape);
+    return sparse ? x : broadcastTo(x, dimensions);
+  });
+  if (sparse) return output;
+  return output.length > 0 ? stack(output) : zeros([0], { dtype, device });
 }
 
 /**

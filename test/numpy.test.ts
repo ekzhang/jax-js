@@ -1639,6 +1639,71 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.indices()", () => {
+    test("creates dense index grid", () => {
+      const grid = np.indices([2, 3]);
+      expect(grid.shape).toEqual([2, 2, 3]);
+      expect(grid.dtype).toBe(np.int32);
+      expect(grid.js()).toEqual([
+        [
+          [0, 0, 0],
+          [1, 1, 1],
+        ],
+        [
+          [0, 1, 2],
+          [0, 1, 2],
+        ],
+      ]);
+    });
+
+    test("works with a single dimension", () => {
+      const grid = np.indices([4]);
+      expect(grid.shape).toEqual([1, 4]);
+      expect(grid.js()).toEqual([[0, 1, 2, 3]]);
+    });
+
+    test("supports sparse output", () => {
+      const [row, col] = np.indices([2, 3], { sparse: true });
+      expect(row.shape).toEqual([2, 1]);
+      expect(col.shape).toEqual([1, 3]);
+      expect(row.js()).toEqual([[0], [1]]);
+      expect(col.js()).toEqual([[0, 1, 2]]);
+    });
+
+    test("supports a dynamic sparse option", () => {
+      const makeIndices = (sparse: boolean) => np.indices([2, 3], { sparse });
+      expect(Array.isArray(makeIndices(false))).toBe(false);
+      expect(Array.isArray(makeIndices(true))).toBe(true);
+    });
+
+    test("supports dtype option", () => {
+      const grid = np.indices([2, 2], { dtype: np.float32 });
+      expect(grid.dtype).toBe(np.float32);
+      expect(grid.js()).toEqual([
+        [
+          [0, 0],
+          [1, 1],
+        ],
+        [
+          [0, 1],
+          [0, 1],
+        ],
+      ]);
+    });
+
+    test("handles empty dimensions", () => {
+      const grid = np.indices([]);
+      expect(grid.shape).toEqual([0]);
+      expect(grid.js()).toEqual([]);
+      expect(np.indices([], { sparse: true })).toEqual([]);
+    });
+
+    test("rejects invalid dimensions", () => {
+      expect(() => np.indices([2, -1])).toThrow("non-negative integers");
+      expect(() => np.indices([1.5])).toThrow("non-negative integers");
+    });
+  });
+
   suite("jax.numpy.minimum()", () => {
     test("computes element-wise minimum", () => {
       const x = np.array([1, 2, 3]);
