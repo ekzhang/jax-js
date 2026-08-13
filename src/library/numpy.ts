@@ -1943,7 +1943,7 @@ export function polyval(p: ArrayLike, x: ArrayLike): Array {
   const n = p.shape[0];
   const powers = vander(ravel(x), { n }).reshape([...x.shape, n]);
   const coeffs = moveaxis(p, 0, -1);
-  return coeffs.mul(powers).sum(-1);
+  return vecdot(coeffs, powers);
 }
 
 /**
