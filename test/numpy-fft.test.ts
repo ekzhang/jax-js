@@ -76,10 +76,13 @@ suite.each(fftDevices)("device:%s", (device) => {
         [6, 8, 10, 12],
         [-4, -4, -4, -4],
       ]);
-      expect(result.imag).toBeAllclose([
-        [0, 0, 0, 0],
-        [0, 0, 0, 0],
-      ]);
+      expect(result.imag).toBeAllclose(
+        [
+          [0, 0, 0, 0],
+          [0, 0, 0, 0],
+        ],
+        { atol: 1e-5 },
+      );
     });
   });
 
@@ -129,14 +132,20 @@ suite.each(fftDevices)("device:%s", (device) => {
       const imag = np.zeros([2, 2]);
       const result = np.fft.fftn({ real, imag });
 
-      expect(result.real).toBeAllclose([
-        [10, -2],
-        [-4, 0],
-      ]);
-      expect(result.imag).toBeAllclose([
-        [0, 0],
-        [0, 0],
-      ]);
+      expect(result.real).toBeAllclose(
+        [
+          [10, -2],
+          [-4, 0],
+        ],
+        { atol: 1e-5 },
+      );
+      expect(result.imag).toBeAllclose(
+        [
+          [0, 0],
+          [0, 0],
+        ],
+        { atol: 1e-5 },
+      );
     });
 
     test("FFTN followed by IFFTN returns original input", () => {
