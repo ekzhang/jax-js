@@ -1,4 +1,12 @@
-import { hessian, jacfwd, jacrev, jvp, numpy as np, vmap } from "@jax-js/jax";
+import {
+  grad,
+  hessian,
+  jacfwd,
+  jacrev,
+  jvp,
+  numpy as np,
+  vmap,
+} from "@jax-js/jax";
 import { expect, suite, test } from "vitest";
 
 test("can create array", () => {
@@ -61,6 +69,24 @@ suite("jax.jvp()", () => {
     );
     expect(pmin).toBeAllclose(1);
     expect(jmin).toBeAllclose(2.5); // (0+5)/2
+  });
+});
+
+suite("jax.grad()", () => {
+  test("can differentiate through broadcast of a size-1 axis", () => {
+    // The transpose of a broadcast must sum cotangents over expanded axes of
+    // size 1, not just over newly inserted axes.
+    const f = (x: np.Array) =>
+      np.sum(
+        np.broadcastTo(x.reshape([2, 1]), [2, 3]).mul(
+          np.array([
+            [1, 2, 3],
+            [4, 5, 6],
+          ]),
+        ),
+      );
+    const dx = grad(f)(np.array([1.0, 2.0]));
+    expect(dx).toBeAllclose([6, 15]);
   });
 });
 

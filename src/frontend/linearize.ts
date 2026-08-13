@@ -890,7 +890,14 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
   [Primitive.Broadcast]([ct], [x], { axis }) {
     if (!(x instanceof UndefPrimal))
       throw new NonlinearError(Primitive.Broadcast);
-    return [reduce(ct, AluOp.Add, axis)];
+    let out = reduce(ct, AluOp.Add, axis);
+    // Sum over input axes of size 1 that were expanded by the broadcast.
+    const expanded = x.aval.shape.flatMap((d, i) =>
+      d === 1 && out.shape[i] !== 1 ? [i] : [],
+    );
+    if (expanded.length > 0)
+      out = reduce(out, AluOp.Add, expanded, { keepdims: true });
+    return [out];
   },
   [Primitive.Reshape]([ct], [x], _) {
     if (!(x instanceof UndefPrimal))

@@ -551,31 +551,68 @@ export function argmax(
   return length.sub(max(idx, axis, opts));
 }
 
+/**
+ * Direct O(n^2) cumulative reduction of the last axis, by a masked reduction.
+ * The diagonal offset `k` selects an inclusive (0) or exclusive (-1) scan.
+ */
+function cumulativeQuadratic(
+  op: AluOp.Add | AluOp.Mul,
+  a: Array,
+  padValue: number,
+  k: number = 0,
+): Array {
+  const n = a.shape[a.ndim - 1];
+  a = core.broadcast(a, a.shape.concat(n), [-2]) as Array;
+  return core.reduce(
+    where(tri(n, n, k, { dtype: bool }), a, padValue),
+    op,
+    -1,
+  ) as Array;
+}
+
 function cumulativeHelper(
-  op: (x: Array) => Array,
+  op: AluOp.Add | AluOp.Mul,
   a: ArrayLike,
   axis: number,
-  padValue: number,
 ): Array {
+  const padValue = op === AluOp.Add ? 0 : 1; // identity element of `op`
   a = fudgeArray(a);
   if (a.ndim === 0) a = a.reshape([1]);
   axis = checkAxis(axis, a.ndim);
-  const n = a.shape[axis];
   a = moveaxis(a, axis, -1);
-  a = core.broadcast(a, a.shape.concat(n), [-2]) as Array;
-  a = where(tri(n, n, 0, { dtype: bool }), a, padValue);
-  return moveaxis(op(a), -1, axis);
+  const n = a.shape[a.ndim - 1];
+
+  const split = 256; // Chunk size for two-stage reduction
+  if (n <= split * 2) {
+    return moveaxis(cumulativeQuadratic(op, a, padValue), -1, axis);
+  }
+  // Two-stage: scan chunks of `split` independently, then offset each chunk by
+  // an exclusive scan of the chunk totals. Zero-padding the axis up to a
+  // multiple of `split` is safe even for products, since the padded tail only
+  // reaches outputs that are sliced off and the last chunk's unused total.
+  const batch = a.shape.slice(0, -1);
+  const cols = batch.map((): [] => []);
+  const m = Math.ceil(n / split);
+  a = core.pad(a, { [a.ndim - 1]: [0, m * split - n] }) as Array;
+  const scans = cumulativeQuadratic(
+    op,
+    a.reshape([...batch, m, split]),
+    padValue,
+  );
+  const totals = scans.ref.slice(...cols, [], -1);
+  const offsets = cumulativeQuadratic(op, totals, padValue, -1);
+  const out =
+    op === AluOp.Add
+      ? scans.add(offsets.reshape([...batch, m, 1]))
+      : scans.mul(offsets.reshape([...batch, m, 1]));
+  const result = out.reshape([...batch, m * split]).slice(...cols, [0, n]);
+  return moveaxis(result, -1, axis);
 }
 
-/**
- * Cumulative sum of elements along an axis.
- *
- * Currently this function is `O(n^2)`, we'll improve this later on with a
- * two-phase parallel reduction algorithm.
- */
+/** Cumulative sum of elements along an axis. */
 export function cumsum(a: ArrayLike, axis?: number): Array {
   if (axis === undefined) ((a = ravel(a)), (axis = 0));
-  return cumulativeHelper((x) => x.sum(-1), a, axis, 0);
+  return cumulativeHelper(AluOp.Add, a, axis);
 }
 
 /** Alternative API for `jax.numpy.cumsum()`. */
@@ -592,18 +629,13 @@ export function cumulativeSum(
     const pad = zerosLike(x.ref, { shape: x.shape.toSpliced(axis, 1, 1) });
     x = concatenate([pad, x], axis);
   }
-  return cumulativeHelper((x) => x.sum(-1), x, axis, 0);
+  return cumulativeHelper(AluOp.Add, x, axis);
 }
 
-/**
- * Cumulative product of elements along an axis.
- *
- * Currently this function is `O(n^2)`, we'll improve this later on with a
- * two-phase parallel reduction algorithm.
- */
+/** Cumulative product of elements along an axis. */
 export function cumprod(a: ArrayLike, axis?: number): Array {
   if (axis === undefined) ((a = ravel(a)), (axis = 0));
-  return cumulativeHelper((x) => x.prod(-1), a, axis, 1);
+  return cumulativeHelper(AluOp.Mul, a, axis);
 }
 
 /** Alternative API for `jax.numpy.cumprod()`. */
@@ -620,7 +652,7 @@ export function cumulativeProd(
     const pad = onesLike(x.ref, { shape: x.shape.toSpliced(axis, 1, 1) });
     x = concatenate([pad, x], axis);
   }
-  return cumulativeHelper((x) => x.prod(-1), x, axis, 1);
+  return cumulativeHelper(AluOp.Mul, x, axis);
 }
 
 /**
@@ -1881,22 +1913,17 @@ export function vander(
   }
   const rows = x.shape[0];
   if (n <= 1) return onesLike(x, { shape: [rows, n] });
-  const ones = onesLike(x.ref, { shape: [rows, 1] });
-  const powers = increasing
-    ? arange(1, n, 1, { dtype: x.dtype, device: x.device })
-    : arange(n - 1, 0, -1, { dtype: x.dtype, device: x.device });
-  const powered = power(x.reshape([rows, 1]), powers.reshape([1, n - 1]));
-  return increasing
-    ? concatenate([ones, powered], 1)
-    : concatenate([powered, ones], 1);
+  const tiled = broadcastTo(x.reshape([rows, 1]), [rows, n - 1]);
+  const result = cumulativeProd(tiled, { axis: 1, includeInitial: true });
+  return increasing ? result : flip(result, 1);
 }
 
 /**
  * Evaluate a polynomial at specific values.
  *
  * If `p` has length N, this returns the value
- * `p[0]*x**(N-1) + p[1]*x**(N-2) + ... + p[N-2]*x + p[N-1]`, computed via
- * Horner's scheme. Additional dimensions in `p` are broadcast against `x`.
+ * `p[0]*x**(N-1) + p[1]*x**(N-2) + ... + p[N-2]*x + p[N-1]`. Additional
+ * dimensions in `p` are broadcast against `x`.
  *
  * @param p - Array of polynomial coefficients along the leading axis, from
  *   highest degree to the constant term.
@@ -1914,15 +1941,9 @@ export function polyval(p: ArrayLike, x: ArrayLike): Array {
     );
   }
   const n = p.shape[0];
-  const dtype = core.promoteAvals(p.aval.scalar(), x.aval.scalar()).dtype;
-  const shape = generalBroadcast(p.shape.slice(1), x.shape);
-  let y = zerosLike(x.ref, { dtype, shape });
-  for (let i = 0; i < n; i++) {
-    y = y.mul(x.ref).add(p.ref.slice(i));
-  }
-  p.dispose();
-  x.dispose();
-  return y;
+  const powers = vander(ravel(x), { n }).reshape([...x.shape, n]);
+  const coeffs = moveaxis(p, 0, -1);
+  return coeffs.mul(powers).sum(-1);
 }
 
 /**
