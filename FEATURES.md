@@ -196,10 +196,10 @@ Most operations behave the same way as they do in JAX.
 | `count_nonzero`       | 🟢      |                                         |
 | `cov`                 | 🟢      |                                         |
 | `cross`               | 🟢      |                                         |
-| `cumprod`             | 🟡      | Quadratic-time                          |
-| `cumsum`              | 🟡      | Quadratic-time                          |
-| `cumulative_prod`     | 🟡      | Quadratic-time                          |
-| `cumulative_sum`      | 🟡      | Quadratic-time                          |
+| `cumprod`             | 🟢      |                                         |
+| `cumsum`              | 🟢      |                                         |
+| `cumulative_prod`     | 🟢      |                                         |
+| `cumulative_sum`      | 🟢      |                                         |
 | `deg2rad`             | 🟢      |                                         |
 | `degrees`             | 🟢      |                                         |
 | `delete`              | 🟠      |                                         |
