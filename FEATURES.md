@@ -366,7 +366,7 @@ Most operations behave the same way as they do in JAX.
 | `place`               | 🔴      |                                         |
 | `poly`                | 🔴      |                                         |
 | `polyadd`             | 🟢      |                                         |
-| `polyder`             | 🟠      |                                         |
+| `polyder`             | 🟢      |                                         |
 | `polydiv`             | 🔴      |                                         |
 | `polyfit`             | 🔴      |                                         |
 | `polyint`             | 🟠      |                                         |
