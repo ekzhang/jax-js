@@ -2139,6 +2139,83 @@ export function polysub(a1: ArrayLike, a2: ArrayLike): Array {
 }
 
 /**
+ * Return an antiderivative (indefinite integral) of a polynomial.
+ *
+ * @param p - Array of polynomial coefficients along the leading axis.
+ * @param m - Order of the antiderivative, a non-negative integer.
+ * @param k - Integration constants, a scalar or 1D array of length 1 or `m`,
+ *   applied from the first integration to the last. Defaults to zeros.
+ */
+export function polyint(
+  p: ArrayLike,
+  m: number = 1,
+  k: ArrayLike | null = null,
+): Array {
+  p = fudgeArray(p);
+  const kArr = k === null ? null : fudgeArray(k);
+  if (!Number.isInteger(m) || m < 0) {
+    p.dispose();
+    kArr?.dispose();
+    throw new Error(`polyint: m must be a non-negative integer, got ${m}`);
+  }
+  if (p.ndim === 0) {
+    p.dispose();
+    kArr?.dispose();
+    throw new Error(
+      "polyint: coefficients must have at least one dimension, got 0D",
+    );
+  }
+  if (
+    kArr !== null &&
+    (kArr.ndim > 1 ||
+      (kArr.ndim === 1 && kArr.shape[0] !== 1 && kArr.shape[0] !== m))
+  ) {
+    const shape = kArr.shape;
+    p.dispose();
+    kArr.dispose();
+    throw new Error(
+      `polyint: k must be a scalar or a 1D array of length 1 or ${m}, ` +
+        `got shape ${JSON.stringify(shape)}`,
+    );
+  }
+
+  let dtype = kArr === null ? resultType(p) : resultType(p, kArr);
+  if (!isFloatDtype(dtype)) dtype = float32;
+  p = astype(p, dtype);
+  if (m === 0) {
+    kArr?.dispose();
+    return p;
+  }
+
+  const kShape = [m, ...p.shape.slice(1)];
+  let konst: Array;
+  if (kArr === null) {
+    konst = zeros(kShape, { dtype });
+  } else {
+    let aligned = astype(kArr, dtype);
+    if (aligned.ndim === 1)
+      aligned = aligned.reshape([aligned.shape[0], ...rep(p.ndim - 1, 1)]);
+    konst = broadcastTo(aligned, kShape);
+  }
+
+  // Divide each coefficient by the product of its `m` successive powers, per
+  // the power rule. Constants at index i < m are divided by i! instead.
+  const total = p.shape[0] + m;
+  const scale: number[] = [];
+  for (let i = 0; i < total; i++) {
+    let c = 1;
+    for (let j = 0; j < m; j++) c *= Math.max(1, i - j);
+    scale.push(c);
+  }
+  scale.reverse();
+  const divisor = array(scale, { dtype }).reshape([
+    total,
+    ...rep(p.ndim - 1, 1),
+  ]);
+  return concatenate([p, konst], 0).div(divisor);
+}
+
+/**
  * Return the product of two polynomials.
  */
 export function polymul(a1: ArrayLike, a2: ArrayLike): Array {

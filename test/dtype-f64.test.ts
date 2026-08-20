@@ -100,6 +100,13 @@ suite.each(devices)("device:%s", (device) => {
     expect(y.ref.dataSync()[1]).toBe(3.1415926535897927);
   });
 
+  test("polyint() preserves f64 dtype", () => {
+    const p = np.array([3, 2, 1], { dtype: np.float64 });
+    const y = np.polyint(p);
+    expect(y.dtype).toBe(np.float64);
+    expect(y.js()).toEqual([1, 1, 1, 0]);
+  });
+
   test("polymul() preserves f64 precision", () => {
     const a = np.array([1, 1e-12], { dtype: np.float64 });
     const b = np.array([1, 1], { dtype: np.float64 });

@@ -3943,6 +3943,114 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.polyint()", () => {
+    test("integrates with a zero constant by default", () => {
+      const p = np.array([3, 2, 1]); // 3x^2 + 2x + 1
+      expect(np.polyint(p)).toBeAllclose([1, 1, 1, 0]);
+    });
+
+    test("supports higher-order antiderivatives", () => {
+      const p = np.array([3, 2, 1]);
+      expect(np.polyint(p, 2)).toBeAllclose([0.25, 1 / 3, 0.5, 0, 0]);
+    });
+
+    test("treats zero-order integration as identity", () => {
+      const p = np.array([3, 2, 1]);
+      expect(np.polyint(p, 0).js()).toEqual([3, 2, 1]);
+    });
+
+    test("applies integration constants", () => {
+      expect(np.polyint(np.array([3, 2, 1]), 1, 5)).toBeAllclose([1, 1, 1, 5]);
+      expect(np.polyint(np.array([3, 2, 1]), 2, np.array([4, 6]))).toBeAllclose(
+        [0.25, 1 / 3, 0.5, 4, 6],
+      );
+      // A single constant is repeated for each integration.
+      expect(np.polyint(np.array([3, 2, 1]), 2, np.array([5]))).toBeAllclose([
+        0.25,
+        1 / 3,
+        0.5,
+        5,
+        5,
+      ]);
+      // Constants from earlier integrations are divided by later powers.
+      expect(np.polyint(np.array([6]), 3, np.array([2, 3, 4]))).toBeAllclose([
+        1, 1, 3, 4,
+      ]);
+    });
+
+    test("promotes dtype to floating point", () => {
+      const y = np.polyint(np.array([2, 4], { dtype: np.int32 }));
+      expect(y.dtype).toBe(np.float32);
+      expect(y).toBeAllclose([1, 4, 0]);
+      const identity = np.polyint(np.array([1, 2], { dtype: np.int32 }), 0);
+      expect(identity.dtype).toBe(np.float32);
+    });
+
+    test("supports batched coefficients", () => {
+      const p = np.array([
+        [1, 2],
+        [3, 4],
+      ]);
+      expect(np.polyint(p.ref).js()).toEqual([
+        [0.5, 1],
+        [3, 4],
+        [0, 0],
+      ]);
+      expect(np.polyint(p.ref, 1, 7).js()).toEqual([
+        [0.5, 1],
+        [3, 4],
+        [7, 7],
+      ]);
+      expect(np.polyint(p, 2, np.array([1, 2]))).toBeAllclose([
+        [1 / 6, 1 / 3],
+        [1.5, 2],
+        [1, 1],
+        [2, 2],
+      ]);
+    });
+
+    test("handles empty coefficients", () => {
+      expect(np.polyint(np.zeros([0])).js()).toEqual([0]);
+    });
+
+    test("supports grad and jit", () => {
+      const f = jit((a: np.Array) => np.polyint(a));
+      expect(f(np.array([2.0, 0.0]))).toBeAllclose([1, 0, 0]);
+
+      const g = (a: np.Array) =>
+        np
+          .polyint(a)
+          .mul(np.array([4, 3, 2, 1]))
+          .sum();
+      const da = grad(g)(np.array([1, 2, 3], { dtype: np.float32 }));
+      expect(da).toBeAllclose([4 / 3, 3 / 2, 2]);
+    });
+
+    test("rejects invalid order", () => {
+      expect(() => np.polyint(np.array([1, 2]), -1)).toThrow(
+        "polyint: m must be a non-negative integer",
+      );
+      expect(() => np.polyint(np.array([1, 2]), 0.5)).toThrow(
+        "polyint: m must be a non-negative integer",
+      );
+    });
+
+    test("rejects scalar coefficients", () => {
+      expect(() => np.polyint(np.array(1))).toThrow(
+        "polyint: coefficients must have at least one dimension",
+      );
+    });
+
+    test("rejects invalid integration constants", () => {
+      expect(() =>
+        np.polyint(np.array([1, 2]), 2, np.array([1, 2, 3])),
+      ).toThrow("polyint: k must be a scalar or a 1D array of length 1 or 2");
+      expect(() => np.polyint(np.array([1, 2]), 1, np.array([[1]]))).toThrow(
+        "polyint: k must be a scalar or a 1D array",
+      );
+    });
+  });
+
   suite("jax.numpy.polymul()", () => {
     test("multiplies polynomials of equal length", () => {
       const a1 = np.array([2, 1, 0]);
