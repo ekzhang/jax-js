@@ -444,7 +444,7 @@ Most operations behave the same way as they do in JAX.
 | `tril_indices_from`   | 🟠      |                                         |
 | `trim_zeros`          | 🟠      |                                         |
 | `triu`                | 🟢      |                                         |
-| `triu_indices`        | 🟠      |                                         |
+| `triu_indices`        | 🟢      |                                         |
 | `triu_indices_from`   | 🟠      |                                         |
 | `true_divide`         | 🟢      |                                         |
 | `trunc`               | 🟢      |                                         |

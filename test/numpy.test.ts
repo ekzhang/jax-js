@@ -883,6 +883,62 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.triuIndices()", () => {
+    test("returns indices for the upper triangle of a square array", () => {
+      const [rows, cols] = np.triuIndices(3);
+      expect(rows.dtype).toBe(np.int32);
+      expect(cols.dtype).toBe(np.int32);
+      expect(rows.js()).toEqual([0, 0, 0, 1, 1, 2]);
+      expect(cols.js()).toEqual([0, 1, 2, 1, 2, 2]);
+    });
+
+    test("supports a diagonal offset", () => {
+      const [rows, cols] = np.triuIndices(4, 2);
+      expect(rows.js()).toEqual([0, 0, 1]);
+      expect(cols.js()).toEqual([2, 3, 3]);
+
+      const [rows2, cols2] = np.triuIndices(3, -1);
+      expect(rows2.js()).toEqual([0, 0, 0, 1, 1, 1, 2, 2]);
+      expect(cols2.js()).toEqual([0, 1, 2, 0, 1, 2, 1, 2]);
+    });
+
+    test("supports rectangular arrays", () => {
+      const [rows, cols] = np.triuIndices(2, 0, 4);
+      expect(rows.js()).toEqual([0, 0, 0, 0, 1, 1, 1]);
+      expect(cols.js()).toEqual([0, 1, 2, 3, 1, 2, 3]);
+
+      const [rows2, cols2] = np.triuIndices(4, -1, 3);
+      expect(rows2.js()).toEqual([0, 0, 0, 1, 1, 1, 2, 2, 3]);
+      expect(cols2.js()).toEqual([0, 1, 2, 0, 1, 2, 1, 2, 2]);
+    });
+
+    test("can be used to access the upper triangle", () => {
+      const x = np.arange(9).reshape([3, 3]);
+      const [rows, cols] = np.triuIndices(3);
+      expect(x.slice(rows, cols).js()).toEqual([0, 1, 2, 4, 5, 8]);
+    });
+
+    test("handles empty triangles", () => {
+      const [rows, cols] = np.triuIndices(0);
+      expect(rows.js()).toEqual([]);
+      expect(cols.js()).toEqual([]);
+
+      const [rows2, cols2] = np.triuIndices(2, 5);
+      expect(rows2.js()).toEqual([]);
+      expect(cols2.js()).toEqual([]);
+    });
+
+    test("throws on invalid arguments", () => {
+      expect(() => np.triuIndices(-1)).toThrow(
+        "n must be a nonnegative integer",
+      );
+      expect(() => np.triuIndices(3, 0, -2)).toThrow(
+        "m must be a nonnegative integer",
+      );
+      expect(() => np.triuIndices(3, 0.5)).toThrow("k must be an integer");
+    });
+  });
+
   suite("jax.numpy.arange()", () => {
     test("can be called with 1 argument", () => {
       let x = np.arange(5);
