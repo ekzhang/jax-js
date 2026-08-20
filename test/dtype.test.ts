@@ -57,6 +57,68 @@ suite("dtype promotion rules", () => {
   });
 });
 
+suite("jax.numpy.isdtype()", () => {
+  test("matches a single dtype", () => {
+    expect(np.isdtype(np.float32, np.float32)).toBe(true);
+    expect(np.isdtype(np.float32, np.int32)).toBe(false);
+    expect(np.isdtype(np.bool, np.bool)).toBe(true);
+  });
+
+  test("matches kind strings", () => {
+    expect(np.isdtype(np.bool, "bool")).toBe(true);
+    expect(np.isdtype(np.int32, "bool")).toBe(false);
+
+    expect(np.isdtype(np.int32, "signed integer")).toBe(true);
+    expect(np.isdtype(np.uint32, "signed integer")).toBe(false);
+
+    expect(np.isdtype(np.uint32, "unsigned integer")).toBe(true);
+    expect(np.isdtype(np.int32, "unsigned integer")).toBe(false);
+
+    expect(np.isdtype(np.int32, "integral")).toBe(true);
+    expect(np.isdtype(np.uint32, "integral")).toBe(true);
+    expect(np.isdtype(np.bool, "integral")).toBe(false);
+    expect(np.isdtype(np.float32, "integral")).toBe(false);
+
+    expect(np.isdtype(np.float16, "real floating")).toBe(true);
+    expect(np.isdtype(np.float32, "real floating")).toBe(true);
+    expect(np.isdtype(np.float64, "real floating")).toBe(true);
+    expect(np.isdtype(np.int32, "real floating")).toBe(false);
+
+    expect(np.isdtype(np.float32, "complex floating")).toBe(false);
+
+    expect(np.isdtype(np.int32, "numeric")).toBe(true);
+    expect(np.isdtype(np.uint32, "numeric")).toBe(true);
+    expect(np.isdtype(np.float32, "numeric")).toBe(true);
+    expect(np.isdtype(np.bool, "numeric")).toBe(false);
+  });
+
+  test("matches an array of kinds", () => {
+    expect(np.isdtype(np.float32, ["integral", "real floating"])).toBe(true);
+    expect(np.isdtype(np.bool, ["integral", "real floating"])).toBe(false);
+    expect(np.isdtype(np.bool, ["bool", np.int32])).toBe(true);
+    expect(np.isdtype(np.int32, ["bool", np.int32])).toBe(true);
+    expect(np.isdtype(np.float32, [])).toBe(false);
+  });
+
+  test("works with an array's dtype", () => {
+    const a = np.array([1, 2, 3], { dtype: np.int32 });
+    expect(np.isdtype(a.dtype, "integral")).toBe(true);
+    a.dispose();
+  });
+
+  test("throws on unrecognized kind", () => {
+    expect(() => np.isdtype(np.float32, "foo" as np.DTypeKind)).toThrow(
+      /unrecognized kind foo/,
+    );
+    expect(() =>
+      np.isdtype(np.float32, ["real floating", "foo" as np.DTypeKind]),
+    ).toThrow(/unrecognized kind foo/);
+    expect(() => np.isdtype(np.float32, "constructor" as np.DTypeKind)).toThrow(
+      /unrecognized kind constructor/,
+    );
+  });
+});
+
 suite("weak types", () => {
   test("number constants are weak", () => {
     const a = np.array(5);

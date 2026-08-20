@@ -282,7 +282,7 @@ Most operations behave the same way as they do in JAX.
 | `isclose`             | ⚪️      | use `allclose`                          |
 | `iscomplex`           | ⚪️      | complex numbers                         |
 | `iscomplexobj`        | ⚪️      | complex numbers                         |
-| `isdtype`             | 🟠      |                                         |
+| `isdtype`             | 🟢      |                                         |
 | `isfinite`            | 🟢      |                                         |
 | `isin`                | 🟢      |                                         |
 | `isinf`               | 🟢      |                                         |
