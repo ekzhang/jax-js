@@ -3943,6 +3943,89 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.polyder()", () => {
+    test("computes the first derivative", () => {
+      const p = np.array([3, 0, 1]); // 3x^2 + 1
+      expect(np.polyder(p).js()).toEqual([6, 0]);
+      expect(np.polyder(np.array([1, 2, 3, 4])).js()).toEqual([3, 4, 3]);
+    });
+
+    test("computes higher-order derivatives", () => {
+      const p = np.array([1, 2, 3, 4]); // x^3 + 2x^2 + 3x + 4
+      expect(np.polyder(p.ref, 2).js()).toEqual([6, 4]);
+      expect(np.polyder(p, 3).js()).toEqual([6]);
+    });
+
+    test("promotes integer coefficients to float", () => {
+      const y = np.polyder(np.array([2, 4, 6], { dtype: np.int32 }));
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toEqual([4, 4]);
+
+      const same = np.polyder(np.array([1, 2, 3], { dtype: np.int32 }), 0);
+      expect(same.dtype).toBe(np.float32);
+      expect(same.js()).toEqual([1, 2, 3]);
+    });
+
+    test("returns a promoted scalar unchanged for order zero", () => {
+      const y = np.polyder(np.array(3, { dtype: np.int32 }), 0);
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toBe(3);
+    });
+
+    test("returns an empty polynomial when order reaches the length", () => {
+      const y = np.polyder(np.array([5]));
+      expect(y.shape).toEqual([0]);
+      expect(y.js()).toEqual([]);
+      expect(np.polyder(np.array([1, 2]), 5).shape).toEqual([0]);
+      expect(np.polyder(np.zeros([0])).shape).toEqual([0]);
+    });
+
+    test("supports batched polynomial coefficients", () => {
+      const p = np.array([
+        [1, 10],
+        [2, 20],
+        [3, 30],
+      ]);
+      expect(np.polyder(p).js()).toEqual([
+        [2, 20],
+        [2, 20],
+      ]);
+    });
+
+    test("matches the derivative of polyval", () => {
+      // d/dx (2x^3 - 3x^2 + 0.5x + 1) at x = 1.5 is 5.
+      const p = np.array([2, -3, 0.5, 1]);
+      const dx = grad((x: np.Array) => np.polyval(p.ref, x))(np.array(1.5));
+      expect(dx).toBeAllclose(5);
+      expect(np.polyval(np.polyder(p), np.array(1.5))).toBeAllclose(5);
+    });
+
+    test("works inside jit and grad", () => {
+      const f = jit((p: np.Array) => np.polyder(p, 2));
+      expect(f(np.array([1, 2, 3, 4])).js()).toEqual([6, 4]);
+
+      const g = (p: np.Array) =>
+        np
+          .polyder(p)
+          .mul(np.array([1, 2]))
+          .sum();
+      const dp = grad(g)(np.array([1, 2, 3], { dtype: np.float32 }));
+      expect(dp.js()).toEqual([2, 2, 0]);
+    });
+
+    test("rejects scalar coefficients and invalid orders", () => {
+      expect(() => np.polyder(np.array(1))).toThrow(
+        "polyder: coefficients must have at least one dimension",
+      );
+      expect(() => np.polyder(np.array([1, 2]), -1)).toThrow(
+        "polyder: order of derivative must be a non-negative integer",
+      );
+      expect(() => np.polyder(np.array([1, 2]), 1.5)).toThrow(
+        "polyder: order of derivative must be a non-negative integer",
+      );
+    });
+  });
+
   suite("jax.numpy.polymul()", () => {
     test("multiplies polynomials of equal length", () => {
       const a1 = np.array([2, 1, 0]);

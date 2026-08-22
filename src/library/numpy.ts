@@ -2139,6 +2139,52 @@ export function polysub(a1: ArrayLike, a2: ArrayLike): Array {
 }
 
 /**
+ * Return the derivative of the specified order of a polynomial.
+ *
+ * The first axis contains polynomial coefficients, ordered from highest degree
+ * to the constant term. Remaining axes are batch dimensions. Coefficients are
+ * promoted to a floating-point dtype. If `m` is at least the number of
+ * coefficients, the result is empty, following JAX.
+ *
+ * @param p - Array of polynomial coefficients along the leading axis.
+ * @param m - Order of differentiation, a non-negative integer. Default is 1.
+ */
+export function polyder(p: ArrayLike, m: number = 1): Array {
+  p = fudgeArray(p);
+  if (!Number.isInteger(m) || m < 0) {
+    p.dispose();
+    throw new Error(
+      `polyder: order of derivative must be a non-negative integer, got ${m}`,
+    );
+  }
+  if (!isFloatDtype(p.dtype)) p = astype(p, float32);
+  if (m === 0) return p;
+  if (p.ndim === 0) {
+    const ndim = p.ndim;
+    p.dispose();
+    throw new Error(
+      `polyder: coefficients must have at least one dimension, got ${ndim}D`,
+    );
+  }
+  const n = p.shape[0];
+  const length = Math.max(n - m, 0);
+  // coeff[j] = (n - 1 - j) * (n - 2 - j) * ... * (n - m - j)
+  const coeff: number[] = [];
+  for (let j = 0; j < length; j++) {
+    let c = 1;
+    for (let i = 1; i <= m; i++) c *= n - j - i;
+    coeff.push(c);
+  }
+  const batchBroadcastDims = rep(p.ndim - 1, 1);
+  const scale = array(coeff, { dtype: p.dtype, device: p.device }).reshape([
+    length,
+    ...batchBroadcastDims,
+  ]);
+  const survivingCoeffs = p.slice([0, length]);
+  return multiply(survivingCoeffs, scale);
+}
+
+/**
  * Return the product of two polynomials.
  */
 export function polymul(a1: ArrayLike, a2: ArrayLike): Array {
