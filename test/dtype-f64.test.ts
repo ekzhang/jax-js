@@ -92,11 +92,27 @@ suite.each(devices)("device:%s", (device) => {
     expect(b).toBeCloseTo(1e-15, 15);
   });
 
+  test("polyder() keeps f64 dtype", () => {
+    const p = np.array([1.5, 2.5, 3.5], { dtype: np.float64 });
+    const y = np.polyder(p);
+    expect(y.dtype).toBe(np.float64);
+    expect(y.ref.dataSync()).toEqual(new Float64Array([3, 2.5]));
+  });
+
   test("unwrap() matches numpy at a rounding-tie boundary", () => {
     // The delta is just below -pi, which makes it wrap to +pi.
     const x = np.array([0, -3.1415926535897936], { dtype: np.float64 });
     const y = np.unwrap(x);
     expect(y.dtype).toBe(np.float64);
     expect(y.ref.dataSync()[1]).toBe(3.1415926535897927);
+  });
+
+  test("polymul() preserves f64 precision", () => {
+    const a = np.array([1, 1e-12], { dtype: np.float64 });
+    const b = np.array([1, 1], { dtype: np.float64 });
+    const y = np.polymul(a, b);
+    expect(y.dtype).toBe(np.float64);
+    // The middle coefficient 1 + 1e-12 would round to 1 in f32.
+    expect(y.ref.dataSync()[1]).toBe(1 + 1e-12);
   });
 });

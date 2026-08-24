@@ -1134,6 +1134,95 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.select()", () => {
+    // https://numpy.org/devdocs/reference/generated/numpy.select.html
+    test("selects from choices with a default, using the NumPy docs example", () => {
+      const x = np.arange(6);
+      const condlist = [np.less(x.ref, 3), np.greater(x.ref, 3)];
+      const choicelist = [np.negative(x.ref), np.square(x)];
+      const result = np.select(condlist, choicelist, 42);
+      expect(result.js()).toEqual([0, -1, -2, 42, 16, 25]);
+    });
+
+    test("first matching condition wins when conditions overlap", () => {
+      const x = np.arange(6);
+      const condlist = [np.lessEqual(x.ref, 4), np.greater(x.ref, 3)];
+      const choicelist = [x.ref, np.square(x)];
+      const result = np.select(condlist, choicelist, 55);
+      expect(result.js()).toEqual([0, 1, 2, 3, 4, 25]);
+    });
+
+    test("default value defaults to zero", () => {
+      const x = np.arange(4);
+      const result = np.select([np.greater(x.ref, 1)], [x]);
+      expect(result.js()).toEqual([0, 0, 2, 3]);
+    });
+
+    test("converts numeric conditions to boolean", () => {
+      const result = np.select(
+        [np.array([0, 1, -2]), np.array([1, 0, 0])],
+        [10, 20],
+        30,
+      );
+      expect(result.js()).toEqual([20, 10, 10]);
+    });
+
+    test("broadcasts conditions and scalar choices", () => {
+      const cond = np.array([
+        [true, false],
+        [false, true],
+      ]);
+      const result = np.select(
+        [cond, np.array([false, true])],
+        [1, np.array([[10], [20]])],
+        -1,
+      );
+      expect(result.js()).toEqual([
+        [1, 10],
+        [-1, 1],
+      ]);
+    });
+
+    test("promotes dtypes across choices and default", () => {
+      const x = np.arange(3);
+      const c = np.array([0.5, 1.5, 2.5], { dtype: np.float32 });
+      const result = np.select([np.less(x, 1)], [c], 2);
+      expect(result.dtype).toBe(np.float32);
+      expect(result.js()).toEqual([0.5, 2, 2]);
+    });
+
+    test("throws on mismatched or empty inputs", () => {
+      expect(() => np.select([true], [])).toThrow(
+        "condlist must have length equal to choicelist",
+      );
+      expect(() => np.select([], [])).toThrow("condlist must be non-empty");
+    });
+
+    test("works with grad reverse-mode", () => {
+      const f = (x: np.Array) =>
+        np
+          .select(
+            [np.less(x.ref, 2), np.greater(x.ref, 3)],
+            [x.ref.mul(2), x.ref.mul(3)],
+            0,
+          )
+          .sum();
+      const g = grad(f)(np.array([1.0, 2.0, 3.0, 4.0]));
+      expect(g.js()).toEqual([2, 0, 0, 3]);
+    });
+
+    test("works inside jit", () => {
+      const f = jit((x: np.Array) =>
+        np.select(
+          [np.less(x.ref, 3), np.greater(x.ref, 3)],
+          [x.ref, np.square(x)],
+          42,
+        ),
+      );
+      expect(f(np.arange(6)).js()).toEqual([0, 1, 2, 42, 16, 25]);
+    });
+  });
+
   suite("jax.numpy.equal()", () => {
     test("computes equal", () => {
       const x = np.array([1, 2, 3, 4]);
@@ -2130,6 +2219,123 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.fromfunction()", () => {
+    test("builds a multiplication table, using the JAX docs example", () => {
+      const table = np.fromfunction((i, j) => i.mul(j), [3, 6], {
+        dtype: np.int32,
+      });
+      expect(table.dtype).toBe(np.int32);
+      expect(table.js()).toEqual([
+        [0, 0, 0, 0, 0, 0],
+        [0, 1, 2, 3, 4, 5],
+        [0, 2, 4, 6, 8, 10],
+      ]);
+    });
+
+    test("defaults to float32 indices", () => {
+      const a = np.fromfunction((i, j) => i.add(j), [2, 3]);
+      expect(a.dtype).toBe(np.float32);
+      expect(a.js()).toEqual([
+        [0, 1, 2],
+        [1, 2, 3],
+      ]);
+    });
+
+    test("varies the first index along the leading axis", () => {
+      const a = np.fromfunction((i, j) => i.mul(10).add(j), [2, 3], {
+        dtype: np.int32,
+      });
+      expect(a.js()).toEqual([
+        [0, 1, 2],
+        [10, 11, 12],
+      ]);
+    });
+
+    test("works with one and three dimensions", () => {
+      const a = np.fromfunction((i) => i.mul(2), [4], { dtype: np.int32 });
+      expect(a.js()).toEqual([0, 2, 4, 6]);
+
+      const b = np.fromfunction(
+        (i, j, k) => i.mul(4).add(j.mul(2)).add(k),
+        [2, 2, 2],
+        { dtype: np.int32 },
+      );
+      expect(b.js()).toEqual([
+        [
+          [0, 1],
+          [2, 3],
+        ],
+        [
+          [4, 5],
+          [6, 7],
+        ],
+      ]);
+    });
+
+    test("broadcasts results that ignore an index", () => {
+      const a = np.fromfunction((i, _j) => i, [2, 3], { dtype: np.int32 });
+      expect(a.js()).toEqual([
+        [0, 0, 0],
+        [1, 1, 1],
+      ]);
+    });
+
+    test("non-scalar results have leading dimensions of shape", () => {
+      const a = np.fromfunction((x) => x.add(1).mul(np.arange(3)), [2]);
+      expect(a.shape).toEqual([2, 3]);
+      expect(a.js()).toEqual([
+        [0, 1, 2],
+        [0, 2, 4],
+      ]);
+    });
+
+    test("maps multiple results independently", () => {
+      const [sum, product] = np.fromfunction(
+        (i, j) => [i.ref.add(j.ref), i.mul(j)],
+        [2, 3],
+      );
+      expect(sum.js()).toEqual([
+        [0, 1, 2],
+        [1, 2, 3],
+      ]);
+      expect(product.js()).toEqual([
+        [0, 0, 0],
+        [0, 1, 2],
+      ]);
+    });
+
+    test("handles empty and zero-size shapes", () => {
+      expect(np.fromfunction(() => 5, []).js()).toEqual(5);
+      const a = np.fromfunction((i, j) => i.add(j), [0, 2]);
+      expect(a.shape).toEqual([0, 2]);
+    });
+
+    test("rejects invalid shapes", () => {
+      expect(() => np.fromfunction((i) => i, [-1])).toThrow(
+        "non-negative integers",
+      );
+      expect(() => np.fromfunction((i) => i, [1.5])).toThrow(
+        "non-negative integers",
+      );
+    });
+
+    test("works inside jit and grad", () => {
+      const f = jit(() =>
+        np.fromfunction((i, j) => i.add(j), [2, 2], { dtype: np.int32 }),
+      );
+      expect(f().js()).toEqual([
+        [0, 1],
+        [1, 2],
+      ]);
+
+      // sum(x * i for i in 0..2) = 3 * x, so the gradient is 3.
+      const g = grad((x: np.Array) =>
+        np.fromfunction((i) => x.mul(i), [3]).sum(),
+      );
+      expect(g(np.array(2)).js()).toEqual(3);
+    });
+  });
+
   suite("jax.numpy.minimum()", () => {
     test("computes element-wise minimum", () => {
       const x = np.array([1, 2, 3]);
@@ -2496,6 +2702,42 @@ suite.each(devices)("device:%s", (device) => {
       expect(r.js()).toEqual([1, 2]);
       expect(q.dtype).toBe(np.int32);
       expect(r.dtype).toBe(np.int32);
+    });
+  });
+
+  suite("jax.numpy.modf()", () => {
+    test("returns fractional and integral parts", () => {
+      const x = np.array([3.5, -3.5, 0, 1.25]);
+      const [frac, whole] = np.modf(x);
+      expect(frac.js()).toBeAllclose([0.5, -0.5, 0, 0.25], { atol: 1e-6 });
+      expect(whole.js()).toEqual([3, -3, 0, 1]);
+    });
+
+    test("both parts match the sign of the input", () => {
+      const x = np.array([-2.75, 2.75]);
+      const [frac, whole] = np.modf(x);
+      expect(frac.js()).toBeAllclose([-0.75, 0.75], { atol: 1e-6 });
+      expect(whole.js()).toEqual([-2, 2]);
+    });
+
+    test("satisfies invariant x == frac + whole", () => {
+      const x = np.array([1.7, -4.2, 100.001, -0.5]);
+      const [frac, whole] = np.modf(x.ref);
+      expect(np.add(frac, whole).js()).toBeAllclose(x.js(), { atol: 1e-6 });
+    });
+
+    test("promotes integer inputs to float32", () => {
+      const [frac, whole] = np.modf(np.array([5, -3], { dtype: np.int32 }));
+      expect(frac.dtype).toBe(np.float32);
+      expect(whole.dtype).toBe(np.float32);
+      expect(frac.js()).toEqual([0, 0]);
+      expect(whole.js()).toEqual([5, -3]);
+    });
+
+    test("works with scalars", () => {
+      const [frac, whole] = np.modf(2.5);
+      expect(frac.js()).toBeCloseTo(0.5, 5);
+      expect(whole.js()).toBeCloseTo(2, 5);
     });
   });
 
@@ -3758,6 +4000,150 @@ suite.each(devices)("device:%s", (device) => {
           .sum();
       const da = grad(g)(np.array([1, 2], { dtype: np.float32 }));
       expect(da.js()).toEqual([3, 4]);
+    });
+  });
+
+  suite("jax.numpy.polyder()", () => {
+    test("computes the first derivative", () => {
+      const p = np.array([3, 0, 1]); // 3x^2 + 1
+      expect(np.polyder(p).js()).toEqual([6, 0]);
+      expect(np.polyder(np.array([1, 2, 3, 4])).js()).toEqual([3, 4, 3]);
+    });
+
+    test("computes higher-order derivatives", () => {
+      const p = np.array([1, 2, 3, 4]); // x^3 + 2x^2 + 3x + 4
+      expect(np.polyder(p.ref, 2).js()).toEqual([6, 4]);
+      expect(np.polyder(p, 3).js()).toEqual([6]);
+    });
+
+    test("promotes integer coefficients to float", () => {
+      const y = np.polyder(np.array([2, 4, 6], { dtype: np.int32 }));
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toEqual([4, 4]);
+
+      const same = np.polyder(np.array([1, 2, 3], { dtype: np.int32 }), 0);
+      expect(same.dtype).toBe(np.float32);
+      expect(same.js()).toEqual([1, 2, 3]);
+    });
+
+    test("returns a promoted scalar unchanged for order zero", () => {
+      const y = np.polyder(np.array(3, { dtype: np.int32 }), 0);
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toBe(3);
+    });
+
+    test("returns an empty polynomial when order reaches the length", () => {
+      const y = np.polyder(np.array([5]));
+      expect(y.shape).toEqual([0]);
+      expect(y.js()).toEqual([]);
+      expect(np.polyder(np.array([1, 2]), 5).shape).toEqual([0]);
+      expect(np.polyder(np.zeros([0])).shape).toEqual([0]);
+    });
+
+    test("supports batched polynomial coefficients", () => {
+      const p = np.array([
+        [1, 10],
+        [2, 20],
+        [3, 30],
+      ]);
+      expect(np.polyder(p).js()).toEqual([
+        [2, 20],
+        [2, 20],
+      ]);
+    });
+
+    test("matches the derivative of polyval", () => {
+      // d/dx (2x^3 - 3x^2 + 0.5x + 1) at x = 1.5 is 5.
+      const p = np.array([2, -3, 0.5, 1]);
+      const dx = grad((x: np.Array) => np.polyval(p.ref, x))(np.array(1.5));
+      expect(dx).toBeAllclose(5);
+      expect(np.polyval(np.polyder(p), np.array(1.5))).toBeAllclose(5);
+    });
+
+    test("works inside jit and grad", () => {
+      const f = jit((p: np.Array) => np.polyder(p, 2));
+      expect(f(np.array([1, 2, 3, 4])).js()).toEqual([6, 4]);
+
+      const g = (p: np.Array) =>
+        np
+          .polyder(p)
+          .mul(np.array([1, 2]))
+          .sum();
+      const dp = grad(g)(np.array([1, 2, 3], { dtype: np.float32 }));
+      expect(dp.js()).toEqual([2, 2, 0]);
+    });
+
+    test("rejects scalar coefficients and invalid orders", () => {
+      expect(() => np.polyder(np.array(1))).toThrow(
+        "polyder: coefficients must have at least one dimension",
+      );
+      expect(() => np.polyder(np.array([1, 2]), -1)).toThrow(
+        "polyder: order of derivative must be a non-negative integer",
+      );
+      expect(() => np.polyder(np.array([1, 2]), 1.5)).toThrow(
+        "polyder: order of derivative must be a non-negative integer",
+      );
+    });
+  });
+
+  suite("jax.numpy.polymul()", () => {
+    test("multiplies polynomials of equal length", () => {
+      const a1 = np.array([2, 1, 0]);
+      const a2 = np.array([0, 5, 3]);
+      expect(np.polymul(a1, a2).js()).toEqual([0, 10, 11, 3, 0]);
+    });
+
+    test("multiplies polynomials of different lengths", () => {
+      const a1 = np.array([1, 2]);
+      const a2 = np.array([3, 4, 5]);
+      expect(np.polymul(a1.ref, a2.ref).js()).toEqual([3, 10, 13, 10]);
+      expect(np.polymul(a2, a1).js()).toEqual([3, 10, 13, 10]);
+    });
+
+    test("multiplies constant polynomials", () => {
+      const a1 = np.array([2]);
+      const a2 = np.array([3]);
+      expect(np.polymul(a1, a2).js()).toEqual([6]);
+    });
+
+    test("promotes inputs to floating point", () => {
+      const a1 = np.array([1, 2, 3]);
+      const a2 = np.array([4, 5, 6]);
+      const y = np.polymul(a1, a2);
+      expect(y.dtype).toBe(np.float32);
+      expect(y).toBeAllclose([4, 13, 28, 27, 18]);
+    });
+
+    test("treats empty coefficient arrays as zero", () => {
+      const a1 = np.zeros([0]);
+      const a2 = np.array([1, 2]);
+      expect(np.polymul(a1.ref, a2.ref).js()).toEqual([0, 0]);
+      expect(np.polymul(a2, a1.ref).js()).toEqual([0, 0]);
+      expect(np.polymul(a1.ref, a1).js()).toEqual([0]);
+    });
+
+    test("rejects scalar and batched inputs", () => {
+      expect(() => np.polymul(np.array(1), np.ones([2]))).toThrow(
+        "polymul: both inputs must be 1D arrays",
+      );
+      expect(() => np.polymul(np.ones([2, 2]), np.ones([2]))).toThrow(
+        "polymul: both inputs must be 1D arrays",
+      );
+    });
+
+    test("works inside jit and grad", () => {
+      const f = jit((a: np.Array, b: np.Array) => np.polymul(a, b));
+      expect(f(np.array([1, 2, 3]), np.array([4, 5])).js()).toEqual([
+        4, 13, 22, 15,
+      ]);
+
+      const g = (a: np.Array) =>
+        np
+          .polymul(a, np.array([1, 2]))
+          .mul(np.array([1, 2, 3]))
+          .sum();
+      const da = grad(g)(np.array([1, 2], { dtype: np.float32 }));
+      expect(da.js()).toEqual([5, 8]);
     });
   });
 
