@@ -1,4 +1,10 @@
-import { DType, isFloatDtype } from "../../alu";
+import {
+  byteWidth,
+  DType,
+  intMaxValue,
+  intMinValue,
+  isFloatDtype,
+} from "../../alu";
 
 /** @inline */
 type FInfo = Readonly<{
@@ -118,22 +124,12 @@ type IInfo = Readonly<{
 
 /** Machine limits for integer types. */
 export function iinfo(dtype: DType): IInfo {
-  switch (dtype) {
-    case DType.Int32:
-      return Object.freeze({
-        bits: 32,
-        dtype: DType.Int32,
-        max: 2147483647,
-        min: -2147483648,
-      });
-    case DType.Uint32:
-      return Object.freeze({
-        bits: 32,
-        dtype: DType.Uint32,
-        max: 4294967295,
-        min: 0,
-      });
-    default:
-      throw new Error(`iinfo: unsupported dtype ${dtype}`);
-  }
+  if (isFloatDtype(dtype) || dtype === DType.Bool)
+    throw new Error(`iinfo: unsupported dtype ${dtype}`);
+  return Object.freeze({
+    bits: byteWidth(dtype) * 8,
+    dtype,
+    max: intMaxValue(dtype),
+    min: intMinValue(dtype),
+  });
 }
