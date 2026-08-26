@@ -12,6 +12,7 @@ import {
   WgslBuilder,
   WgslExpCodegen,
 } from "./webgpu/codegen";
+import { mapAsyncRead } from "./webgpu/firefoxPoll";
 import { nullaryKernelSource } from "./webgpu/nullaryKernel";
 import { SyncReader } from "./webgpu/reader";
 import { createRoutineShader } from "./webgpu/routines";
@@ -140,7 +141,7 @@ export class WebGPUBackend implements Backend {
       commandEncoder.copyBufferToBuffer(buffer, start, staging, 0, paddedSize);
       this.device.queue.submit([commandEncoder.finish()]);
 
-      await staging.mapAsync(GPUMapMode.READ);
+      await mapAsyncRead(this.device, staging);
       const arrayBuffer = staging.getMappedRange();
       return new Uint8Array(arrayBuffer.slice(), 0, count);
     } finally {
