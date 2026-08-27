@@ -456,6 +456,52 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.nancumsum()", () => {
+    test("treats NaNs as zero", () => {
+      const x = np.array([1, NaN, 2, NaN, 3]);
+      expect(np.nancumsum(x).js()).toEqual([1, 1, 3, 3, 6]);
+    });
+
+    test("computes nancumsum along axis", () => {
+      const x = np.array([
+        [1, NaN, 3],
+        [NaN, 5, 6],
+      ]);
+      expect(np.nancumsum(x.ref, 0).js()).toEqual([
+        [1, 0, 3],
+        [1, 5, 9],
+      ]);
+      expect(np.nancumsum(x.ref, 1).js()).toEqual([
+        [1, 1, 4],
+        [0, 5, 11],
+      ]);
+      expect(np.nancumsum(x).js()).toEqual([1, 1, 4, 4, 9, 15]);
+    });
+
+    test("handles 0-dimensional scalars", () => {
+      expect(np.nancumsum(5).js()).toEqual([5]);
+      expect(np.nancumsum(NaN).js()).toEqual([0]);
+      expect(() => np.nancumsum(5, 1)).toThrow("out of bounds");
+    });
+
+    test("handles empty dimensions", () => {
+      const emptyAxis = np.nancumsum(np.zeros([2, 0]), 1);
+      expect(emptyAxis.shape).toEqual([2, 0]);
+      expect(emptyAxis.js()).toEqual([[], []]);
+
+      const emptyBatch = np.nancumsum(np.zeros([0, 3]), 1);
+      expect(emptyBatch.shape).toEqual([0, 3]);
+      expect(emptyBatch.js()).toEqual([]);
+    });
+
+    test("passes through integer arrays", () => {
+      const x = np.array([1, 2, 3], { dtype: np.int32 });
+      const y = np.nancumsum(x);
+      expect(y.dtype).toBe(np.int32);
+      expect(y.js()).toEqual([1, 3, 6]);
+    });
+  });
+
   suite("jax.numpy.diff()", () => {
     test("computes the first difference", () => {
       const x = np.array([1, 2, 4, 7, 0]);
