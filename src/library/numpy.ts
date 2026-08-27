@@ -28,6 +28,7 @@ import * as core from "../frontend/core";
 import { jit } from "../frontend/jaxpr";
 import { moveaxis as moveaxisTracer, vmap } from "../frontend/vmap";
 import { Pair } from "../shape";
+import { type JsTree, type MapJsTree, map as treeMap } from "../tree";
 import {
   checkAxis,
   DEBUG,
@@ -362,6 +363,20 @@ export function sum(
   return core.reduce(a, AluOp.Add, axis, opts) as Array;
 }
 
+/**
+ * Sum of the elements of the array over a given axis, or axes, treating NaNs
+ * as zero.
+ */
+export function nansum(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: core.ReduceOpts,
+): Array {
+  a = fudgeArray(a);
+  if (isFloatDtype(a.dtype)) a = where(isnan(a.ref), 0, a);
+  return sum(a, axis, opts);
+}
+
 /** Count the number of non-zero elements along the specified axis. */
 export function countNonzero(
   a: ArrayLike,
@@ -378,6 +393,17 @@ export function prod(
   opts?: core.ReduceOpts,
 ): Array {
   return core.reduce(a, AluOp.Mul, axis, opts) as Array;
+}
+
+/** Product of the array elements over a given axis, treating NaNs as one. */
+export function nanprod(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: core.ReduceOpts,
+): Array {
+  a = fudgeArray(a);
+  if (isFloatDtype(a.dtype)) a = where(isnan(a.ref), 1, a);
+  return prod(a, axis, opts);
 }
 
 /** Return the minimum of array elements along a given axis. */
@@ -657,6 +683,13 @@ export function cumulativeProd(
     x = concatenate([pad, x], axis);
   }
   return cumulativeHelper(AluOp.Mul, x, axis);
+}
+
+/** Cumulative product of elements along an axis, treating NaNs as one. */
+export function nancumprod(a: ArrayLike, axis?: number): Array {
+  a = fudgeArray(a);
+  if (isFloatDtype(a.dtype)) a = where(isnan(a.ref), 1, a);
+  return cumprod(a, axis);
 }
 
 /** Cumulative sum of elements along an axis, treating NaNs as zero. */
@@ -1575,6 +1608,40 @@ export function takeAlongAxis(
 }
 
 /**
+ * Select values from a list of choices based on a list of conditions.
+ *
+ * At each position, the output takes the value of the choice corresponding to
+ * the first true condition. Where no condition is true, `defaultValue` is
+ * used. Conditions are converted to boolean arrays, and all entries must be
+ * mutually broadcast-compatible.
+ *
+ * @param condlist - List of array-like conditions, converted to booleans.
+ * @param choicelist - List of arrays to choose from, same length as
+ * `condlist`.
+ * @param defaultValue - Value used where every condition is false. Default 0.
+ */
+export function select(
+  condlist: ArrayLike[],
+  choicelist: ArrayLike[],
+  defaultValue: ArrayLike = 0,
+): Array {
+  if (condlist.length !== choicelist.length) {
+    throw new Error(
+      `select: condlist must have length equal to choicelist ` +
+        `(${condlist.length} vs ${choicelist.length})`,
+    );
+  }
+  if (condlist.length === 0) {
+    throw new Error("select: condlist must be non-empty");
+  }
+  let output = fudgeArray(defaultValue);
+  for (let i = condlist.length - 1; i >= 0; i--) {
+    output = where(astype(condlist[i], bool), choicelist[i], output);
+  }
+  return output;
+}
+
+/**
  * Apply a function to 1D array slices along an axis.
  *
  * This is implemented internally with applications of `jax.vmap()`, rather than
@@ -2112,6 +2179,81 @@ export function polysub(a1: ArrayLike, a2: ArrayLike): Array {
 }
 
 /**
+ * Return the derivative of the specified order of a polynomial.
+ *
+ * The first axis contains polynomial coefficients, ordered from highest degree
+ * to the constant term. Remaining axes are batch dimensions. Coefficients are
+ * promoted to a floating-point dtype. If `m` is at least the number of
+ * coefficients, the result is empty, following JAX.
+ *
+ * @param p - Array of polynomial coefficients along the leading axis.
+ * @param m - Order of differentiation, a non-negative integer. Default is 1.
+ */
+export function polyder(p: ArrayLike, m: number = 1): Array {
+  p = fudgeArray(p);
+  if (!Number.isInteger(m) || m < 0) {
+    p.dispose();
+    throw new Error(
+      `polyder: order of derivative must be a non-negative integer, got ${m}`,
+    );
+  }
+  if (!isFloatDtype(p.dtype)) p = astype(p, float32);
+  if (m === 0) return p;
+  if (p.ndim === 0) {
+    const ndim = p.ndim;
+    p.dispose();
+    throw new Error(
+      `polyder: coefficients must have at least one dimension, got ${ndim}D`,
+    );
+  }
+  const n = p.shape[0];
+  const length = Math.max(n - m, 0);
+  // coeff[j] = (n - 1 - j) * (n - 2 - j) * ... * (n - m - j)
+  const coeff: number[] = [];
+  for (let j = 0; j < length; j++) {
+    let c = 1;
+    for (let i = 1; i <= m; i++) c *= n - j - i;
+    coeff.push(c);
+  }
+  const batchBroadcastDims = rep(p.ndim - 1, 1);
+  const scale = array(coeff, { dtype: p.dtype, device: p.device }).reshape([
+    length,
+    ...batchBroadcastDims,
+  ]);
+  const survivingCoeffs = p.slice([0, length]);
+  return multiply(survivingCoeffs, scale);
+}
+
+/**
+ * Return the product of two polynomials.
+ */
+export function polymul(a1: ArrayLike, a2: ArrayLike): Array {
+  a1 = fudgeArray(a1);
+  a2 = fudgeArray(a2);
+  if (a1.ndim !== 1 || a2.ndim !== 1) {
+    const [ndim1, ndim2] = [a1.ndim, a2.ndim];
+    a1.dispose();
+    a2.dispose();
+    throw new Error(
+      `polymul: both inputs must be 1D arrays, got ${ndim1}D and ${ndim2}D`,
+    );
+  }
+  const promotedDtype = resultType(a1, a2);
+  const dtype = isFloatDtype(promotedDtype) ? promotedDtype : DType.Float32;
+  a1 = a1.astype(dtype);
+  a2 = a2.astype(dtype);
+  if (a1.shape[0] === 0) {
+    a1.dispose();
+    a1 = zeros([1], { dtype });
+  }
+  if (a2.shape[0] === 0) {
+    a2.dispose();
+    a2 = zeros([1], { dtype });
+  }
+  return convolve(a1, a2, "full");
+}
+
+/**
  * @function Compute the cross product of two arrays.
  *
  * Supports 2D (scalar result) and 3D cross products, with optional axis
@@ -2325,6 +2467,44 @@ export function indices(
   });
   if (sparse) return output;
   return output.length > 0 ? stack(output) : zeros([0], { dtype, device });
+}
+
+/** Construct an array by applying a function over each coordinate. */
+export function fromfunction(
+  func: (...indices: Array[]) => ArrayLike,
+  shape: number[],
+  opts?: DTypeAndDevice,
+): Array;
+export function fromfunction<
+  Tree extends JsTree<ArrayLike>[] | { [key: string]: JsTree<ArrayLike> },
+>(
+  func: (...indices: Array[]) => Tree,
+  shape: number[],
+  opts?: DTypeAndDevice,
+): MapJsTree<Tree, ArrayLike, Array>;
+export function fromfunction(
+  func: (...indices: Array[]) => JsTree<ArrayLike>,
+  shape: number[],
+  { dtype, device }: DTypeAndDevice = {},
+): JsTree<Array> {
+  dtype = dtype ?? float32;
+  if (shape.some((d) => !Number.isInteger(d) || d < 0)) {
+    throw new Error(
+      `fromfunction: shape must be non-negative integers, got ${JSON.stringify(shape)}`,
+    );
+  }
+  let f = func;
+  for (let loopIndex = 0; loopIndex < shape.length; loopIndex++) {
+    const mappedIndex = shape.length - 1 - loopIndex;
+    const inputAxes = shape.map((_, dimensionIndex) =>
+      dimensionIndex === mappedIndex ? 0 : null,
+    );
+    f = vmap(f, inputAxes) as typeof f;
+  }
+  return treeMap(
+    fudgeArray,
+    f(...shape.map((s) => arange(0, s, 1, { dtype, device }))),
+  );
 }
 
 /**
@@ -2636,6 +2816,22 @@ export function divmod(x: ArrayLike, y: ArrayLike): [Array, Array] {
 /** Round input to the nearest integer towards zero. */
 export function trunc(x: ArrayLike): Array {
   return core.idiv(x, 1) as Array; // Integer division truncates the decimal part.
+}
+
+/**
+ * Return the fractional and integral parts of an array, element-wise.
+ *
+ * Both parts have the same sign as the input, and satisfy
+ * `x == fractional + integral`. Integer inputs are promoted to float32.
+ *
+ * @param x - Input array.
+ * @returns Tuple of [fractional part, integral part].
+ */
+export function modf(x: ArrayLike): [Array, Array] {
+  x = fudgeArray(x);
+  if (!isFloatDtype(x.dtype)) x = x.astype(DType.Float32);
+  const whole = trunc(x.ref);
+  return [x.sub(whole.ref), whole];
 }
 
 /**

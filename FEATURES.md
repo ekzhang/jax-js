@@ -245,7 +245,7 @@ Most operations behave the same way as they do in JAX.
 | `frexp`               | 🟢      |                                         |
 | `frombuffer`          | 🟠      |                                         |
 | `fromfile`            | ⚪️      | Python-specific                         |
-| `fromfunction`        | 🟠      |                                         |
+| `fromfunction`        | 🟢      |                                         |
 | `fromiter`            | ⚪️      | Python-specific                         |
 | `frompyfunc`          | ⚪️      | Python-specific                         |
 | `fromstring`          | ⚪️      | Python-specific                         |
@@ -329,23 +329,23 @@ Most operations behave the same way as they do in JAX.
 | `min`                 | 🟢      |                                         |
 | `minimum`             | 🟢      |                                         |
 | `mod`                 | ⚪️      | Skipped for clarity, use `remainder()`  |
-| `modf`                | 🟠      |                                         |
+| `modf`                | 🟢      |                                         |
 | `moveaxis`            | 🟢      |                                         |
 | `multiply`            | 🟢      |                                         |
 | `nan_to_num`          | 🟢      |                                         |
 | `nanargmax`           | 🟠      |                                         |
 | `nanargmin`           | 🟠      |                                         |
-| `nancumprod`          | 🟠      |                                         |
+| `nancumprod`          | 🟢      |                                         |
 | `nancumsum`           | 🟢      |                                         |
 | `nanmax`              | 🟠      |                                         |
 | `nanmean`             | 🟠      |                                         |
 | `nanmedian`           | 🟠      | sorting                                 |
 | `nanmin`              | 🟠      |                                         |
 | `nanpercentile`       | 🟠      | sorting                                 |
-| `nanprod`             | 🟠      |                                         |
+| `nanprod`             | 🟢      |                                         |
 | `nanquantile`         | 🟠      | sorting                                 |
 | `nanstd`              | 🟠      |                                         |
-| `nansum`              | 🟠      |                                         |
+| `nansum`              | 🟢      |                                         |
 | `nanvar`              | 🟠      |                                         |
 | `ndarray`             | 🟢      | just `Array` in jax-js                  |
 | `ndim`                | 🟢      |                                         |
@@ -366,11 +366,11 @@ Most operations behave the same way as they do in JAX.
 | `place`               | 🔴      |                                         |
 | `poly`                | 🔴      |                                         |
 | `polyadd`             | 🟢      |                                         |
-| `polyder`             | 🟠      |                                         |
+| `polyder`             | 🟢      |                                         |
 | `polydiv`             | 🔴      |                                         |
 | `polyfit`             | 🔴      |                                         |
 | `polyint`             | 🟠      |                                         |
-| `polymul`             | 🟠      |                                         |
+| `polymul`             | 🟢      |                                         |
 | `polysub`             | 🟢      |                                         |
 | `polyval`             | 🟢      |                                         |
 | `positive`            | 🟢      |                                         |
@@ -406,7 +406,7 @@ Most operations behave the same way as they do in JAX.
 | `save`                | ⚪️      | file I/O                                |
 | `savez`               | ⚪️      | file I/O                                |
 | `searchsorted`        | 🔴      | sorting                                 |
-| `select`              | 🟠      |                                         |
+| `select`              | 🟢      |                                         |
 | `set_printoptions`    | ⚪️      | Python-specific                         |
 | `setdiff1d`           | ⚪️      | Python-specific                         |
 | `setxor1d`            | ⚪️      | Python-specific                         |

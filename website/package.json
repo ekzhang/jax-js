@@ -53,7 +53,7 @@
     "@tensorflow/tfjs-backend-webgpu": "^4.22.0",
     "d3-array": "^3.2.4",
     "d3-scale-chromatic": "^3.1.0",
-    "dompurify": "^3.4.11",
+    "dompurify": "^3.4.13",
     "es-toolkit": "^1.39.8",
     "fflate": "^0.8.2",
     "js-base64": "^3.7.8",
