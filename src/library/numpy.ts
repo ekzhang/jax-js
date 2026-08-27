@@ -395,6 +395,17 @@ export function prod(
   return core.reduce(a, AluOp.Mul, axis, opts) as Array;
 }
 
+/** Product of the array elements over a given axis, treating NaNs as one. */
+export function nanprod(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: core.ReduceOpts,
+): Array {
+  a = fudgeArray(a);
+  if (isFloatDtype(a.dtype)) a = where(isnan(a.ref), 1, a);
+  return prod(a, axis, opts);
+}
+
 /** Return the minimum of array elements along a given axis. */
 export function min(
   a: ArrayLike,

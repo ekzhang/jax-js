@@ -352,6 +352,63 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.nanprod()", () => {
+    test("treats NaN values as one", () => {
+      const x = np.array([1, 2, NaN, 4]);
+      const y = np.nanprod(x);
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toEqual(8);
+    });
+
+    test("returns one for all-NaN and empty arrays", () => {
+      expect(np.nanprod(np.array([NaN, NaN])).js()).toEqual(1);
+      expect(np.nanprod(np.zeros([0])).js()).toEqual(1);
+    });
+
+    test("reduces along an axis", () => {
+      const x = np.array([
+        [1, NaN, 3],
+        [NaN, 5, 6],
+      ]);
+      expect(np.nanprod(x.ref, 0).js()).toEqual([1, 5, 18]);
+      expect(np.nanprod(x, 1).js()).toEqual([3, 30]);
+    });
+
+    test("supports keepdims", () => {
+      const x = np.array([
+        [1, NaN, 3],
+        [NaN, 5, 6],
+      ]);
+      const y = np.nanprod(x, 1, { keepdims: true });
+      expect(y.shape).toEqual([2, 1]);
+      expect(y.js()).toEqual([[3], [30]]);
+    });
+
+    test("matches prod for integer dtypes", () => {
+      const x = np.array([1, 2, 3], { dtype: np.int32 });
+      const y = np.nanprod(x);
+      expect(y.dtype).toBe(np.int32);
+      expect(y.js()).toEqual(6);
+    });
+
+    test("has zero gradient at NaN entries", () => {
+      const x = np.array([2, NaN, 4]);
+      const g = grad((x: np.Array) => np.nanprod(x))(x);
+      expect(g.js()).toEqual([4, 0, 2]);
+    });
+
+    test("works inside jit", () => {
+      const f = jit((x: np.Array) => np.nanprod(x, 1));
+      const y = f(
+        np.array([
+          [1, NaN, 3],
+          [NaN, 5, 6],
+        ]),
+      );
+      expect(y.js()).toEqual([3, 30]);
+    });
+  });
+
   suite("jax.numpy.nancumprod()", () => {
     test("treats NaNs as one", () => {
       const x = np.array([1, NaN, 2, NaN, 3]);
