@@ -363,6 +363,20 @@ export function sum(
   return core.reduce(a, AluOp.Add, axis, opts) as Array;
 }
 
+/**
+ * Sum of the elements of the array over a given axis, or axes, treating NaNs
+ * as zero.
+ */
+export function nansum(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: core.ReduceOpts,
+): Array {
+  a = fudgeArray(a);
+  if (isFloatDtype(a.dtype)) a = where(isnan(a.ref), 0, a);
+  return sum(a, axis, opts);
+}
+
 /** Count the number of non-zero elements along the specified axis. */
 export function countNonzero(
   a: ArrayLike,
@@ -668,6 +682,13 @@ export function cumulativeProd(
     x = concatenate([pad, x], axis);
   }
   return cumulativeHelper(AluOp.Mul, x, axis);
+}
+
+/** Cumulative product of elements along an axis, treating NaNs as one. */
+export function nancumprod(a: ArrayLike, axis?: number): Array {
+  a = fudgeArray(a);
+  if (isFloatDtype(a.dtype)) a = where(isnan(a.ref), 1, a);
+  return cumprod(a, axis);
 }
 
 /**
