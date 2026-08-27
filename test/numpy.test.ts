@@ -352,6 +352,53 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.nancumprod()", () => {
+    test("treats NaNs as one", () => {
+      const x = np.array([1, NaN, 2, NaN, 3]);
+      expect(np.nancumprod(x).js()).toEqual([1, 1, 2, 2, 6]);
+    });
+
+    test("computes nancumprod along axis", () => {
+      const x = np.array([
+        [1, NaN, 3],
+        [4, 5, NaN],
+      ]);
+      expect(np.nancumprod(x.ref, 0).js()).toEqual([
+        [1, 1, 3],
+        [4, 5, 3],
+      ]);
+      expect(np.nancumprod(x, 1).js()).toEqual([
+        [1, 1, 3],
+        [4, 20, 20],
+      ]);
+    });
+
+    test("flattens the array when no axis is given", () => {
+      const x = np.array([
+        [1, NaN],
+        [2, 3],
+      ]);
+      expect(np.nancumprod(x).js()).toEqual([1, 1, 2, 6]);
+    });
+
+    test("returns ones for all-NaN input", () => {
+      const x = np.full([3], NaN);
+      expect(np.nancumprod(x).js()).toEqual([1, 1, 1]);
+    });
+
+    test("matches cumprod for integer input", () => {
+      const x = np.array([1, 2, 3, 4], { dtype: np.int32 });
+      const y = np.nancumprod(x);
+      expect(y.dtype).toBe(np.int32);
+      expect(y.js()).toEqual([1, 2, 6, 24]);
+    });
+
+    test("handles 0-dimensional scalars", () => {
+      expect(np.nancumprod(5).js()).toEqual([5]);
+      expect(np.nancumprod(NaN).js()).toEqual([1]);
+    });
+  });
+
   suite("jax.numpy.diff()", () => {
     test("computes the first difference", () => {
       const x = np.array([1, 2, 4, 7, 0]);

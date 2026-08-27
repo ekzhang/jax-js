@@ -335,7 +335,7 @@ Most operations behave the same way as they do in JAX.
 | `nan_to_num`          | 🟢      |                                         |
 | `nanargmax`           | 🟠      |                                         |
 | `nanargmin`           | 🟠      |                                         |
-| `nancumprod`          | 🟠      |                                         |
+| `nancumprod`          | 🟢      |                                         |
 | `nancumsum`           | 🟠      |                                         |
 | `nanmax`              | 🟠      |                                         |
 | `nanmean`             | 🟠      |                                         |
