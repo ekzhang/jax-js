@@ -1478,6 +1478,41 @@ export function diagIndicesFrom(arr: ArrayLike): Array[] {
   return diagIndices(aShape[0], nd);
 }
 
+/**
+ * Return the indices for the upper triangle of an `(n, m)` array.
+ *
+ * Returns a pair of index arrays `[rows, cols]` of dtype `int32`, holding the
+ * indices of the upper triangle of an array with `n` rows and `m` columns
+ * (`m` defaults to `n`). The offset `k` selects a diagonal: the main diagonal
+ * when `k = 0` (default), above it when `k > 0`, and below it when `k < 0`.
+ * The indices can be used with `Array.slice()` to access the upper triangle.
+ */
+export function triuIndices(
+  n: number,
+  k: number = 0,
+  m?: number,
+): [Array, Array] {
+  m ??= n;
+  if (!Number.isInteger(n) || n < 0)
+    throw new Error(`triuIndices: n must be a nonnegative integer, got ${n}`);
+  if (!Number.isInteger(m) || m < 0)
+    throw new Error(`triuIndices: m must be a nonnegative integer, got ${m}`);
+  if (!Number.isInteger(k))
+    throw new Error(`triuIndices: k must be an integer, got ${k}`);
+  const rows: number[] = [];
+  const cols: number[] = [];
+  for (let i = 0; i < n; i++) {
+    for (let j = Math.max(i + k, 0); j < m; j++) {
+      rows.push(i);
+      cols.push(j);
+    }
+  }
+  return [
+    array(rows, { dtype: DType.Int32 }),
+    array(cols, { dtype: DType.Int32 }),
+  ];
+}
+
 /** Calculate the sum of the diagonal of an array along the given axes. */
 export function trace(a: ArrayLike, offset = 0, axis1 = 0, axis2 = 1): Array {
   return diagonal(a, offset, axis1, axis2).sum(-1);
