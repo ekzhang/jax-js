@@ -42,6 +42,66 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.nansum()", () => {
+    test("treats NaNs as zero", () => {
+      const x = np.array([1, NaN, 3, NaN]);
+      expect(np.nansum(x).js()).toEqual(4);
+    });
+
+    test("returns zero for an all-NaN array", () => {
+      const x = np.full([3], NaN);
+      expect(np.nansum(x).js()).toEqual(0);
+    });
+
+    test("reduces along an axis", () => {
+      const x = np.array([
+        [1, NaN, 2],
+        [NaN, 3, 4],
+      ]);
+      expect(np.nansum(x.ref, 0).js()).toEqual([1, 3, 6]);
+      expect(np.nansum(x, 1).js()).toEqual([3, 7]);
+    });
+
+    test("supports keepdims", () => {
+      const x = np.array([
+        [1, NaN, 2],
+        [NaN, 3, 4],
+      ]);
+      const result = np.nansum(x, 1, { keepdims: true });
+      expect(result.shape).toEqual([2, 1]);
+      expect(result.js()).toEqual([[3], [7]]);
+    });
+
+    test("keeps infinities while ignoring NaN", () => {
+      const x = np.array([1, NaN, Infinity]);
+      expect(np.nansum(x).js()).toEqual(Infinity);
+    });
+
+    test("sums integer arrays unchanged", () => {
+      const x = np.array([1, 2, 3], { dtype: np.int32 });
+      const y = np.nansum(x);
+      expect(y.dtype).toBe(np.int32);
+      expect(y.js()).toEqual(6);
+    });
+
+    test("has zero gradient at NaN entries", () => {
+      const x = np.array([1.0, NaN, 3.0]);
+      const dx = grad((x: np.Array) => np.nansum(x))(x);
+      expect(dx.js()).toEqual([1, 0, 1]);
+    });
+
+    test("works inside jit", () => {
+      const f = jit((x: np.Array) => np.nansum(x, 1));
+      const result = f(
+        np.array([
+          [1, NaN, 2],
+          [NaN, NaN, 3],
+        ]),
+      );
+      expect(result.js()).toEqual([3, 3]);
+    });
+  });
+
   suite("jax.numpy.countNonzero()", () => {
     test("counts across all dimensions", () => {
       const x = np.array([
@@ -289,6 +349,156 @@ suite.each(devices)("device:%s", (device) => {
     test("cumulative product works", () => {
       const x = np.array([1, 2, 3, 4]);
       expect(np.cumprod(x).js()).toEqual([1, 2, 6, 24]);
+    });
+  });
+
+  suite("jax.numpy.nanprod()", () => {
+    test("treats NaN values as one", () => {
+      const x = np.array([1, 2, NaN, 4]);
+      const y = np.nanprod(x);
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toEqual(8);
+    });
+
+    test("returns one for all-NaN and empty arrays", () => {
+      expect(np.nanprod(np.array([NaN, NaN])).js()).toEqual(1);
+      expect(np.nanprod(np.zeros([0])).js()).toEqual(1);
+    });
+
+    test("reduces along an axis", () => {
+      const x = np.array([
+        [1, NaN, 3],
+        [NaN, 5, 6],
+      ]);
+      expect(np.nanprod(x.ref, 0).js()).toEqual([1, 5, 18]);
+      expect(np.nanprod(x, 1).js()).toEqual([3, 30]);
+    });
+
+    test("supports keepdims", () => {
+      const x = np.array([
+        [1, NaN, 3],
+        [NaN, 5, 6],
+      ]);
+      const y = np.nanprod(x, 1, { keepdims: true });
+      expect(y.shape).toEqual([2, 1]);
+      expect(y.js()).toEqual([[3], [30]]);
+    });
+
+    test("matches prod for integer dtypes", () => {
+      const x = np.array([1, 2, 3], { dtype: np.int32 });
+      const y = np.nanprod(x);
+      expect(y.dtype).toBe(np.int32);
+      expect(y.js()).toEqual(6);
+    });
+
+    test("has zero gradient at NaN entries", () => {
+      const x = np.array([2, NaN, 4]);
+      const g = grad((x: np.Array) => np.nanprod(x))(x);
+      expect(g.js()).toEqual([4, 0, 2]);
+    });
+
+    test("works inside jit", () => {
+      const f = jit((x: np.Array) => np.nanprod(x, 1));
+      const y = f(
+        np.array([
+          [1, NaN, 3],
+          [NaN, 5, 6],
+        ]),
+      );
+      expect(y.js()).toEqual([3, 30]);
+    });
+  });
+
+  suite("jax.numpy.nancumprod()", () => {
+    test("treats NaNs as one", () => {
+      const x = np.array([1, NaN, 2, NaN, 3]);
+      expect(np.nancumprod(x).js()).toEqual([1, 1, 2, 2, 6]);
+    });
+
+    test("computes nancumprod along axis", () => {
+      const x = np.array([
+        [1, NaN, 3],
+        [4, 5, NaN],
+      ]);
+      expect(np.nancumprod(x.ref, 0).js()).toEqual([
+        [1, 1, 3],
+        [4, 5, 3],
+      ]);
+      expect(np.nancumprod(x, 1).js()).toEqual([
+        [1, 1, 3],
+        [4, 20, 20],
+      ]);
+    });
+
+    test("flattens the array when no axis is given", () => {
+      const x = np.array([
+        [1, NaN],
+        [2, 3],
+      ]);
+      expect(np.nancumprod(x).js()).toEqual([1, 1, 2, 6]);
+    });
+
+    test("returns ones for all-NaN input", () => {
+      const x = np.full([3], NaN);
+      expect(np.nancumprod(x).js()).toEqual([1, 1, 1]);
+    });
+
+    test("matches cumprod for integer input", () => {
+      const x = np.array([1, 2, 3, 4], { dtype: np.int32 });
+      const y = np.nancumprod(x);
+      expect(y.dtype).toBe(np.int32);
+      expect(y.js()).toEqual([1, 2, 6, 24]);
+    });
+
+    test("handles 0-dimensional scalars", () => {
+      expect(np.nancumprod(5).js()).toEqual([5]);
+      expect(np.nancumprod(NaN).js()).toEqual([1]);
+    });
+  });
+
+  suite("jax.numpy.nancumsum()", () => {
+    test("treats NaNs as zero", () => {
+      const x = np.array([1, NaN, 2, NaN, 3]);
+      expect(np.nancumsum(x).js()).toEqual([1, 1, 3, 3, 6]);
+    });
+
+    test("computes nancumsum along axis", () => {
+      const x = np.array([
+        [1, NaN, 3],
+        [NaN, 5, 6],
+      ]);
+      expect(np.nancumsum(x.ref, 0).js()).toEqual([
+        [1, 0, 3],
+        [1, 5, 9],
+      ]);
+      expect(np.nancumsum(x.ref, 1).js()).toEqual([
+        [1, 1, 4],
+        [0, 5, 11],
+      ]);
+      expect(np.nancumsum(x).js()).toEqual([1, 1, 4, 4, 9, 15]);
+    });
+
+    test("handles 0-dimensional scalars", () => {
+      expect(np.nancumsum(5).js()).toEqual([5]);
+      expect(np.nancumsum(NaN).js()).toEqual([0]);
+      expect(() => np.nancumsum(5, 1)).toThrow("out of bounds");
+    });
+
+    test("handles empty dimensions", () => {
+      const emptyAxis = np.nancumsum(np.zeros([2, 0]), 1);
+      expect(emptyAxis.shape).toEqual([2, 0]);
+      expect(emptyAxis.js()).toEqual([[], []]);
+
+      const emptyBatch = np.nancumsum(np.zeros([0, 3]), 1);
+      expect(emptyBatch.shape).toEqual([0, 3]);
+      expect(emptyBatch.js()).toEqual([]);
+    });
+
+    test("passes through integer arrays", () => {
+      const x = np.array([1, 2, 3], { dtype: np.int32 });
+      const y = np.nancumsum(x);
+      expect(y.dtype).toBe(np.int32);
+      expect(y.js()).toEqual([1, 3, 6]);
     });
   });
 

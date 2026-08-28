@@ -363,6 +363,20 @@ export function sum(
   return core.reduce(a, AluOp.Add, axis, opts) as Array;
 }
 
+/**
+ * Sum of the elements of the array over a given axis, or axes, treating NaNs
+ * as zero.
+ */
+export function nansum(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: core.ReduceOpts,
+): Array {
+  a = fudgeArray(a);
+  if (isFloatDtype(a.dtype)) a = where(isnan(a.ref), 0, a);
+  return sum(a, axis, opts);
+}
+
 /** Count the number of non-zero elements along the specified axis. */
 export function countNonzero(
   a: ArrayLike,
@@ -379,6 +393,17 @@ export function prod(
   opts?: core.ReduceOpts,
 ): Array {
   return core.reduce(a, AluOp.Mul, axis, opts) as Array;
+}
+
+/** Product of the array elements over a given axis, treating NaNs as one. */
+export function nanprod(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: core.ReduceOpts,
+): Array {
+  a = fudgeArray(a);
+  if (isFloatDtype(a.dtype)) a = where(isnan(a.ref), 1, a);
+  return prod(a, axis, opts);
 }
 
 /** Return the minimum of array elements along a given axis. */
@@ -606,6 +631,7 @@ function cumulativeHelper(
   a = fudgeArray(a);
   if (a.ndim === 0) a = a.reshape([1]);
   axis = checkAxis(axis, a.ndim);
+  if (a.size === 0) return a;
   a = moveaxis(a, axis, -1);
   const n = a.shape[a.ndim - 1];
 
@@ -680,6 +706,20 @@ export function cumulativeProd(
     x = concatenate([pad, x], axis);
   }
   return cumulativeHelper(AluOp.Mul, x, axis);
+}
+
+/** Cumulative product of elements along an axis, treating NaNs as one. */
+export function nancumprod(a: ArrayLike, axis?: number): Array {
+  a = fudgeArray(a);
+  if (isFloatDtype(a.dtype)) a = where(isnan(a.ref), 1, a);
+  return cumprod(a, axis);
+}
+
+/** Cumulative sum of elements along an axis, treating NaNs as zero. */
+export function nancumsum(a: ArrayLike, axis?: number): Array {
+  a = fudgeArray(a);
+  if (isFloatDtype(a.dtype)) a = where(isnan(a.ref), 0, a);
+  return cumsum(a, axis);
 }
 
 /**

@@ -335,17 +335,17 @@ Most operations behave the same way as they do in JAX.
 | `nan_to_num`          | 🟢      |                                         |
 | `nanargmax`           | 🟠      |                                         |
 | `nanargmin`           | 🟠      |                                         |
-| `nancumprod`          | 🟠      |                                         |
-| `nancumsum`           | 🟠      |                                         |
+| `nancumprod`          | 🟢      |                                         |
+| `nancumsum`           | 🟢      |                                         |
 | `nanmax`              | 🟢      |                                         |
 | `nanmean`             | 🟠      |                                         |
 | `nanmedian`           | 🟠      | sorting                                 |
 | `nanmin`              | 🟠      |                                         |
 | `nanpercentile`       | 🟠      | sorting                                 |
-| `nanprod`             | 🟠      |                                         |
+| `nanprod`             | 🟢      |                                         |
 | `nanquantile`         | 🟠      | sorting                                 |
 | `nanstd`              | 🟠      |                                         |
-| `nansum`              | 🟠      |                                         |
+| `nansum`              | 🟢      |                                         |
 | `nanvar`              | 🟠      |                                         |
 | `ndarray`             | 🟢      | just `Array` in jax-js                  |
 | `ndim`                | 🟢      |                                         |
