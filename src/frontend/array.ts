@@ -399,7 +399,10 @@ export class Array extends Tracer {
         newShape.push(this.#st.shape[i]);
       }
     }
-    newShape.push(prod(shiftedAxes.map((i) => this.#st.shape[i])));
+    const collapsedAxisSize = prod(
+      shiftedAxes.map((axis) => this.#st.shape[axis]),
+    );
+    newShape.push(collapsedAxisSize);
     return this.#transpose(keptAxes.concat(shiftedAxes)).reshape(newShape);
   }
 
