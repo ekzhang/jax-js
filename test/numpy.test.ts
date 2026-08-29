@@ -565,6 +565,98 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.nanvar()", () => {
+    test("ignores NaNs when computing variance", () => {
+      const x = np.array([1, NaN, 3, NaN]);
+      expect(np.nanvar(x).js()).toEqual(1);
+    });
+
+    test("returns NaN for an all-NaN array", () => {
+      const x = np.full([3], NaN);
+      expect(np.nanvar(x).js()).toEqual(NaN);
+    });
+
+    test("reduces along an axis", () => {
+      const x = np.array([
+        [1, NaN, 2],
+        [NaN, 3, 4],
+      ]);
+      expect(np.nanvar(x.ref, 0).js()).toEqual([0, 0, 1]);
+      expect(np.nanvar(x, 1).js()).toEqual([0.25, 0.25]);
+    });
+
+    test("supports keepdims", () => {
+      const x = np.array([
+        [1, NaN, 2],
+        [NaN, 3, 4],
+      ]);
+      const result = np.nanvar(x, 1, { keepdims: true });
+      expect(result.shape).toEqual([2, 1]);
+      expect(result.js()).toEqual([[0.25], [0.25]]);
+    });
+
+    test("returns NaN only for all-NaN slices", () => {
+      const x = np.array([
+        [NaN, NaN],
+        [1, 3],
+      ]);
+      expect(np.nanvar(x, 1).js()).toEqual([NaN, 1]);
+    });
+
+    test("applies correction to the divisor", () => {
+      const x = np.array([1, NaN, 3]);
+      expect(np.nanvar(x, null, { correction: 1 }).js()).toEqual(2);
+    });
+
+    test("returns NaN when correction leaves no degrees of freedom", () => {
+      const x = np.array([
+        [1, NaN],
+        [1, 3],
+      ]);
+      const result = np.nanvar(x, 1, { correction: 1 });
+      expect(result.js()).toEqual([NaN, 2]);
+    });
+
+    test("handles integer arrays like var_", () => {
+      const x = np.array([1, 2, 3, 4], { dtype: np.int32 });
+      const y = np.nanvar(x);
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toEqual(1.25);
+    });
+
+    test("returns NaN for integer arrays with no degrees of freedom", () => {
+      const x = np.array([1, 2], { dtype: np.int32 });
+      expect(np.nanvar(x.ref, null, { correction: 2 }).js()).toEqual(NaN);
+      expect(np.nanvar(x, null, { correction: 3 }).js()).toEqual(NaN);
+      expect(np.nanvar(np.array([], { dtype: np.int32 })).js()).toEqual(NaN);
+    });
+
+    test("has zero gradient at NaN entries", () => {
+      const x = np.array([1.0, NaN, 3.0]);
+      const dx = grad((x: np.Array) => np.nanvar(x))(x);
+      expect(dx.js()).toEqual([-1, 0, 1]);
+    });
+
+    test("has zero gradient when correction leaves no degrees of freedom", () => {
+      const x = np.array([1.0, NaN]);
+      const dx = grad((x: np.Array) => np.nanvar(x, null, { correction: 1 }))(
+        x,
+      );
+      expect(dx.js()).toEqual([0, 0]);
+    });
+
+    test("works inside jit", () => {
+      const f = jit((x: np.Array) => np.nanvar(x, 1));
+      const result = f(
+        np.array([
+          [1, NaN, 3],
+          [NaN, NaN, 3],
+        ]),
+      );
+      expect(result.js()).toEqual([1, 0]);
+    });
+  });
+
   suite("jax.numpy.diff()", () => {
     test("computes the first difference", () => {
       const x = np.array([1, 2, 4, 7, 0]);

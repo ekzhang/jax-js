@@ -3245,6 +3245,33 @@ export function var_(
 }
 
 /**
+ * Compute the variance of an array along the specified axis, ignoring NaNs.
+ *
+ * If `correction` is provided, the divisor in calculation is `N - correction`,
+ * where `N` represents the number of non-NaN elements. Slices where
+ * `N - correction` is not positive (including all-NaN slices) produce NaN.
+ */
+export function nanvar(
+  x: ArrayLike,
+  axis: core.Axis = null,
+  opts?: { correction?: number } & core.ReduceOpts,
+): Array {
+  x = fudgeArray(x);
+  if (!isFloatDtype(x.dtype)) x = x.astype(float32);
+  const nanMask = isnan(x.ref);
+  const count = sum(astype(logicalNot(nanMask.ref), int32), axis, {
+    keepdims: opts?.keepdims,
+  });
+  const mu = nanmean(x.ref, axis, { keepdims: true });
+  const centered = where(nanMask, 0, x.sub(mu));
+  const sq = sum(square(centered), axis, { keepdims: opts?.keepdims });
+  const divisor = count.sub(opts?.correction ?? 0);
+  const invalid = divisor.ref.lessEqual(0);
+  const numerator = where(invalid.ref, NaN, sq);
+  return numerator.div(astype(where(invalid, 1, divisor), numerator.dtype));
+}
+
+/**
  * Compute the standard deviation of an array.
  *
  * The standard deviation is computed for the flattened array by default,
