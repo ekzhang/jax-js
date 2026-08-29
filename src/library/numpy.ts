@@ -3288,6 +3288,22 @@ export function std(
   return sqrt(var_(x, axis, opts));
 }
 
+/**
+ * Compute the standard deviation of an array along the specified axis,
+ * ignoring NaNs.
+ *
+ * If `correction` is provided, the divisor in calculation is `N - correction`,
+ * where `N` represents the number of non-NaN elements. Slices where
+ * `N - correction` is not positive (including all-NaN slices) produce NaN.
+ */
+export function nanstd(
+  x: ArrayLike,
+  axis: core.Axis = null,
+  opts?: { correction?: number } & core.ReduceOpts,
+): Array {
+  return sqrt(nanvar(x, axis, opts));
+}
+
 /** Estimate the sample covariance of a set of variables. */
 export function cov(
   x: ArrayLike,

@@ -344,7 +344,7 @@ Most operations behave the same way as they do in JAX.
 | `nanpercentile`       | 🟠      | sorting                                 |
 | `nanprod`             | 🟢      |                                         |
 | `nanquantile`         | 🟠      | sorting                                 |
-| `nanstd`              | 🟠      |                                         |
+| `nanstd`              | 🟢      |                                         |
 | `nansum`              | 🟢      |                                         |
 | `nanvar`              | 🟢      |                                         |
 | `ndarray`             | 🟢      | just `Array` in jax-js                  |
