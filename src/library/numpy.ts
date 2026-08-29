@@ -495,6 +495,21 @@ export function mean(
 }
 
 /**
+ * Compute the average of the array elements along the specified axis, ignoring
+ * NaNs. Slices that are all-NaN produce NaN.
+ */
+export function nanmean(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: core.ReduceOpts,
+): Array {
+  a = fudgeArray(a);
+  if (!isFloatDtype(a.dtype)) return mean(a, axis, opts);
+  const normalizer = sum(astype(logicalNot(isnan(a.ref)), a.dtype), axis, opts);
+  return nansum(a, axis, opts).div(normalizer);
+}
+
+/**
  * Compute the weighted average along the specified axis.
  *
  * If no axis is specified, mean is computed along all the axes. The weights

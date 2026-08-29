@@ -338,7 +338,7 @@ Most operations behave the same way as they do in JAX.
 | `nancumprod`          | 🟢      |                                         |
 | `nancumsum`           | 🟢      |                                         |
 | `nanmax`              | 🟢      |                                         |
-| `nanmean`             | 🟠      |                                         |
+| `nanmean`             | 🟢      |                                         |
 | `nanmedian`           | 🟠      | sorting                                 |
 | `nanmin`              | 🟢      |                                         |
 | `nanpercentile`       | 🟠      | sorting                                 |

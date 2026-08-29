@@ -502,6 +502,69 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.nanmean()", () => {
+    test("ignores NaNs when averaging", () => {
+      const x = np.array([1, NaN, 3, NaN]);
+      expect(np.nanmean(x).js()).toEqual(2);
+    });
+
+    test("returns NaN for an all-NaN array", () => {
+      const x = np.full([3], NaN);
+      expect(np.nanmean(x).js()).toEqual(NaN);
+    });
+
+    test("reduces along an axis", () => {
+      const x = np.array([
+        [1, NaN, 2],
+        [NaN, 3, 4],
+      ]);
+      expect(np.nanmean(x.ref, 0).js()).toEqual([1, 3, 3]);
+      expect(np.nanmean(x, 1).js()).toEqual([1.5, 3.5]);
+    });
+
+    test("supports keepdims", () => {
+      const x = np.array([
+        [1, NaN, 2],
+        [NaN, 3, 4],
+      ]);
+      const result = np.nanmean(x, 1, { keepdims: true });
+      expect(result.shape).toEqual([2, 1]);
+      expect(result.js()).toEqual([[1.5], [3.5]]);
+    });
+
+    test("returns NaN only for all-NaN slices", () => {
+      const x = np.array([
+        [NaN, NaN],
+        [1, 3],
+      ]);
+      expect(np.nanmean(x, 1).js()).toEqual([NaN, 2]);
+    });
+
+    test("averages integer arrays like mean", () => {
+      const x = np.array([1, 2, 3, 4], { dtype: np.int32 });
+      const y = np.nanmean(x);
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toEqual(2.5);
+    });
+
+    test("has zero gradient at NaN entries", () => {
+      const x = np.array([1.0, NaN, 3.0]);
+      const dx = grad((x: np.Array) => np.nanmean(x))(x);
+      expect(dx.js()).toEqual([0.5, 0, 0.5]);
+    });
+
+    test("works inside jit", () => {
+      const f = jit((x: np.Array) => np.nanmean(x, 1));
+      const result = f(
+        np.array([
+          [1, NaN, 2],
+          [NaN, NaN, 3],
+        ]),
+      );
+      expect(result.js()).toEqual([1.5, 3]);
+    });
+  });
+
   suite("jax.numpy.diff()", () => {
     test("computes the first difference", () => {
       const x = np.array([1, 2, 4, 7, 0]);
