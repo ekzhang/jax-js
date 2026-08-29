@@ -3352,6 +3352,19 @@ export function nanToNum(
   return x;
 }
 
+/** Return the minimum of array elements along a given axis, ignoring NaNs. */
+export function nanmin(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: core.ReduceOpts,
+): Array {
+  a = fudgeArray(a);
+  if (!isFloatDtype(a.dtype)) return min(a, axis, opts);
+  const nanMask = isnan(a.ref);
+  const result = min(where(nanMask.ref, Infinity, a), axis, opts);
+  return where(all(nanMask, axis, opts), NaN, result);
+}
+
 /**
  * @function
  * Test element-wise for finite values (not infinity or NaN).

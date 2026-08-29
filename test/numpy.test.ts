@@ -4690,6 +4690,66 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.nanmin()", () => {
+    test("ignores NaN values in 1D array", () => {
+      const x = np.array([3, NaN, 4, 1]);
+      const y = np.nanmin(x);
+      expect(y.js()).toEqual(1);
+    });
+
+    test("matches min when no NaNs are present", () => {
+      const x = np.array([3, 1, 4, 2]);
+      const y = np.nanmin(x);
+      expect(y.js()).toEqual(1);
+    });
+
+    test("computes minimum of 2D array along axis", () => {
+      const x = np.array([
+        [3, NaN, 4],
+        [NaN, 5, 0],
+      ]);
+      expect(np.nanmin(x.ref, 0).js()).toEqual([3, 5, 0]);
+      expect(np.nanmin(x, 1).js()).toEqual([3, 0]);
+    });
+
+    test("supports keepdims", () => {
+      const x = np.array([
+        [3, NaN, 4],
+        [NaN, 5, 0],
+      ]);
+      const y = np.nanmin(x, 1, { keepdims: true });
+      expect(y.js()).toEqual([[3], [0]]);
+    });
+
+    test("returns NaN for all-NaN slices", () => {
+      const x = np.array([
+        [NaN, NaN],
+        [1, NaN],
+      ]);
+      const y = np.nanmin(x, 1);
+      expect(y.js()).toEqual([NaN, 1]);
+    });
+
+    test("returns NaN when all elements are NaN", () => {
+      const x = np.array([NaN, NaN]);
+      const y = np.nanmin(x);
+      expect(y.js()).toEqual(NaN);
+    });
+
+    test("falls back to min for integer arrays", () => {
+      const x = np.array([3, 1, 4], { dtype: np.int32 });
+      const y = np.nanmin(x);
+      expect(y.dtype).toBe(np.int32);
+      expect(y.js()).toEqual(1);
+    });
+
+    test("can have grad of nanmin", () => {
+      const x = np.array([3, NaN, 1, 1]);
+      const dx = grad((x: np.Array) => np.nanmin(x))(x);
+      expect(dx.js()).toEqual([0, 0, 0.5, 0.5]);
+    });
+  });
+
   suite("jax.numpy.convolve()", () => {
     test("computes 1D convolution", () => {
       const x = np.array([1, 2, 3, 2, 1]);
