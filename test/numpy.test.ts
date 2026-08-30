@@ -4586,6 +4586,115 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.argmin()", () => {
+    test("finds minimum of logits", () => {
+      const x = np.argmin(np.array([0.3, 0.2, 0.1, 0.2]));
+      expect(x.js()).toEqual(2);
+    });
+
+    test("retrieves first index of minimum", () => {
+      const x = np.argmin(
+        np.array([
+          [0.1, -0.2, -0.3, 0.1],
+          [0, -0.1, 0.3, -0.1],
+        ]),
+        1,
+      );
+      expect(x.js()).toEqual([2, 1]);
+    });
+
+    test("runs on flattened array by default", () => {
+      const x = np.argmin(
+        np.array([
+          [0.1, -0.2],
+          [0.3, 0.1],
+        ]),
+      );
+      expect(x.js()).toEqual(1);
+    });
+
+    test("preserves input rank when flattening with keepdims", () => {
+      const x = np.array([
+        [0.1, -0.2],
+        [0.3, 0.1],
+      ]);
+      const y = np.argmin(x, undefined, { keepdims: true });
+      expect(y.shape).toEqual([1, 1]);
+      expect(y.js()).toEqual([[1]]);
+    });
+
+    test("rejects an empty reduction", () => {
+      expect(() => np.argmin(np.array([]))).toThrow("empty sequence");
+    });
+  });
+
+  suite("jax.numpy.nanargmin()", () => {
+    test("ignores NaN values", () => {
+      const x = np.array([3, NaN, 1, 2]);
+      expect(np.nanargmin(x).js()).toEqual(2);
+    });
+
+    test("returns -1 when all values are NaN", () => {
+      const x = np.array([NaN, NaN, NaN]);
+      expect(np.nanargmin(x).js()).toEqual(-1);
+    });
+
+    test("retrieves first index of minimum", () => {
+      const x = np.array([3, 1, NaN, 1]);
+      expect(np.nanargmin(x).js()).toEqual(1);
+    });
+
+    test("computes index along an axis, with all-NaN slices", () => {
+      const x = np.array([
+        [1, NaN, 3],
+        [NaN, NaN, NaN],
+      ]);
+      expect(np.nanargmin(x.ref, 1).js()).toEqual([0, -1]);
+      expect(np.nanargmin(x.ref, 0).js()).toEqual([0, -1, 0]);
+      expect(np.nanargmin(x, 1, { keepdims: true }).js()).toEqual([[0], [-1]]);
+    });
+
+    test("runs on flattened array by default", () => {
+      const x = np.array([
+        [0.3, NaN],
+        [0.1, 0.4],
+      ]);
+      expect(np.nanargmin(x).js()).toEqual(2);
+    });
+
+    test("preserves input rank when flattening with keepdims", () => {
+      const x = np.array([
+        [0.3, NaN],
+        [0.1, 0.4],
+      ]);
+      const y = np.nanargmin(x, undefined, { keepdims: true });
+      expect(y.shape).toEqual([1, 1]);
+      expect(y.js()).toEqual([[2]]);
+    });
+
+    test("rejects an empty reduction", () => {
+      expect(() => np.nanargmin(np.array([]))).toThrow("empty sequence");
+    });
+
+    test("keeps Infinity distinct from NaN", () => {
+      const x = np.array([Infinity, NaN, 5]);
+      expect(np.nanargmin(x).js()).toEqual(2);
+    });
+
+    test("behaves like argmin for integer arrays", () => {
+      const x = np.array([3, 1, 4, 2], { dtype: np.int32 });
+      const y = np.nanargmin(x);
+      expect(y.dtype).toBe(np.int32);
+      expect(y.js()).toEqual(1);
+    });
+
+    test("works inside jit", () => {
+      const f = jit((x: np.Array) => np.nanargmin(x));
+      expect(f(np.array([3, NaN, 1, 2])).js()).toEqual(2);
+      expect(f(np.array([NaN, NaN, NaN, NaN])).js()).toEqual(-1);
+    });
+  });
+
   suite("jax.numpy.argmax()", () => {
     test("finds maximum of logits", () => {
       const x = np.argmax(np.array([0.1, 0.2, 0.3, 0.2]));

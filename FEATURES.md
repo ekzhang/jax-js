@@ -334,7 +334,7 @@ Most operations behave the same way as they do in JAX.
 | `multiply`            | 🟢      |                                         |
 | `nan_to_num`          | 🟢      |                                         |
 | `nanargmax`           | 🟢      |                                         |
-| `nanargmin`           | 🟠      |                                         |
+| `nanargmin`           | 🟢      |                                         |
 | `nancumprod`          | 🟢      |                                         |
 | `nancumsum`           | 🟢      |                                         |
 | `nanmax`              | 🟢      |                                         |
