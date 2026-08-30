@@ -599,13 +599,18 @@ export function argmax(
   opts?: core.ReduceOpts,
 ): Array {
   a = fudgeArray(a);
+  let flattenedNdim: number | undefined;
   if (axis === undefined) {
+    flattenedNdim = a.ndim;
     a = a.ravel();
     axis = 0; // Default to the first axis of the flattened array.
   } else {
     axis = checkAxis(axis, a.ndim);
   }
   const shape = a.shape;
+  if (shape[axis] === 0) {
+    throw new Error("attempt to get argmax of an empty sequence");
+  }
   const isMax = equal(a, max(a.ref, axis, { keepdims: true }));
   const length = array(shape[axis], { dtype: int32, device: a.device });
   const idx = isMax.astype(DType.Int32).mul(
@@ -615,7 +620,29 @@ export function argmax(
       ...rep(shape.length - axis - 1, 1),
     ]),
   );
-  return length.sub(max(idx, axis, opts));
+  const result = length.sub(max(idx, axis, opts));
+  return flattenedNdim !== undefined && opts?.keepdims
+    ? result.reshape(rep(flattenedNdim, 1))
+    : result;
+}
+
+/**
+ * Returns the indices of the maximum values along an axis, ignoring NaNs.
+ *
+ * By default, index is into the flattened array, otherwise it is along the
+ * specified axis. Unlike NumPy, which raises an error for all-NaN slices, this
+ * returns -1 for those slices, matching JAX.
+ */
+export function nanargmax(
+  a: ArrayLike,
+  axis?: number,
+  opts?: core.ReduceOpts,
+): Array {
+  a = fudgeArray(a);
+  if (!isFloatDtype(a.dtype)) return argmax(a, axis, opts);
+  const nanMask = isnan(a.ref);
+  const result = argmax(where(nanMask.ref, -Infinity, a), axis, opts);
+  return where(all(nanMask, axis ?? null, opts), -1, result);
 }
 
 /**

@@ -4612,6 +4612,87 @@ suite.each(devices)("device:%s", (device) => {
       );
       expect(x.js()).toEqual(2); // Index of maximum in flattened array
     });
+
+    test("preserves input rank when flattening with keepdims", () => {
+      const x = np.array([
+        [0.1, -0.2],
+        [0.3, 0.1],
+      ]);
+      const y = np.argmax(x, undefined, { keepdims: true });
+      expect(y.shape).toEqual([1, 1]);
+      expect(y.js()).toEqual([[2]]);
+    });
+
+    test("rejects an empty reduction", () => {
+      expect(() => np.argmax(np.array([]))).toThrow("empty sequence");
+    });
+  });
+
+  suite("jax.numpy.nanargmax()", () => {
+    test("ignores NaN values", () => {
+      const x = np.array([1, NaN, 4, 2]);
+      expect(np.nanargmax(x).js()).toEqual(2);
+    });
+
+    test("returns -1 when all values are NaN", () => {
+      const x = np.array([NaN, NaN, NaN]);
+      expect(np.nanargmax(x).js()).toEqual(-1);
+    });
+
+    test("retrieves first index of maximum", () => {
+      const x = np.array([1, 3, NaN, 3]);
+      expect(np.nanargmax(x).js()).toEqual(1);
+    });
+
+    test("computes index along an axis, with all-NaN slices", () => {
+      const x = np.array([
+        [1, NaN, 3],
+        [NaN, NaN, NaN],
+      ]);
+      expect(np.nanargmax(x.ref, 1).js()).toEqual([2, -1]);
+      expect(np.nanargmax(x.ref, 0).js()).toEqual([0, -1, 0]);
+      expect(np.nanargmax(x, 1, { keepdims: true }).js()).toEqual([[2], [-1]]);
+    });
+
+    test("runs on flattened array by default", () => {
+      const x = np.array([
+        [0.1, NaN],
+        [0.3, 0.1],
+      ]);
+      expect(np.nanargmax(x).js()).toEqual(2);
+    });
+
+    test("preserves input rank when flattening with keepdims", () => {
+      const x = np.array([
+        [0.1, NaN],
+        [0.3, 0.1],
+      ]);
+      const y = np.nanargmax(x, undefined, { keepdims: true });
+      expect(y.shape).toEqual([1, 1]);
+      expect(y.js()).toEqual([[2]]);
+    });
+
+    test("rejects an empty reduction", () => {
+      expect(() => np.nanargmax(np.array([]))).toThrow("empty sequence");
+    });
+
+    test("keeps -Infinity distinct from NaN", () => {
+      const x = np.array([-Infinity, NaN, -5]);
+      expect(np.nanargmax(x).js()).toEqual(2);
+    });
+
+    test("behaves like argmax for integer arrays", () => {
+      const x = np.array([3, 1, 4, 2], { dtype: np.int32 });
+      const y = np.nanargmax(x);
+      expect(y.dtype).toBe(np.int32);
+      expect(y.js()).toEqual(2);
+    });
+
+    test("works inside jit", () => {
+      const f = jit((x: np.Array) => np.nanargmax(x));
+      expect(f(np.array([1, NaN, 4, 2])).js()).toEqual(2);
+      expect(f(np.array([NaN, NaN, NaN, NaN])).js()).toEqual(-1);
+    });
   });
 
   suite("jax.numpy.tanh()", () => {
