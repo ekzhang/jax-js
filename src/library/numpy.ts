@@ -425,6 +425,29 @@ export function max(
 }
 
 /**
+ * Return the maximum of array elements along a given axis, ignoring NaNs.
+ *
+ * Slices that contain only NaN values return NaN.
+ */
+export function nanmax(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: core.ReduceOpts,
+): Array {
+  a = fudgeArray(a);
+  axis = normalizeAxis(axis, a.ndim);
+  if (axis.some((i) => a.shape[i] === 0)) {
+    throw new Error(
+      "zero-size array to reduction operation max which has no identity",
+    );
+  }
+  if (!isFloatDtype(a.dtype)) return max(a, axis, opts);
+  const mask = isnan(a.ref);
+  const out = max(where(mask.ref, -Infinity, a), axis, opts);
+  return where(all(mask, axis, opts), NaN, out);
+}
+
+/**
  * Test whether any array element along a given axis evaluates to True.
  *
  * Returns a boolean array with the same shape as `a` with the specified axis
@@ -469,6 +492,21 @@ export function mean(
   opts?: core.ReduceOpts,
 ): Array {
   return fudgeArray(a).mean(axis, opts);
+}
+
+/**
+ * Compute the average of the array elements along the specified axis, ignoring
+ * NaNs. Slices that are all-NaN produce NaN.
+ */
+export function nanmean(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: core.ReduceOpts,
+): Array {
+  a = fudgeArray(a);
+  if (!isFloatDtype(a.dtype)) return mean(a, axis, opts);
+  const normalizer = sum(astype(logicalNot(isnan(a.ref)), a.dtype), axis, opts);
+  return nansum(a, axis, opts).div(normalizer);
 }
 
 /**
@@ -530,13 +568,18 @@ export function argmin(
   opts?: core.ReduceOpts,
 ): Array {
   a = fudgeArray(a);
+  let flattenedNdim: number | undefined;
   if (axis === undefined) {
+    flattenedNdim = a.ndim;
     a = a.ravel();
     axis = 0; // Default to the first axis of the flattened array.
   } else {
     axis = checkAxis(axis, a.ndim);
   }
   const shape = a.shape;
+  if (shape[axis] === 0) {
+    throw new Error("attempt to get argmin of an empty sequence");
+  }
   const isMax = equal(a, min(a.ref, axis, { keepdims: true }));
   const length = array(shape[axis], { dtype: int32, device: a.device });
   const idx = isMax.astype(DType.Int32).mul(
@@ -546,7 +589,29 @@ export function argmin(
       ...rep(shape.length - axis - 1, 1),
     ]),
   );
-  return length.sub(max(idx, axis, opts));
+  const result = length.sub(max(idx, axis, opts));
+  return flattenedNdim !== undefined && opts?.keepdims
+    ? result.reshape(rep(flattenedNdim, 1))
+    : result;
+}
+
+/**
+ * Returns the indices of the minimum values along an axis, ignoring NaNs.
+ *
+ * By default, index is into the flattened array, otherwise it is along the
+ * specified axis. Unlike NumPy, which raises an error for all-NaN slices, this
+ * returns -1 for those slices, matching JAX.
+ */
+export function nanargmin(
+  a: ArrayLike,
+  axis?: number,
+  opts?: core.ReduceOpts,
+): Array {
+  a = fudgeArray(a);
+  if (!isFloatDtype(a.dtype)) return argmin(a, axis, opts);
+  const nanMask = isnan(a.ref);
+  const result = argmin(where(nanMask.ref, Infinity, a), axis, opts);
+  return where(all(nanMask, axis ?? null, opts), -1, result);
 }
 
 /**
@@ -561,13 +626,18 @@ export function argmax(
   opts?: core.ReduceOpts,
 ): Array {
   a = fudgeArray(a);
+  let flattenedNdim: number | undefined;
   if (axis === undefined) {
+    flattenedNdim = a.ndim;
     a = a.ravel();
     axis = 0; // Default to the first axis of the flattened array.
   } else {
     axis = checkAxis(axis, a.ndim);
   }
   const shape = a.shape;
+  if (shape[axis] === 0) {
+    throw new Error("attempt to get argmax of an empty sequence");
+  }
   const isMax = equal(a, max(a.ref, axis, { keepdims: true }));
   const length = array(shape[axis], { dtype: int32, device: a.device });
   const idx = isMax.astype(DType.Int32).mul(
@@ -577,7 +647,29 @@ export function argmax(
       ...rep(shape.length - axis - 1, 1),
     ]),
   );
-  return length.sub(max(idx, axis, opts));
+  const result = length.sub(max(idx, axis, opts));
+  return flattenedNdim !== undefined && opts?.keepdims
+    ? result.reshape(rep(flattenedNdim, 1))
+    : result;
+}
+
+/**
+ * Returns the indices of the maximum values along an axis, ignoring NaNs.
+ *
+ * By default, index is into the flattened array, otherwise it is along the
+ * specified axis. Unlike NumPy, which raises an error for all-NaN slices, this
+ * returns -1 for those slices, matching JAX.
+ */
+export function nanargmax(
+  a: ArrayLike,
+  axis?: number,
+  opts?: core.ReduceOpts,
+): Array {
+  a = fudgeArray(a);
+  if (!isFloatDtype(a.dtype)) return argmax(a, axis, opts);
+  const nanMask = isnan(a.ref);
+  const result = argmax(where(nanMask.ref, -Infinity, a), axis, opts);
+  return where(all(nanMask, axis ?? null, opts), -1, result);
 }
 
 /**
@@ -3207,6 +3299,33 @@ export function var_(
 }
 
 /**
+ * Compute the variance of an array along the specified axis, ignoring NaNs.
+ *
+ * If `correction` is provided, the divisor in calculation is `N - correction`,
+ * where `N` represents the number of non-NaN elements. Slices where
+ * `N - correction` is not positive (including all-NaN slices) produce NaN.
+ */
+export function nanvar(
+  x: ArrayLike,
+  axis: core.Axis = null,
+  opts?: { correction?: number } & core.ReduceOpts,
+): Array {
+  x = fudgeArray(x);
+  if (!isFloatDtype(x.dtype)) x = x.astype(float32);
+  const nanMask = isnan(x.ref);
+  const count = sum(astype(logicalNot(nanMask.ref), int32), axis, {
+    keepdims: opts?.keepdims,
+  });
+  const mu = nanmean(x.ref, axis, { keepdims: true });
+  const centered = where(nanMask, 0, x.sub(mu));
+  const sq = sum(square(centered), axis, { keepdims: opts?.keepdims });
+  const divisor = count.sub(opts?.correction ?? 0);
+  const invalid = divisor.ref.lessEqual(0);
+  const numerator = where(invalid.ref, NaN, sq);
+  return numerator.div(astype(where(invalid, 1, divisor), numerator.dtype));
+}
+
+/**
  * Compute the standard deviation of an array.
  *
  * The standard deviation is computed for the flattened array by default,
@@ -3221,6 +3340,22 @@ export function std(
   opts?: { mean?: ArrayLike; correction?: number } & core.ReduceOpts,
 ): Array {
   return sqrt(var_(x, axis, opts));
+}
+
+/**
+ * Compute the standard deviation of an array along the specified axis,
+ * ignoring NaNs.
+ *
+ * If `correction` is provided, the divisor in calculation is `N - correction`,
+ * where `N` represents the number of non-NaN elements. Slices where
+ * `N - correction` is not positive (including all-NaN slices) produce NaN.
+ */
+export function nanstd(
+  x: ArrayLike,
+  axis: core.Axis = null,
+  opts?: { correction?: number } & core.ReduceOpts,
+): Array {
+  return sqrt(nanvar(x, axis, opts));
 }
 
 /** Estimate the sample covariance of a set of variables. */
@@ -3327,6 +3462,19 @@ export function nanToNum(
   x = where(isposinf(x.ref), posinf, x);
   x = where(isneginf(x.ref), neginf, x);
   return x;
+}
+
+/** Return the minimum of array elements along a given axis, ignoring NaNs. */
+export function nanmin(
+  a: ArrayLike,
+  axis: core.Axis = null,
+  opts?: core.ReduceOpts,
+): Array {
+  a = fudgeArray(a);
+  if (!isFloatDtype(a.dtype)) return min(a, axis, opts);
+  const nanMask = isnan(a.ref);
+  const result = min(where(nanMask.ref, Infinity, a), axis, opts);
+  return where(all(nanMask, axis, opts), NaN, result);
 }
 
 /**

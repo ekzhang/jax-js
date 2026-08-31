@@ -502,6 +502,238 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.nanmean()", () => {
+    test("ignores NaNs when averaging", () => {
+      const x = np.array([1, NaN, 3, NaN]);
+      expect(np.nanmean(x).js()).toEqual(2);
+    });
+
+    test("returns NaN for an all-NaN array", () => {
+      const x = np.full([3], NaN);
+      expect(np.nanmean(x).js()).toEqual(NaN);
+    });
+
+    test("reduces along an axis", () => {
+      const x = np.array([
+        [1, NaN, 2],
+        [NaN, 3, 4],
+      ]);
+      expect(np.nanmean(x.ref, 0).js()).toEqual([1, 3, 3]);
+      expect(np.nanmean(x, 1).js()).toEqual([1.5, 3.5]);
+    });
+
+    test("supports keepdims", () => {
+      const x = np.array([
+        [1, NaN, 2],
+        [NaN, 3, 4],
+      ]);
+      const result = np.nanmean(x, 1, { keepdims: true });
+      expect(result.shape).toEqual([2, 1]);
+      expect(result.js()).toEqual([[1.5], [3.5]]);
+    });
+
+    test("returns NaN only for all-NaN slices", () => {
+      const x = np.array([
+        [NaN, NaN],
+        [1, 3],
+      ]);
+      expect(np.nanmean(x, 1).js()).toEqual([NaN, 2]);
+    });
+
+    test("averages integer arrays like mean", () => {
+      const x = np.array([1, 2, 3, 4], { dtype: np.int32 });
+      const y = np.nanmean(x);
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toEqual(2.5);
+    });
+
+    test("has zero gradient at NaN entries", () => {
+      const x = np.array([1.0, NaN, 3.0]);
+      const dx = grad((x: np.Array) => np.nanmean(x))(x);
+      expect(dx.js()).toEqual([0.5, 0, 0.5]);
+    });
+
+    test("works inside jit", () => {
+      const f = jit((x: np.Array) => np.nanmean(x, 1));
+      const result = f(
+        np.array([
+          [1, NaN, 2],
+          [NaN, NaN, 3],
+        ]),
+      );
+      expect(result.js()).toEqual([1.5, 3]);
+    });
+  });
+
+  suite("jax.numpy.nanvar()", () => {
+    test("ignores NaNs when computing variance", () => {
+      const x = np.array([1, NaN, 3, NaN]);
+      expect(np.nanvar(x).js()).toEqual(1);
+    });
+
+    test("returns NaN for an all-NaN array", () => {
+      const x = np.full([3], NaN);
+      expect(np.nanvar(x).js()).toEqual(NaN);
+    });
+
+    test("reduces along an axis", () => {
+      const x = np.array([
+        [1, NaN, 2],
+        [NaN, 3, 4],
+      ]);
+      expect(np.nanvar(x.ref, 0).js()).toEqual([0, 0, 1]);
+      expect(np.nanvar(x, 1).js()).toEqual([0.25, 0.25]);
+    });
+
+    test("supports keepdims", () => {
+      const x = np.array([
+        [1, NaN, 2],
+        [NaN, 3, 4],
+      ]);
+      const result = np.nanvar(x, 1, { keepdims: true });
+      expect(result.shape).toEqual([2, 1]);
+      expect(result.js()).toEqual([[0.25], [0.25]]);
+    });
+
+    test("returns NaN only for all-NaN slices", () => {
+      const x = np.array([
+        [NaN, NaN],
+        [1, 3],
+      ]);
+      expect(np.nanvar(x, 1).js()).toEqual([NaN, 1]);
+    });
+
+    test("applies correction to the divisor", () => {
+      const x = np.array([1, NaN, 3]);
+      expect(np.nanvar(x, null, { correction: 1 }).js()).toEqual(2);
+    });
+
+    test("returns NaN when correction leaves no degrees of freedom", () => {
+      const x = np.array([
+        [1, NaN],
+        [1, 3],
+      ]);
+      const result = np.nanvar(x, 1, { correction: 1 });
+      expect(result.js()).toEqual([NaN, 2]);
+    });
+
+    test("handles integer arrays like var_", () => {
+      const x = np.array([1, 2, 3, 4], { dtype: np.int32 });
+      const y = np.nanvar(x);
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toEqual(1.25);
+    });
+
+    test("returns NaN for integer arrays with no degrees of freedom", () => {
+      const x = np.array([1, 2], { dtype: np.int32 });
+      expect(np.nanvar(x.ref, null, { correction: 2 }).js()).toEqual(NaN);
+      expect(np.nanvar(x, null, { correction: 3 }).js()).toEqual(NaN);
+      expect(np.nanvar(np.array([], { dtype: np.int32 })).js()).toEqual(NaN);
+    });
+
+    test("has zero gradient at NaN entries", () => {
+      const x = np.array([1.0, NaN, 3.0]);
+      const dx = grad((x: np.Array) => np.nanvar(x))(x);
+      expect(dx.js()).toEqual([-1, 0, 1]);
+    });
+
+    test("has zero gradient when correction leaves no degrees of freedom", () => {
+      const x = np.array([1.0, NaN]);
+      const dx = grad((x: np.Array) => np.nanvar(x, null, { correction: 1 }))(
+        x,
+      );
+      expect(dx.js()).toEqual([0, 0]);
+    });
+
+    test("works inside jit", () => {
+      const f = jit((x: np.Array) => np.nanvar(x, 1));
+      const result = f(
+        np.array([
+          [1, NaN, 3],
+          [NaN, NaN, 3],
+        ]),
+      );
+      expect(result.js()).toEqual([1, 0]);
+    });
+  });
+
+  suite("jax.numpy.nanstd()", () => {
+    test("ignores NaNs when computing standard deviation", () => {
+      const x = np.array([1, NaN, 3, NaN]);
+      expect(np.nanstd(x).js()).toEqual(1);
+    });
+
+    test("returns NaN for an all-NaN array", () => {
+      const x = np.full([3], NaN);
+      expect(np.nanstd(x).js()).toEqual(NaN);
+    });
+
+    test("reduces along an axis", () => {
+      const x = np.array([
+        [1, NaN, 2],
+        [NaN, 3, 4],
+      ]);
+      expect(np.nanstd(x.ref, 0).js()).toEqual([0, 0, 1]);
+      expect(np.nanstd(x, 1).js()).toEqual([0.5, 0.5]);
+    });
+
+    test("supports keepdims", () => {
+      const x = np.array([
+        [1, NaN, 2],
+        [NaN, 3, 4],
+      ]);
+      const result = np.nanstd(x, 1, { keepdims: true });
+      expect(result.shape).toEqual([2, 1]);
+      expect(result.js()).toEqual([[0.5], [0.5]]);
+    });
+
+    test("returns NaN only for all-NaN slices", () => {
+      const x = np.array([
+        [NaN, NaN],
+        [1, 3],
+      ]);
+      expect(np.nanstd(x, 1).js()).toEqual([NaN, 1]);
+    });
+
+    test("applies correction to the divisor", () => {
+      const x = np.array([1, 3, 5, NaN]);
+      expect(np.nanstd(x, null, { correction: 1 }).js()).toEqual(2);
+    });
+
+    test("returns NaN when correction leaves no degrees of freedom", () => {
+      const x = np.array([
+        [1, NaN, NaN],
+        [1, 3, 5],
+      ]);
+      const result = np.nanstd(x, 1, { correction: 1 });
+      expect(result.js()).toEqual([NaN, 2]);
+    });
+
+    test("handles integer arrays like std", () => {
+      const x = np.array([1, 3, 1, 3], { dtype: np.int32 });
+      const y = np.nanstd(x);
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toEqual(1);
+    });
+
+    test("has zero gradient at NaN entries", () => {
+      const x = np.array([1.0, NaN, 3.0]);
+      const dx = grad((x: np.Array) => np.nanstd(x))(x);
+      expect(dx.js()).toEqual([-0.5, 0, 0.5]);
+    });
+
+    test("works inside jit", () => {
+      const f = jit((x: np.Array) => np.nanstd(x, 1));
+      const result = f(
+        np.array([
+          [1, NaN, 3],
+          [NaN, NaN, 3],
+        ]),
+      );
+      expect(result.js()).toEqual([1, 0]);
+    });
+  });
+
   suite("jax.numpy.diff()", () => {
     test("computes the first difference", () => {
       const x = np.array([1, 2, 4, 7, 0]);
@@ -3312,6 +3544,63 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.nanmax()", () => {
+    test("ignores NaN values", () => {
+      const x = np.array([1, NaN, 4, 2]);
+      expect(np.nanmax(x).js()).toEqual(4);
+    });
+
+    test("returns NaN when all values are NaN", () => {
+      const x = np.array([NaN, NaN, NaN]);
+      expect(np.nanmax(x).js()).toEqual(NaN);
+    });
+
+    test("computes maximum along an axis, with all-NaN slices", () => {
+      const x = np.array([
+        [1, NaN, 3],
+        [NaN, NaN, NaN],
+      ]);
+      expect(np.nanmax(x.ref, 1).js()).toEqual([3, NaN]);
+      expect(np.nanmax(x.ref, 0).js()).toEqual([1, NaN, 3]);
+      expect(np.nanmax(x, 1, { keepdims: true }).js()).toEqual([[3], [NaN]]);
+    });
+
+    test("keeps -Infinity distinct from NaN", () => {
+      const x = np.array([-Infinity, NaN, -5]);
+      expect(np.nanmax(x).js()).toEqual(-5);
+      expect(np.nanmax(np.array([-Infinity, NaN])).js()).toEqual(-Infinity);
+    });
+
+    test("behaves like max for integer arrays", () => {
+      const x = np.array([3, 1, 4, 2], { dtype: np.int32 });
+      const y = np.nanmax(x);
+      expect(y.dtype).toBe(np.int32);
+      expect(y.js()).toEqual(4);
+    });
+
+    test("handles zero-size dimensions", () => {
+      const emptyReduction = np.zeros([0]);
+      expect(() => np.nanmax(emptyReduction)).toThrow("zero-size array");
+      emptyReduction.dispose();
+
+      const x = np.zeros([0, 2]);
+      const y = np.nanmax(x.ref, 1);
+      expect(y.shape).toEqual([0]);
+      expect(y.js()).toEqual([]);
+      const z = np.nanmax(x, 1, { keepdims: true });
+      expect(z.shape).toEqual([0, 1]);
+      expect(z.js()).toEqual([]);
+    });
+
+    test("works inside jit and grad", () => {
+      const f = jit((x: np.Array) => np.nanmax(x));
+      expect(f(np.array([1, NaN, 4, 2])).js()).toEqual(4);
+
+      const dx = grad((x: np.Array) => np.nanmax(x))(np.array([1, NaN, 4, 2]));
+      expect(dx.js()).toEqual([0, 0, 1, 0]); // Gradient is 1 at the maximum
+    });
+  });
+
   suite("jax.numpy.pad()", () => {
     test("pads an array equally", () => {
       const a = np.array([1, 2, 3]);
@@ -4297,6 +4586,115 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.argmin()", () => {
+    test("finds minimum of logits", () => {
+      const x = np.argmin(np.array([0.3, 0.2, 0.1, 0.2]));
+      expect(x.js()).toEqual(2);
+    });
+
+    test("retrieves first index of minimum", () => {
+      const x = np.argmin(
+        np.array([
+          [0.1, -0.2, -0.3, 0.1],
+          [0, -0.1, 0.3, -0.1],
+        ]),
+        1,
+      );
+      expect(x.js()).toEqual([2, 1]);
+    });
+
+    test("runs on flattened array by default", () => {
+      const x = np.argmin(
+        np.array([
+          [0.1, -0.2],
+          [0.3, 0.1],
+        ]),
+      );
+      expect(x.js()).toEqual(1);
+    });
+
+    test("preserves input rank when flattening with keepdims", () => {
+      const x = np.array([
+        [0.1, -0.2],
+        [0.3, 0.1],
+      ]);
+      const y = np.argmin(x, undefined, { keepdims: true });
+      expect(y.shape).toEqual([1, 1]);
+      expect(y.js()).toEqual([[1]]);
+    });
+
+    test("rejects an empty reduction", () => {
+      expect(() => np.argmin(np.array([]))).toThrow("empty sequence");
+    });
+  });
+
+  suite("jax.numpy.nanargmin()", () => {
+    test("ignores NaN values", () => {
+      const x = np.array([3, NaN, 1, 2]);
+      expect(np.nanargmin(x).js()).toEqual(2);
+    });
+
+    test("returns -1 when all values are NaN", () => {
+      const x = np.array([NaN, NaN, NaN]);
+      expect(np.nanargmin(x).js()).toEqual(-1);
+    });
+
+    test("retrieves first index of minimum", () => {
+      const x = np.array([3, 1, NaN, 1]);
+      expect(np.nanargmin(x).js()).toEqual(1);
+    });
+
+    test("computes index along an axis, with all-NaN slices", () => {
+      const x = np.array([
+        [1, NaN, 3],
+        [NaN, NaN, NaN],
+      ]);
+      expect(np.nanargmin(x.ref, 1).js()).toEqual([0, -1]);
+      expect(np.nanargmin(x.ref, 0).js()).toEqual([0, -1, 0]);
+      expect(np.nanargmin(x, 1, { keepdims: true }).js()).toEqual([[0], [-1]]);
+    });
+
+    test("runs on flattened array by default", () => {
+      const x = np.array([
+        [0.3, NaN],
+        [0.1, 0.4],
+      ]);
+      expect(np.nanargmin(x).js()).toEqual(2);
+    });
+
+    test("preserves input rank when flattening with keepdims", () => {
+      const x = np.array([
+        [0.3, NaN],
+        [0.1, 0.4],
+      ]);
+      const y = np.nanargmin(x, undefined, { keepdims: true });
+      expect(y.shape).toEqual([1, 1]);
+      expect(y.js()).toEqual([[2]]);
+    });
+
+    test("rejects an empty reduction", () => {
+      expect(() => np.nanargmin(np.array([]))).toThrow("empty sequence");
+    });
+
+    test("keeps Infinity distinct from NaN", () => {
+      const x = np.array([Infinity, NaN, 5]);
+      expect(np.nanargmin(x).js()).toEqual(2);
+    });
+
+    test("behaves like argmin for integer arrays", () => {
+      const x = np.array([3, 1, 4, 2], { dtype: np.int32 });
+      const y = np.nanargmin(x);
+      expect(y.dtype).toBe(np.int32);
+      expect(y.js()).toEqual(1);
+    });
+
+    test("works inside jit", () => {
+      const f = jit((x: np.Array) => np.nanargmin(x));
+      expect(f(np.array([3, NaN, 1, 2])).js()).toEqual(2);
+      expect(f(np.array([NaN, NaN, NaN, NaN])).js()).toEqual(-1);
+    });
+  });
+
   suite("jax.numpy.argmax()", () => {
     test("finds maximum of logits", () => {
       const x = np.argmax(np.array([0.1, 0.2, 0.3, 0.2]));
@@ -4322,6 +4720,87 @@ suite.each(devices)("device:%s", (device) => {
         ]),
       );
       expect(x.js()).toEqual(2); // Index of maximum in flattened array
+    });
+
+    test("preserves input rank when flattening with keepdims", () => {
+      const x = np.array([
+        [0.1, -0.2],
+        [0.3, 0.1],
+      ]);
+      const y = np.argmax(x, undefined, { keepdims: true });
+      expect(y.shape).toEqual([1, 1]);
+      expect(y.js()).toEqual([[2]]);
+    });
+
+    test("rejects an empty reduction", () => {
+      expect(() => np.argmax(np.array([]))).toThrow("empty sequence");
+    });
+  });
+
+  suite("jax.numpy.nanargmax()", () => {
+    test("ignores NaN values", () => {
+      const x = np.array([1, NaN, 4, 2]);
+      expect(np.nanargmax(x).js()).toEqual(2);
+    });
+
+    test("returns -1 when all values are NaN", () => {
+      const x = np.array([NaN, NaN, NaN]);
+      expect(np.nanargmax(x).js()).toEqual(-1);
+    });
+
+    test("retrieves first index of maximum", () => {
+      const x = np.array([1, 3, NaN, 3]);
+      expect(np.nanargmax(x).js()).toEqual(1);
+    });
+
+    test("computes index along an axis, with all-NaN slices", () => {
+      const x = np.array([
+        [1, NaN, 3],
+        [NaN, NaN, NaN],
+      ]);
+      expect(np.nanargmax(x.ref, 1).js()).toEqual([2, -1]);
+      expect(np.nanargmax(x.ref, 0).js()).toEqual([0, -1, 0]);
+      expect(np.nanargmax(x, 1, { keepdims: true }).js()).toEqual([[2], [-1]]);
+    });
+
+    test("runs on flattened array by default", () => {
+      const x = np.array([
+        [0.1, NaN],
+        [0.3, 0.1],
+      ]);
+      expect(np.nanargmax(x).js()).toEqual(2);
+    });
+
+    test("preserves input rank when flattening with keepdims", () => {
+      const x = np.array([
+        [0.1, NaN],
+        [0.3, 0.1],
+      ]);
+      const y = np.nanargmax(x, undefined, { keepdims: true });
+      expect(y.shape).toEqual([1, 1]);
+      expect(y.js()).toEqual([[2]]);
+    });
+
+    test("rejects an empty reduction", () => {
+      expect(() => np.nanargmax(np.array([]))).toThrow("empty sequence");
+    });
+
+    test("keeps -Infinity distinct from NaN", () => {
+      const x = np.array([-Infinity, NaN, -5]);
+      expect(np.nanargmax(x).js()).toEqual(2);
+    });
+
+    test("behaves like argmax for integer arrays", () => {
+      const x = np.array([3, 1, 4, 2], { dtype: np.int32 });
+      const y = np.nanargmax(x);
+      expect(y.dtype).toBe(np.int32);
+      expect(y.js()).toEqual(2);
+    });
+
+    test("works inside jit", () => {
+      const f = jit((x: np.Array) => np.nanargmax(x));
+      expect(f(np.array([1, NaN, 4, 2])).js()).toEqual(2);
+      expect(f(np.array([NaN, NaN, NaN, NaN])).js()).toEqual(-1);
     });
   });
 
@@ -4630,6 +5109,66 @@ suite.each(devices)("device:%s", (device) => {
       const x = np.array([NaN, Infinity, -Infinity, 42]);
       const y = np.nanToNum(x, { nan: 0, posinf: 100, neginf: -100 });
       expect(y.js()).toEqual([0, 100, -100, 42]);
+    });
+  });
+
+  suite("jax.numpy.nanmin()", () => {
+    test("ignores NaN values in 1D array", () => {
+      const x = np.array([3, NaN, 4, 1]);
+      const y = np.nanmin(x);
+      expect(y.js()).toEqual(1);
+    });
+
+    test("matches min when no NaNs are present", () => {
+      const x = np.array([3, 1, 4, 2]);
+      const y = np.nanmin(x);
+      expect(y.js()).toEqual(1);
+    });
+
+    test("computes minimum of 2D array along axis", () => {
+      const x = np.array([
+        [3, NaN, 4],
+        [NaN, 5, 0],
+      ]);
+      expect(np.nanmin(x.ref, 0).js()).toEqual([3, 5, 0]);
+      expect(np.nanmin(x, 1).js()).toEqual([3, 0]);
+    });
+
+    test("supports keepdims", () => {
+      const x = np.array([
+        [3, NaN, 4],
+        [NaN, 5, 0],
+      ]);
+      const y = np.nanmin(x, 1, { keepdims: true });
+      expect(y.js()).toEqual([[3], [0]]);
+    });
+
+    test("returns NaN for all-NaN slices", () => {
+      const x = np.array([
+        [NaN, NaN],
+        [1, NaN],
+      ]);
+      const y = np.nanmin(x, 1);
+      expect(y.js()).toEqual([NaN, 1]);
+    });
+
+    test("returns NaN when all elements are NaN", () => {
+      const x = np.array([NaN, NaN]);
+      const y = np.nanmin(x);
+      expect(y.js()).toEqual(NaN);
+    });
+
+    test("falls back to min for integer arrays", () => {
+      const x = np.array([3, 1, 4], { dtype: np.int32 });
+      const y = np.nanmin(x);
+      expect(y.dtype).toBe(np.int32);
+      expect(y.js()).toEqual(1);
+    });
+
+    test("can have grad of nanmin", () => {
+      const x = np.array([3, NaN, 1, 1]);
+      const dx = grad((x: np.Array) => np.nanmin(x))(x);
+      expect(dx.js()).toEqual([0, 0, 0.5, 0.5]);
     });
   });
 

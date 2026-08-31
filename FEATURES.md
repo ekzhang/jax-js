@@ -333,20 +333,20 @@ Most operations behave the same way as they do in JAX.
 | `moveaxis`            | 🟢      |                                         |
 | `multiply`            | 🟢      |                                         |
 | `nan_to_num`          | 🟢      |                                         |
-| `nanargmax`           | 🟠      |                                         |
-| `nanargmin`           | 🟠      |                                         |
+| `nanargmax`           | 🟢      |                                         |
+| `nanargmin`           | 🟢      |                                         |
 | `nancumprod`          | 🟢      |                                         |
 | `nancumsum`           | 🟢      |                                         |
-| `nanmax`              | 🟠      |                                         |
-| `nanmean`             | 🟠      |                                         |
+| `nanmax`              | 🟢      |                                         |
+| `nanmean`             | 🟢      |                                         |
 | `nanmedian`           | 🟠      | sorting                                 |
-| `nanmin`              | 🟠      |                                         |
+| `nanmin`              | 🟢      |                                         |
 | `nanpercentile`       | 🟠      | sorting                                 |
 | `nanprod`             | 🟢      |                                         |
 | `nanquantile`         | 🟠      | sorting                                 |
-| `nanstd`              | 🟠      |                                         |
+| `nanstd`              | 🟢      |                                         |
 | `nansum`              | 🟢      |                                         |
-| `nanvar`              | 🟠      |                                         |
+| `nanvar`              | 🟢      |                                         |
 | `ndarray`             | 🟢      | just `Array` in jax-js                  |
 | `ndim`                | 🟢      |                                         |
 | `negative`            | 🟢      |                                         |
