@@ -1,6 +1,6 @@
 {
   "name": "@jax-js/jax",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "description": "Numerical computing and ML in the browser",
   "keywords": [
     "machine learning",
@@ -68,7 +68,7 @@
     "typescript-eslint": "^8.61.1",
     "vitest": "^4.1.9"
   },
-  "packageManager": "pnpm@11.8.0",
+  "packageManager": "pnpm@11.24.0",
   "engines": {
     "pnpm": ">=10.0.0"
   },
