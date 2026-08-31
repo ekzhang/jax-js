@@ -1570,6 +1570,41 @@ export function diagIndicesFrom(arr: ArrayLike): Array[] {
   return diagIndices(aShape[0], nd);
 }
 
+/**
+ * Return the indices for the lower triangle of an `(n, m)` array.
+ *
+ * Returns a pair of index arrays `[rows, cols]` of dtype `int32`, holding the
+ * positions on and below the k-th diagonal of an `n x m` array, in row-major
+ * order. `k=0` is the main diagonal, `k<0` is below it, and `k>0` is above it.
+ * If `m` is not provided, it defaults to `n`.
+ */
+export function trilIndices(
+  n: number,
+  k: number = 0,
+  m?: number,
+): [Array, Array] {
+  m ??= n;
+  if (!Number.isInteger(n) || n < 0)
+    throw new Error(`trilIndices: n must be a nonnegative integer, got ${n}`);
+  if (!Number.isInteger(m) || m < 0)
+    throw new Error(`trilIndices: m must be a nonnegative integer, got ${m}`);
+  if (!Number.isInteger(k))
+    throw new Error(`trilIndices: k must be an integer, got ${k}`);
+  const rows: number[] = [];
+  const cols: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const rowEnd = Math.min(i + k + 1, m);
+    for (let j = 0; j < rowEnd; j++) {
+      rows.push(i);
+      cols.push(j);
+    }
+  }
+  return [
+    array(rows, { dtype: DType.Int32 }),
+    array(cols, { dtype: DType.Int32 }),
+  ];
+}
+
 /** Calculate the sum of the diagonal of an array along the given axes. */
 export function trace(a: ArrayLike, offset = 0, axis1 = 0, axis2 = 1): Array {
   return diagonal(a, offset, axis1, axis2).sum(-1);
