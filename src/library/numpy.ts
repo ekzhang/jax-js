@@ -2664,9 +2664,13 @@ export function signbit(x: ArrayLike): Array {
 /**
  * @function
  * Return the value with the magnitude of x and the sign of y, element-wise.
+ *
+ * The sign is read from the sign bit of `y`, so `-0` counts as negative, and a
+ * zero or NaN `y` still keeps the magnitude of `x`.
  */
 export const copysign = jit(function copysign(x: Array, y: Array): Array {
-  return absolute(x).mul(sign(y));
+  const magnitude = absolute(x);
+  return where(signbit(y), magnitude.ref.mul(-1), magnitude);
 });
 
 /**

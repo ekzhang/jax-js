@@ -5991,8 +5991,26 @@ suite.each(devices)("device:%s", (device) => {
     });
 
     test("copysign with zero", () => {
+      // Zero has a sign bit, so the magnitude of x is kept.
       const result = np.copysign(np.array([5, -5]), np.array([0, 0]));
-      expect(result.js()).toEqual([0, 0]);
+      expect(result.js()).toEqual([5, 5]);
+    });
+
+    test("distinguishes signed zero in y", () => {
+      const result = np.copysign(np.array([3, 3]), np.array([0, -0]));
+      expect(result.js()).toEqual([3, -3]);
+    });
+
+    test("keeps the magnitude for infinite and NaN y", () => {
+      if (!hasStrictNumerics(device)) return;
+      // A NaN with the sign bit set is left out on purpose: JavaScript engines
+      // are allowed to canonicalize NaN, and Firefox does, so such a value does
+      // not reach the device still negative.
+      const result = np.copysign(
+        np.array([4, 4, 4]),
+        np.array([NaN, Infinity, -Infinity]),
+      );
+      expect(result.js()).toEqual([4, 4, -4]);
     });
   });
 
