@@ -2871,9 +2871,11 @@ suite.each(devices)("device:%s", (device) => {
       expect(y.js()).toEqual([-1, 0, 1]);
     });
 
-    // TODO: Fix sign(NaN) returning 1 instead of NaN
-    test.fails("works with NaN", () => {
+    test("works with NaN", () => {
+      if (!hasStrictNumerics(device)) return;
       expect(np.sign(NaN).js()).toBeNaN();
+      const x = np.array([-Infinity, -2.5, -0, 0, 2.5, Infinity, NaN]);
+      expect(np.sign(x).js()).toEqual([-1, -1, 0, 0, 1, 1, NaN]);
     });
   });
 

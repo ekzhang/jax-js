@@ -2631,10 +2631,16 @@ export function absolute(x: ArrayLike): Array {
 
 export { absolute as abs };
 
-/** Return an element-wise indication of sign of the input. */
+/**
+ * Return an element-wise indication of sign of the input.
+ *
+ * NaN is returned for NaN input. Every comparison against a NaN is false, so it
+ * has to be selected explicitly rather than falling out of the sign tests.
+ */
 export function sign(x: ArrayLike): Array {
   x = fudgeArray(x);
-  return where(notEqual(x.ref, 0), where(less(x, 0), -1, 1), 0);
+  const signs = where(notEqual(x.ref, 0), where(less(x.ref, 0), -1, 1), 0);
+  return where(isnan(x), NaN, signs);
 }
 
 /**
