@@ -6,7 +6,10 @@ import {
   AluOp,
   byteWidth,
   DType,
+  intMaxValue,
+  intMinValue,
   isFloatDtype,
+  isUnsignedDtype,
 } from "../../alu";
 import { UnsupportedOpError } from "../../backend";
 
@@ -47,8 +50,8 @@ export function translateExp(
         if (isFloatDtype(dtype)) {
           dtyF(cg, op, dtype).div();
           dtyF(cg, op, dtype).trunc();
-        } else if (dtype === DType.Uint32) cg.i32.div_u();
-        else if (dtype === DType.Int32) cg.i32.div_s();
+        } else if (isUnsignedDtype(dtype)) cg.i32.div_u();
+        else if (!isFloatDtype(dtype)) cg.i32.div_s();
         else throw new UnsupportedOpError(op, dtype, "wasm");
       } else if (op === AluOp.Mod) {
         if (isFloatDtype(dtype)) {
@@ -65,18 +68,15 @@ export function translateExp(
           cg.local.get(b);
           dt.mul(); // stack: a, trunc(a/b)*b
           dt.sub();
-        } else if (dtype === DType.Uint32) cg.i32.rem_u();
-        else if (dtype === DType.Int32) cg.i32.rem_s();
-        else throw new UnsupportedOpError(op, dtype, "wasm");
+        } else if (!isFloatDtype(dtype)) {
+          if (isUnsignedDtype(dtype)) cg.i32.rem_u();
+          else cg.i32.rem_s();
+        } else throw new UnsupportedOpError(op, dtype, "wasm");
       } else if (op === AluOp.Min || op === AluOp.Max) {
         if (isFloatDtype(dtype)) {
           if (op === AluOp.Min) dtyF(cg, op, dtype).min();
           else dtyF(cg, op, dtype).max();
-        } else if (
-          dtype === DType.Int32 ||
-          dtype === DType.Uint32 ||
-          dtype === DType.Bool
-        ) {
+        } else if (!isFloatDtype(dtype)) {
           // Wasm has no i32.min, so emulate with select.
           const a = cg.local.declare(cg.i32);
           const b = cg.local.declare(cg.i32);
@@ -85,7 +85,7 @@ export function translateExp(
           cg.local.get(b);
           cg.local.get(a);
           cg.local.get(b);
-          if (dtype === DType.Int32) {
+          if (!isUnsignedDtype(dtype)) {
             if (op === AluOp.Min) cg.i32.lt_s();
             else cg.i32.gt_s();
           } else {
@@ -104,11 +104,13 @@ export function translateExp(
       } else if (op === AluOp.Cmplt) {
         const srcDtype = src[0].dtype;
         if (isFloatDtype(srcDtype)) dtyF(cg, op, srcDtype).lt();
-        else if (srcDtype === DType.Int32) cg.i32.lt_s();
-        else if (srcDtype === DType.Uint32) cg.i32.lt_u();
-        else throw new UnsupportedOpError(op, dtype, "wasm");
+        else if (!isFloatDtype(srcDtype)) {
+          if (isUnsignedDtype(srcDtype)) cg.i32.lt_u();
+          else cg.i32.lt_s();
+        } else throw new UnsupportedOpError(op, dtype, "wasm");
       } else if (op === AluOp.Cmpne) dty(cg, op, src[0].dtype).ne();
       else throw new UnsupportedOpError(op, dtype, "wasm");
+      normalizeI32ToInt(cg, dtype);
     } else if (AluGroup.Unary.has(op)) {
       // TODO: Our intrinsics are only implemented in f32 precision currently,
       // so we cast to f32 first for other floating-point inputs.
@@ -137,34 +139,41 @@ export function translateExp(
       else if (op === AluOp.Cast) {
         gen(src[0]);
         const dtype0 = src[0].dtype;
-        const i32repr =
-          dtype0 === DType.Int32 ||
-          dtype0 === DType.Uint32 ||
-          dtype0 === DType.Bool;
-        if (dtype === DType.Int32) {
+        const i32repr = !isFloatDtype(dtype0);
+        if (
+          dtype === DType.Int8 ||
+          dtype === DType.Int16 ||
+          dtype === DType.Int32
+        ) {
+          clampFloatToIntRange(cg, op, dtype0, dtype);
           if (dtype0 === DType.Float32) cg.i32.trunc_sat_f32_s();
           else if (dtype0 === DType.Float64) cg.i32.trunc_sat_f64_s();
-          else if (i32repr) void 0;
+          else if (i32repr) normalizeI32ToInt(cg, dtype);
           else throw new UnsupportedOpError(op, dtype, "wasm", dtype0);
-        } else if (dtype === DType.Uint32) {
+        } else if (
+          dtype === DType.Uint8 ||
+          dtype === DType.Uint16 ||
+          dtype === DType.Uint32
+        ) {
+          clampFloatToIntRange(cg, op, dtype0, dtype);
           if (dtype0 === DType.Float32) cg.i32.trunc_sat_f32_u();
           else if (dtype0 === DType.Float64) cg.i32.trunc_sat_f64_u();
-          else if (i32repr) void 0;
+          else if (i32repr) normalizeI32ToInt(cg, dtype);
           else throw new UnsupportedOpError(op, dtype, "wasm", dtype0);
         } else if (dtype === DType.Float32) {
           if (dtype0 === DType.Float32) void 0;
           else if (dtype0 === DType.Float64) cg.f32.demote_f64();
-          else if (dtype0 === DType.Int32 || dtype0 === DType.Bool)
-            cg.f32.convert_i32_s();
-          else if (dtype0 === DType.Uint32) cg.f32.convert_i32_u();
-          else throw new UnsupportedOpError(op, dtype, "wasm", dtype0);
+          else if (!isFloatDtype(dtype0)) {
+            if (isUnsignedDtype(dtype0)) cg.f32.convert_i32_u();
+            else cg.f32.convert_i32_s();
+          } else throw new UnsupportedOpError(op, dtype, "wasm", dtype0);
         } else if (dtype === DType.Float64) {
           if (dtype0 === DType.Float32) cg.f64.promote_f32();
           else if (dtype0 === DType.Float64) void 0;
-          else if (dtype0 === DType.Int32 || dtype0 === DType.Bool)
-            cg.f64.convert_i32_s();
-          else if (dtype0 === DType.Uint32) cg.f64.convert_i32_u();
-          else throw new UnsupportedOpError(op, dtype, "wasm", dtype0);
+          else if (!isFloatDtype(dtype0)) {
+            if (isUnsignedDtype(dtype0)) cg.f64.convert_i32_u();
+            else cg.f64.convert_i32_s();
+          } else throw new UnsupportedOpError(op, dtype, "wasm", dtype0);
         } else if (dtype === DType.Bool) {
           if (dtype0 === DType.Bool) void 0;
           else if (i32repr) (cg.i32.const(0), cg.i32.ne());
@@ -232,7 +241,7 @@ export function translateExp(
         cg.local.get(gid); // base offset of array
         cg.i32.add();
       }
-      dty(cg, op, dtype).load(Math.log2(byteWidth(dtype)));
+      loadDtype(cg, op, dtype);
     } else throw new UnsupportedOpError(op, dtype, "wasm");
 
     if ((references.get(exp) ?? 0) > 1) {
@@ -561,6 +570,10 @@ export function dty(cg: CodeGenerator, op: AluOp | null, dtype: DType) {
       return cg.f32;
     case DType.Float64:
       return cg.f64;
+    case DType.Int8:
+    case DType.Uint8:
+    case DType.Int16:
+    case DType.Uint16:
     case DType.Int32:
     case DType.Uint32:
     case DType.Bool:
@@ -584,6 +597,89 @@ export function dtyF(
       throw new UnsupportedOpError(op, dtype, "wasm");
   }
 }
+
+export function loadDtype(
+  cg: CodeGenerator,
+  op: AluOp | null,
+  dtype: DType,
+): void {
+  switch (dtype) {
+    case DType.Int8:
+      cg.i32.load8_s(0);
+      return;
+    case DType.Uint8:
+      cg.i32.load8_u(0);
+      return;
+    case DType.Int16:
+      cg.i32.load16_s(1);
+      return;
+    case DType.Uint16:
+      cg.i32.load16_u(1);
+      return;
+    default:
+      dty(cg, op, dtype).load(Math.log2(byteWidth(dtype)));
+      return;
+  }
+}
+
+export function storeDtype(
+  cg: CodeGenerator,
+  op: AluOp | null,
+  dtype: DType,
+): void {
+  switch (dtype) {
+    case DType.Int8:
+    case DType.Uint8:
+      cg.i32.store8(0);
+      return;
+    case DType.Int16:
+    case DType.Uint16:
+      cg.i32.store16(1);
+      return;
+    default:
+      dty(cg, op, dtype).store(Math.log2(byteWidth(dtype)));
+      return;
+  }
+}
+
+function normalizeI32ToInt(cg: CodeGenerator, dtype: DType): void {
+  if (dtype === DType.Int8) {
+    cg.i32.const(24);
+    cg.i32.shl();
+    cg.i32.const(24);
+    cg.i32.shr_s();
+  } else if (dtype === DType.Uint8) {
+    cg.i32.const(0xff);
+    cg.i32.and();
+  } else if (dtype === DType.Int16) {
+    cg.i32.const(16);
+    cg.i32.shl();
+    cg.i32.const(16);
+    cg.i32.shr_s();
+  } else if (dtype === DType.Uint16) {
+    cg.i32.const(0xffff);
+    cg.i32.and();
+  }
+}
+
+const clampFloatToIntRange = (
+  cg: CodeGenerator,
+  op: AluOp | null,
+  floatDtype: DType,
+  intDtype: DType,
+): void => {
+  if (
+    isFloatDtype(floatDtype) &&
+    intDtype !== DType.Int32 &&
+    intDtype !== DType.Uint32
+  ) {
+    const dt = dtyF(cg, op, floatDtype);
+    dt.const(intMinValue(intDtype));
+    dt.max();
+    dt.const(intMaxValue(intDtype));
+    dt.min();
+  }
+};
 
 /** Subset of operations supported in SIMD compilation mode. */
 export const simdSupportedOps: Map<DType, Set<AluOp>> = new Map();
