@@ -149,6 +149,80 @@ suite("weak types", () => {
   });
 });
 
+suite("canCast", () => {
+  const allDtypes = [
+    np.bool,
+    np.uint32,
+    np.int32,
+    np.float16,
+    np.float32,
+    np.float64,
+  ];
+
+  test("safe casting is the default", () => {
+    expect(np.canCast(np.int32, np.float64)).toBe(true);
+    expect(np.canCast(np.int32, np.float32)).toBe(false);
+  });
+
+  test("bool safely casts to everything", () => {
+    for (const dtype of allDtypes) {
+      expect(np.canCast(np.bool, dtype, "safe")).toBe(true);
+    }
+  });
+
+  test("safe casting preserves values", () => {
+    // int32/uint32 do not fit in float32's 24-bit mantissa.
+    expect(np.canCast(np.uint32, np.float64)).toBe(true);
+    expect(np.canCast(np.uint32, np.float32)).toBe(false);
+    expect(np.canCast(np.uint32, np.float16)).toBe(false);
+    expect(np.canCast(np.uint32, np.int32)).toBe(false);
+    expect(np.canCast(np.int32, np.uint32)).toBe(false);
+    expect(np.canCast(np.float16, np.float32)).toBe(true);
+    expect(np.canCast(np.float32, np.float64)).toBe(true);
+    expect(np.canCast(np.float64, np.float32)).toBe(false);
+    expect(np.canCast(np.float32, np.int32)).toBe(false);
+    for (const dtype of allDtypes) {
+      expect(np.canCast(dtype, dtype)).toBe(true);
+      if (dtype !== np.bool) {
+        expect(np.canCast(dtype, np.bool)).toBe(false);
+      }
+    }
+  });
+
+  test("no and equiv require equal dtypes", () => {
+    for (const casting of ["no", "equiv"] as const) {
+      expect(np.canCast(np.int32, np.int32, casting)).toBe(true);
+      expect(np.canCast(np.int32, np.float64, casting)).toBe(false);
+      expect(np.canCast(np.bool, np.int32, casting)).toBe(false);
+    }
+  });
+
+  test("same_kind allows casts within a kind", () => {
+    expect(np.canCast(np.float64, np.float16, "same_kind")).toBe(true);
+    expect(np.canCast(np.uint32, np.int32, "same_kind")).toBe(true);
+    expect(np.canCast(np.int32, np.uint32, "same_kind")).toBe(false);
+    expect(np.canCast(np.int32, np.float16, "same_kind")).toBe(true);
+    expect(np.canCast(np.float16, np.int32, "same_kind")).toBe(false);
+    expect(np.canCast(np.int32, np.bool, "same_kind")).toBe(false);
+    expect(np.canCast(np.bool, np.float16, "same_kind")).toBe(true);
+  });
+
+  test("unsafe allows any cast", () => {
+    for (const from of allDtypes) {
+      for (const to of allDtypes) {
+        expect(np.canCast(from, to, "unsafe")).toBe(true);
+      }
+    }
+  });
+
+  test("accepts an array as the source", () => {
+    const a = np.array([1, 2, 3], { dtype: np.int32 });
+    expect(np.canCast(a, np.float64)).toBe(true);
+    expect(np.canCast(a, np.float32)).toBe(false);
+    a.dispose();
+  });
+});
+
 suite("resultType", () => {
   test("promotes dtype arguments", () => {
     expect(np.resultType(np.uint32, np.int32)).toBe(np.int32);
