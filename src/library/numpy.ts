@@ -190,6 +190,38 @@ export function bitwiseXor(x: ArrayLike, y: ArrayLike): Array {
   return core.bitCombine(x, y, "xor") as Array;
 }
 
+/** Count the number of 1 bits in the binary representation
+ * of the absolute value of each element.
+ */
+export function bitwiseCount(x: ArrayLike): Array {
+  const arr = fudgeArray(x);
+  let v: Array;
+  switch (arr.dtype) {
+    case DType.Bool:
+      return astype(arr, int32);
+    case DType.Uint32:
+      v = arr;
+      break;
+    case DType.Int32:
+      // Count the bits of the absolute value, similar to JAX.
+      v = absolute(arr).view(uint32);
+      break;
+    default:
+      throw new Error(`bitwiseCount: unsupported dtype ${arr.dtype}`);
+  }
+  const u32 = (n: number) => array(n, { dtype: uint32, device: v.device });
+  v = bitwiseAnd(v.ref, u32(0x55555555)).add(
+    bitwiseAnd(rightShift(v, u32(1)), u32(0x55555555)),
+  );
+  v = bitwiseAnd(v.ref, u32(0x33333333)).add(
+    bitwiseAnd(rightShift(v, u32(2)), u32(0x33333333)),
+  );
+  v = bitwiseAnd(v.ref.add(rightShift(v, u32(4))), u32(0x0f0f0f0f));
+  v = v.ref.add(rightShift(v, u32(8)));
+  v = v.ref.add(rightShift(v, u32(16)));
+  return astype(bitwiseAnd(v, u32(0x3f)), int32);
+}
+
 /** Compute element-wise bitwise NOT (inversion). */
 export function invert(x: ArrayLike): Array {
   const arr = fudgeArray(x);

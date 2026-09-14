@@ -162,7 +162,7 @@ Most operations behave the same way as they do in JAX.
 | `bartlett`            | 🟢      |                                         |
 | `bincount`            | 🟠      |                                         |
 | `bitwise_and`         | 🟢      |                                         |
-| `bitwise_count`       | 🟠      |                                         |
+| `bitwise_count`       | 🟢      |                                         |
 | `bitwise_invert`      | 🟢      | alias of `invert`                       |
 | `bitwise_left_shift`  | 🟢      | alias of `left_shift`                   |
 | `bitwise_not`         | 🟢      | alias of `invert`                       |
