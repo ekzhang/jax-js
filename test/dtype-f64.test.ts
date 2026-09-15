@@ -107,6 +107,18 @@ suite.each(devices)("device:%s", (device) => {
     expect(y.ref.dataSync()[1]).toBe(3.1415926535897927);
   });
 
+  test("arcsinh() preserves f64 precision for large inputs", () => {
+    // Elementwise math on wasm falls back to f32, so only check the CPU.
+    if (device !== "cpu") return;
+    const x = np.array([-1e300, 1e100], { dtype: np.float64 });
+    const y = np.arcsinh(x);
+    expect(y.dtype).toBe(np.float64);
+    const values: number[] = y.js();
+    // A float32 ln(2) in the large-argument branch would be off by 2e-9.
+    expect(values[0]).toBeCloseTo(Math.asinh(-1e300), 10);
+    expect(values[1]).toBeCloseTo(Math.asinh(1e100), 10);
+  });
+
   test("polymul() preserves f64 precision", () => {
     const a = np.array([1, 1e-12], { dtype: np.float64 });
     const b = np.array([1, 1], { dtype: np.float64 });

@@ -3254,7 +3254,30 @@ export const tanh = jit(function tanh(x: Array) {
  * `arcsinh(x) = ln(x + sqrt(x^2 + 1))`
  */
 export const arcsinh = jit(function arcsinh(x: Array) {
-  return log(x.ref.add(sqrt(square(x).add(1))));
+  // sqrt() and log() both reject integer input, so promote up front, the same
+  // way expm1() and log1p() do above.
+  if (!isFloatDtype(x.dtype)) x = x.astype(DType.Float32);
+  const dtype = x.dtype;
+  // asinh is odd, so take the magnitude and restore the sign at the end.
+  // Evaluating a negative x directly cancels: x + sqrt(x^2 + 1) loses every
+  // significant digit and collapses to 0 once |x| grows, leaving log(0).
+  const sgn = where(signbit(x.ref), -1, 1);
+  const ax = x.mul(sgn.ref);
+  // Past the cutoff the 1 is already far below the last bit of x^2, so
+  // ln(x + sqrt(x^2 + 1)) is ln(2x), and taking that limit also keeps the
+  // square away from the overflow that starts near 1.8e19 in float32.
+  const isLarge = greater(ax.ref, 1e10);
+  // Each branch is evaluated on an argument that the other branch handles, so
+  // an unselected infinity cannot leak into the value or into the gradient.
+  const small = where(isLarge.ref, 0, ax.ref);
+  const large = where(isLarge.ref, ax, 1);
+  // ln(2) has to carry the dtype: jit stores a plain JS scalar as float32.
+  const ln2 = array(Math.LN2, { dtype });
+  return where(
+    isLarge,
+    log(large).add(ln2),
+    log(small.ref.add(sqrt(square(small).add(1)))),
+  ).mul(sgn);
 });
 
 /**

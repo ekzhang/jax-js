@@ -4829,6 +4829,46 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.arcsinh()", () => {
+    const vals = [
+      -1e25, -1e20, -1e15, -1e10, -1e8, -1e7, -1e6, -1000, -1, -0.5, 0, 0.5, 1,
+      1000, 1e6, 1e8, 1e15, 1e25,
+    ];
+
+    test("stays accurate for large magnitudes", () => {
+      expect(np.arcsinh(np.array(vals))).toBeAllclose(vals.map(Math.asinh));
+    });
+
+    test("is an odd function", () => {
+      const x = np.array(vals);
+      expect(np.arcsinh(x.ref.mul(-1))).toBeAllclose(np.arcsinh(x).mul(-1));
+    });
+
+    test("handles infinities, NaN, and signed zero", () => {
+      if (!hasStrictNumerics(device)) return;
+      const x = np.array([-Infinity, Infinity, NaN]);
+      expect(np.arcsinh(x).js()).toEqual([-Infinity, Infinity, NaN]);
+      const zeros: number[] = np.arcsinh(np.array([-0, 0])).js();
+      expect(Object.is(zeros[0], -0)).toBe(true);
+      expect(Object.is(zeros[1], 0)).toBe(true);
+    });
+
+    test("has the correct gradient", () => {
+      const values = [-1e6, -2, -1, 0, 1, 2, 1e6];
+      const dx = grad((x: np.Array) => np.arcsinh(x).sum())(np.array(values));
+      expect(dx).toBeAllclose(values.map((v) => 1 / Math.sqrt(v * v + 1)));
+    });
+
+    test("promotes integer and bool input to float32", () => {
+      expect(np.arcsinh(np.array([0, 1, 2], { dtype: np.int32 })).dtype).toBe(
+        np.float32,
+      );
+      expect(
+        np.arcsinh(np.array([true, false], { dtype: np.bool })).dtype,
+      ).toBe(np.float32);
+    });
+  });
+
   suite("jax.numpy.sinc()", () => {
     test("sinc(0) = 1", () => {
       expect(np.sinc(0).js()).toBeCloseTo(1, 5);
