@@ -134,6 +134,7 @@ export function translateExp(
         (dt.const(1), gen(src[0]), dt.div());
       } else if (op === AluOp.Floor) (gen(src[0]), dtyF(cg, op, dtype).floor());
       else if (op === AluOp.Ceil) (gen(src[0]), dtyF(cg, op, dtype).ceil());
+      else if (op === AluOp.BitCount) (gen(src[0]), cg.i32.popcnt());
       else if (op === AluOp.Cast) {
         gen(src[0]);
         const dtype0 = src[0].dtype;

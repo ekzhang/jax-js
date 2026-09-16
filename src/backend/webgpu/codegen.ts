@@ -262,6 +262,8 @@ export class WgslExpCodegen {
         else if (op === AluOp.Reciprocal) source = `(1.0 / ${a})`;
         else if (op === AluOp.Floor) source = `floor(${strip1(a)})`;
         else if (op === AluOp.Ceil) source = `ceil(${strip1(a)})`;
+        else if (op === AluOp.BitCount)
+          source = `i32(countOneBits(${strip1(a)}))`;
         else if (op === AluOp.Cast) {
           const srcTy = dtypeToWgsl(src[0].dtype);
           const dstTy = dtypeToWgsl(dtype);

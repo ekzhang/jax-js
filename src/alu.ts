@@ -183,6 +183,15 @@ export class AluExp implements FpHashable {
             `BitInvert requires an integral dtype, got ${src[0].dtype}`,
           );
         break;
+      case AluOp.BitCount:
+        if (
+          dtype !== DType.Int32 ||
+          (src[0].dtype !== DType.Int32 && src[0].dtype !== DType.Uint32)
+        )
+          throw new TypeError(
+            `BitCount requires an int32 or uint32 input and int32 output, got ${src[0].dtype} -> ${dtype}`,
+          );
+        break;
     }
   }
 
@@ -267,6 +276,9 @@ export class AluExp implements FpHashable {
   }
   static bitShift(a: AluExp, b: AluExp, mode: "shl" | "shr"): AluExp {
     return new AluExp(AluOp.BitShift, a.dtype, [a, b], mode);
+  }
+  static bitCount(a: AluExp): AluExp {
+    return new AluExp(AluOp.BitCount, DType.Int32, [a]);
   }
   static cmplt(a: AluExp, b: AluExp): AluExp {
     return new AluExp(AluOp.Cmplt, DType.Bool, [a, b]);
@@ -505,6 +517,9 @@ export class AluExp implements FpHashable {
       case AluOp.Reciprocal:
         if (src[0].min <= 0 && src[0].max >= 0) return [-Infinity, Infinity];
         ret = [1 / src[0].max, 1 / src[0].min];
+        break;
+      case AluOp.BitCount:
+        ret = [0, 32];
         break;
       case AluOp.Cast: {
         // Casts change the dtype.
@@ -1132,6 +1147,15 @@ export class AluExp implements FpHashable {
           return Math.ceil(x);
         case AluOp.Reciprocal:
           return 1 / x;
+        case AluOp.BitCount: {
+          let value = x >>> 0;
+          let count = 0;
+          while (value !== 0) {
+            value = (value & (value - 1)) >>> 0;
+            count++;
+          }
+          return count;
+        }
         case AluOp.Cast: {
           const wasFloat = isFloatDtype(this.src[0].dtype);
           if (this.dtype === DType.Int32)
@@ -1396,6 +1420,7 @@ export enum AluOp {
   BitCombine = "BitCombine", // arg = 'or' | 'and' | 'xor'
   BitInvert = "BitInvert",
   BitShift = "BitShift", // arg = 'shl' | 'shr'
+  BitCount = "BitCount",
 
   Cmplt = "Cmplt",
   Cmpne = "Cmpne",
@@ -1438,6 +1463,7 @@ export const AluGroup = {
     AluOp.Floor,
     AluOp.Ceil,
     AluOp.Reciprocal,
+    AluOp.BitCount,
     AluOp.Cast,
     AluOp.Bitcast,
   ]),

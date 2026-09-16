@@ -66,3 +66,17 @@ float erfc(float x) {
   float E = P_t * exp(-x * x);
   return x >= 0.0 ? E : 2.0 - E;
 }`;
+
+// GLSL ES 3.00 does not provide bitCount(), unlike desktop GLSL.
+export const bitCountSrc = `
+int bitCountFallback(uint value) {
+  value = value - ((value >> 1u) & 0x55555555u);
+  value = (value & 0x33333333u) + ((value >> 2u) & 0x33333333u);
+  value = (value + (value >> 4u)) & 0x0f0f0f0fu;
+  value = value + (value >> 8u);
+  value = value + (value >> 16u);
+  return int(value & 0x3fu);
+}
+int bitCountFallback(int value) {
+  return bitCountFallback(uint(value));
+}`;

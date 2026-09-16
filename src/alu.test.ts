@@ -207,6 +207,17 @@ test("AluOp.Bitcast", () => {
   expect(() => AluExp.bitcast(DType.Bool, AluExp.f32(1.0))).toThrow(TypeError);
 });
 
+test("AluOp.BitCount", () => {
+  const x = AluExp.variable(DType.Uint32, "x");
+  const count = AluExp.bitCount(x);
+  expect(count.dtype).toBe(DType.Int32);
+  expect([count.min, count.max]).toEqual([0, 32]);
+  expect(
+    AluExp.bitCount(AluExp.const(DType.Uint32, 0xffffffff)).resolve(),
+  ).toBe(32);
+  expect(() => AluExp.bitCount(AluExp.f32(1))).toThrow(TypeError);
+});
+
 test("AluOp.Threefry2x32", () => {
   const k0 = AluExp.u32(0);
   const k1 = AluExp.u32(0);

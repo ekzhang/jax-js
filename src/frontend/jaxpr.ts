@@ -827,6 +827,13 @@ export const abstractEvalRules: { [P in Primitive]: AbstractEvalRule<P> } = {
       );
     return [new ShapedArray(shape, x.dtype, x.weakType)];
   },
+  [Primitive.BitCount]([x]: ShapedArray[]) {
+    if (x.dtype !== DType.Int32 && x.dtype !== DType.Uint32)
+      throw new TypeError(
+        `bit count requires an int32 or uint32 input, got ${x.dtype}`,
+      );
+    return [new ShapedArray(x.shape, DType.Int32, false)];
+  },
   [Primitive.Neg]: vectorizedUnopAbstractEval,
   [Primitive.Reciprocal]: vectorizedUnopAbstractEval,
   [Primitive.Floor]: vectorizedUnopAbstractEval,

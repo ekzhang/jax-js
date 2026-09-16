@@ -332,6 +332,14 @@ suite.each(devices)("device:%s", (device) => {
         new Uint32Array([0xffffffff, 0xffffffff, 0xffffffff, 4]),
       );
 
+      // BitCount
+      exe = await backend.prepareKernel(
+        new Kernel(1, 4, AluExp.bitCount(arg1)),
+      );
+      backend.dispatch(exe, [a], [c]);
+      buf = (await backend.read(c)).buffer;
+      expect(new Int32Array(buf)).toEqual(new Int32Array([16, 16, 16, 3]));
+
       // BitShift left
       const shiftData = new Uint32Array([1, 1, 1, 1]);
       const shiftAmt = new Uint32Array([0, 1, 8, 16]);

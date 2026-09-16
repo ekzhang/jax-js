@@ -207,6 +207,7 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
   },
   [Primitive.BitCombine]: zeroTangentsJvp(Primitive.BitCombine),
   [Primitive.BitShift]: zeroTangentsJvp(Primitive.BitShift),
+  [Primitive.BitCount]: zeroTangentsJvp(Primitive.BitCount),
   [Primitive.Neg]: linearTangentsJvp(Primitive.Neg),
   [Primitive.Reciprocal]([x], [dx]) {
     // d(1/x) = -x^-2 * dx

@@ -11,7 +11,7 @@ import {
 import { Routine } from "../routine";
 import { tuneNullopt } from "../tuner";
 import { DEBUG, range, strip1 } from "../utils";
-import { erfSrc, threefrySrc } from "./webgl/builtins";
+import { bitCountSrc, erfSrc, threefrySrc } from "./webgl/builtins";
 
 /** Information about a compiled WebGL shader program. */
 interface ShaderInfo {
@@ -361,12 +361,14 @@ function generateShader(kernel: Kernel): ShaderInfo {
 
   // Collect input dtypes from GlobalIndex operations and detect builtins needed
   const inputDtypes: DType[] = Array(nargs).fill(DType.Float32);
-  const builtins = { erf: false, threefry: false };
+  const builtins = { bitCount: false, erf: false, threefry: false };
   const collectInfo = (exp: AluExp) => {
     if (exp.op === AluOp.GlobalIndex) {
       inputDtypes[exp.arg[0]] = exp.dtype;
     } else if (exp.op === AluOp.Erf || exp.op === AluOp.Erfc) {
       builtins.erf = true;
+    } else if (exp.op === AluOp.BitCount) {
+      builtins.bitCount = true;
     } else if (exp.op === AluOp.Threefry2x32) {
       builtins.threefry = true;
     }
@@ -416,6 +418,7 @@ function generateShader(kernel: Kernel): ShaderInfo {
 
   // Emit builtin functions
   if (builtins.erf) emit(erfSrc);
+  if (builtins.bitCount) emit(bitCountSrc);
   if (builtins.threefry) emit(threefrySrc);
 
   // Begin compute() function
@@ -695,6 +698,7 @@ function generateExpression(
       else if (op === AluOp.Floor) source = `floor(${strip1(a)})`;
       else if (op === AluOp.Ceil) source = `ceil(${strip1(a)})`;
       else if (op === AluOp.Reciprocal) source = `(1.0 / ${a})`;
+      else if (op === AluOp.BitCount) source = `bitCountFallback(${strip1(a)})`;
       else if (op === AluOp.Cast) source = `${glslType(dtype)}(${strip1(a)})`;
       else if (op === AluOp.Bitcast) {
         const dtype0 = src[0].dtype;

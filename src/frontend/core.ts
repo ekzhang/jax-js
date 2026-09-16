@@ -45,6 +45,7 @@ export enum Primitive {
   Max = "max",
   BitCombine = "bit_combine",
   BitShift = "bit_shift",
+  BitCount = "bit_count",
 
   // Unary functions and type casting
   Neg = "neg",
@@ -196,6 +197,10 @@ export function bitCombine(
 
 export function bitShift(x: TracerValue, y: TracerValue, op: "shl" | "shr") {
   return bind1(Primitive.BitShift, [x, y], { op });
+}
+
+export function bitCount(x: TracerValue) {
+  return bind1(Primitive.BitCount, [x]);
 }
 
 export function neg(x: TracerValue) {

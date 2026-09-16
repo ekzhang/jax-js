@@ -272,6 +272,7 @@ const vmapRules: Partial<{ [P in Primitive]: VmapRule<P> }> = {
   [Primitive.Max]: broadcastBatcher(Primitive.Max),
   [Primitive.BitCombine]: broadcastBatcher(Primitive.BitCombine),
   [Primitive.BitShift]: broadcastBatcher(Primitive.BitShift),
+  [Primitive.BitCount]: unopBatcher(Primitive.BitCount),
   [Primitive.Neg]: unopBatcher(Primitive.Neg),
   [Primitive.Reciprocal]: unopBatcher(Primitive.Reciprocal),
   [Primitive.Floor]: unopBatcher(Primitive.Floor),

@@ -964,6 +964,9 @@ export class Array extends Tracer {
           }),
         ];
       },
+      [Primitive.BitCount]([x]) {
+        return [x.#unary(AluOp.BitCount, DType.Int32)];
+      },
       [Primitive.Neg]([x]) {
         return [zerosLike(x.ref).#binary(AluOp.Sub, x)];
       },

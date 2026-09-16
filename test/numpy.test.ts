@@ -5946,6 +5946,60 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.bitwiseCount()", () => {
+    test("uint32 count", () => {
+      const a = np.array([0, 1, 7, 0xffffffff, 0x80000000], {
+        dtype: np.uint32,
+      });
+      expect(np.bitwiseCount(a).js()).toEqual([0, 1, 3, 32, 1]);
+    });
+
+    test("int32 counts bits of the absolute value", () => {
+      const a = np.array([64, 32, 31, 20, -16, -7, 7], { dtype: np.int32 });
+      expect(np.bitwiseCount(a).js()).toEqual([1, 1, 5, 2, 1, 3, 3]);
+    });
+
+    test("preserves shape", () => {
+      const a = np.array(
+        [
+          [2, -7],
+          [-9, 7],
+        ],
+        { dtype: np.int32 },
+      );
+      expect(np.bitwiseCount(a).js()).toEqual([
+        [1, 3],
+        [2, 3],
+      ]);
+    });
+
+    test("bool count", () => {
+      expect(np.bitwiseCount(np.array([true, false, true])).js()).toEqual([
+        1, 0, 1,
+      ]);
+    });
+
+    test("int32 minimum", () => {
+      const a = np.array([-2147483648], { dtype: np.int32 });
+      expect(np.bitwiseCount(a).js()).toEqual([1]);
+    });
+
+    test("works under jit and vmap", () => {
+      const f = jit(vmap((x: np.Array) => np.bitwiseCount(x)));
+      const a = np.array(
+        [
+          [0, 7],
+          [-7, -16],
+        ],
+        { dtype: np.int32 },
+      );
+      expect(f(a).js()).toEqual([
+        [0, 3],
+        [3, 1],
+      ]);
+    });
+  });
+
   suite("jax.numpy.invert()", () => {
     test("uint32 invert", () => {
       const result = np.invert(np.array([0, 0xffffffff], { dtype: np.uint32 }));
