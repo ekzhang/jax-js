@@ -13,6 +13,15 @@ suite("dtype-op edge cases", () => {
     expect(c.dtype).toBe(np.uint32);
     expect(c.js()).toEqual(4294967294); // 2^32 - 2
   });
+
+  test("uint32 vector negation and subtraction wrap", () => {
+    const x = np.array([3, 4], { dtype: np.uint32 });
+    expect(np.negative(x).js()).toEqual([4294967293, 4294967292]);
+
+    const a = np.array([5, 4], { dtype: np.uint32 });
+    const b = np.array([3, 4], { dtype: np.uint32 });
+    expect(np.subtract(a, b).js()).toEqual([2, 0]);
+  });
 });
 
 suite("dtype promotion rules", () => {

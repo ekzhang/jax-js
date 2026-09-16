@@ -59,6 +59,14 @@ test("AluExp has .min and .max", () => {
   expect(e2.max).toEqual(28);
 });
 
+test("AluExp range analysis preserves uint32 wrapping arithmetic", () => {
+  const x = AluExp.variable(DType.Uint32, "x");
+  const neg = AluExp.sub(AluExp.u32(0), x);
+
+  expect([neg.min, neg.max]).toEqual([0, 0xffffffff]);
+  expect(neg.simplify().op).toBe(AluOp.Sub);
+});
+
 test("AluExp raises TypeError for unsupported dtypes", () => {
   expect(() => AluExp.sin(AluExp.bool(true))).toThrow(TypeError);
   expect(() => AluExp.cos(AluExp.bool(false))).toThrow(TypeError);

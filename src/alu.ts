@@ -568,7 +568,14 @@ export class AluExp implements FpHashable {
       ret[1] = clamp(ret[1], 0, 1);
     }
     if (this.dtype === DType.Uint32) {
-      ret[0] = Math.max(0, ret[0]);
+      // Integer arithmetic wraps modulo 2^32. If the mathematical range can
+      // cross either uint32 boundary, a single interval cannot describe the
+      // wrapped result precisely, so use the full dtype range. Clamping would
+      // be unsound: for example, 0 - x was narrowed from [-Infinity, 0] to
+      // [0, 0], causing the simplifier to replace uint32 negation with zero.
+      if (ret[0] < 0 || ret[1] > 0xffffffff) {
+        ret = [0, 0xffffffff];
+      }
     }
     this.#range = ret;
     return ret;
