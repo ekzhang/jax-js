@@ -244,7 +244,8 @@ export class WgslExpCodegen {
         source = `inverseSqrt(${a})`;
       } else {
         const a = this.run(src[0]);
-        if (op === AluOp.Sin) source = `sin(${strip1(a)})`;
+        if (op === AluOp.BitCount) source = `i32(countOneBits(${strip1(a)}))`;
+        else if (op === AluOp.Sin) source = `sin(${strip1(a)})`;
         else if (op === AluOp.Cos) source = `cos(${strip1(a)})`;
         else if (op === AluOp.Asin) source = `asin(${strip1(a)})`;
         else if (op === AluOp.Atan) source = `atan(${strip1(a)})`;
@@ -262,8 +263,6 @@ export class WgslExpCodegen {
         else if (op === AluOp.Reciprocal) source = `(1.0 / ${a})`;
         else if (op === AluOp.Floor) source = `floor(${strip1(a)})`;
         else if (op === AluOp.Ceil) source = `ceil(${strip1(a)})`;
-        else if (op === AluOp.BitCount)
-          source = `i32(countOneBits(${strip1(a)}))`;
         else if (op === AluOp.Cast) {
           const srcTy = dtypeToWgsl(src[0].dtype);
           const dstTy = dtypeToWgsl(dtype);

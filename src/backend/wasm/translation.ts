@@ -120,7 +120,8 @@ export function translateExp(
         cg.call(func);
         if (dtype === DType.Float64) cg.f64.promote_f32();
       };
-      if (op === AluOp.Sin) (gen(src[0]), callFuncF32(funcs.sin));
+      if (op === AluOp.BitCount) (gen(src[0]), cg.i32.popcnt());
+      else if (op === AluOp.Sin) (gen(src[0]), callFuncF32(funcs.sin));
       else if (op === AluOp.Cos) (gen(src[0]), callFuncF32(funcs.cos));
       else if (op === AluOp.Asin) (gen(src[0]), callFuncF32(funcs.asin));
       else if (op === AluOp.Atan) (gen(src[0]), callFuncF32(funcs.atan));
@@ -134,7 +135,6 @@ export function translateExp(
         (dt.const(1), gen(src[0]), dt.div());
       } else if (op === AluOp.Floor) (gen(src[0]), dtyF(cg, op, dtype).floor());
       else if (op === AluOp.Ceil) (gen(src[0]), dtyF(cg, op, dtype).ceil());
-      else if (op === AluOp.BitCount) (gen(src[0]), cg.i32.popcnt());
       else if (op === AluOp.Cast) {
         gen(src[0]);
         const dtype0 = src[0].dtype;

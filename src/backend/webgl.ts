@@ -686,7 +686,8 @@ function generateExpression(
       }
     } else if (AluGroup.Unary.has(op)) {
       const a = gen(src[0]);
-      if (op === AluOp.Sin) source = `sin(${strip1(a)})`;
+      if (op === AluOp.BitCount) source = `bitCountFallback(${strip1(a)})`;
+      else if (op === AluOp.Sin) source = `sin(${strip1(a)})`;
       else if (op === AluOp.Cos) source = `cos(${strip1(a)})`;
       else if (op === AluOp.Asin) source = `asin(${strip1(a)})`;
       else if (op === AluOp.Atan) source = `atan(${strip1(a)})`;
@@ -698,7 +699,6 @@ function generateExpression(
       else if (op === AluOp.Floor) source = `floor(${strip1(a)})`;
       else if (op === AluOp.Ceil) source = `ceil(${strip1(a)})`;
       else if (op === AluOp.Reciprocal) source = `(1.0 / ${a})`;
-      else if (op === AluOp.BitCount) source = `bitCountFallback(${strip1(a)})`;
       else if (op === AluOp.Cast) source = `${glslType(dtype)}(${strip1(a)})`;
       else if (op === AluOp.Bitcast) {
         const dtype0 = src[0].dtype;
