@@ -1,5 +1,5 @@
 import { blockUntilReady, defaultDevice, init, numpy as np } from "@jax-js/jax";
-import { afterAll, bench, suite } from "vitest";
+import { test } from "vitest";
 
 const devices = await init("wasm");
 const MATVEC_SIZES = [512, 1024, 2048, 4096] as const;
@@ -16,34 +16,44 @@ function makeVector(n: number): np.Array {
   return np.array(data, { shape: [n], device: "wasm" });
 }
 
-suite.skipIf(!devices.includes("wasm"))("wasm fp32 matvec", async () => {
-  defaultDevice("wasm");
+test.skipIf(!devices.includes("wasm"))(
+  "wasm fp32 matvec",
+  async ({ bench }) => {
+    defaultDevice("wasm");
 
-  const inputs = MATVEC_SIZES.map((n) => ({
-    n,
-    a: makeMatrix(n),
-    x: makeVector(n),
-  }));
-  await blockUntilReady(inputs);
+    const inputs = MATVEC_SIZES.map((n) => ({
+      n,
+      a: makeMatrix(n),
+      x: makeVector(n),
+    }));
+    await blockUntilReady(inputs);
 
-  afterAll(() => {
-    for (const { a, x } of inputs) {
-      a.dispose();
-      x.dispose();
+    try {
+      await bench.compare(
+        ...inputs.flatMap(({ n, a, x }) => [
+          bench(`${n}x${n} @ vector`, async () => {
+            const y = np.matvec(a.ref, x.ref);
+            await y.blockUntilReady();
+            y.dispose();
+          }),
+          bench(`${n}x${n}.T @ vector`, async () => {
+            const y = np.matvec(a.ref.transpose(), x.ref);
+            await y.blockUntilReady();
+            y.dispose();
+          }),
+        ]),
+        {
+          iterations: 3,
+          time: 250,
+          warmupIterations: 1,
+          warmupTime: 50,
+        },
+      );
+    } finally {
+      for (const { a, x } of inputs) {
+        a.dispose();
+        x.dispose();
+      }
     }
-  });
-
-  for (const { n, a, x } of inputs) {
-    bench(`${n}x${n} @ vector`, async () => {
-      const y = np.matvec(a.ref, x.ref);
-      await y.blockUntilReady();
-      y.dispose();
-    });
-
-    bench(`${n}x${n}.T @ vector`, async () => {
-      const y = np.matvec(a.ref.transpose(), x.ref);
-      await y.blockUntilReady();
-      y.dispose();
-    });
-  }
-});
+  },
+);

@@ -1,5 +1,5 @@
 import { blockUntilReady, defaultDevice, init, numpy as np } from "@jax-js/jax";
-import { afterAll, bench, suite } from "vitest";
+import { test } from "vitest";
 
 const devices = await init("wasm", "webgpu");
 
@@ -27,7 +27,7 @@ function makeData(shape: readonly number[], phase: number) {
 }
 
 for (const device of ["wasm", "webgpu"] as const) {
-  suite.skipIf(!devices.includes(device))(`${device} fft`, async () => {
+  test.skipIf(!devices.includes(device))(`${device} fft`, async ({ bench }) => {
     defaultDevice(device);
 
     const inputs = cases.map(({ shape, phase }) => ({
@@ -36,23 +36,29 @@ for (const device of ["wasm", "webgpu"] as const) {
     }));
     await blockUntilReady(inputs.flatMap(({ real, imag }) => [real, imag]));
 
-    afterAll(() => {
+    try {
+      await bench.compare(
+        ...cases.map((benchmarkCase, i) =>
+          bench(`fft ${benchmarkCase.name}`, async () => {
+            const y = np.fft.fft({
+              real: inputs[i].real.ref,
+              imag: inputs[i].imag.ref,
+            });
+            await blockUntilReady([y.real, y.imag]);
+            y.real.dispose();
+            y.imag.dispose();
+          }),
+        ),
+        {
+          iterations: 3,
+          warmupIterations: 1,
+        },
+      );
+    } finally {
       for (const { real, imag } of inputs) {
         real.dispose();
         imag.dispose();
       }
-    });
-
-    for (let i = 0; i < cases.length; i++) {
-      bench(`fft ${cases[i].name}`, async () => {
-        const y = np.fft.fft({
-          real: inputs[i].real.ref,
-          imag: inputs[i].imag.ref,
-        });
-        await blockUntilReady([y.real, y.imag]);
-        y.real.dispose();
-        y.imag.dispose();
-      });
     }
   });
 }

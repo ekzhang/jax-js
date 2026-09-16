@@ -5,7 +5,7 @@ import {
   numpy as np,
   random,
 } from "@jax-js/jax";
-import { afterAll, bench, suite } from "vitest";
+import { test } from "vitest";
 
 const devices = await init("wasm", "webgpu");
 const cases = [
@@ -15,7 +15,7 @@ const cases = [
 ] as const;
 
 for (const device of ["wasm", "webgpu"] as const) {
-  suite.skipIf(!devices.includes(device))(`${device} svd`, async () => {
+  test.skipIf(!devices.includes(device))(`${device} svd`, async ({ bench }) => {
     defaultDevice(device);
 
     const matrices = cases.map(({ shape, key }) =>
@@ -23,27 +23,34 @@ for (const device of ["wasm", "webgpu"] as const) {
     );
     await blockUntilReady(matrices);
 
-    afterAll(() => {
+    try {
+      await bench.compare(
+        ...cases.flatMap(({ name }, i) => {
+          const a = matrices[i];
+          return [
+            bench(`svdvals ${name}`, async () => {
+              const s = np.linalg.svdvals(a.ref);
+              await s.blockUntilReady();
+              s.dispose();
+            }),
+            bench(`thin svd ${name}`, async () => {
+              const [u, s, vh] = np.linalg.svd(a.ref);
+              await blockUntilReady([u, s, vh]);
+              u.dispose();
+              s.dispose();
+              vh.dispose();
+            }),
+          ];
+        }),
+        {
+          iterations: 3,
+          time: 250,
+          warmupIterations: 1,
+          warmupTime: 50,
+        },
+      );
+    } finally {
       for (const a of matrices) a.dispose();
-    });
-
-    for (let i = 0; i < cases.length; i++) {
-      const { name } = cases[i];
-      const a = matrices[i];
-
-      bench(`svdvals ${name}`, async () => {
-        const s = np.linalg.svdvals(a.ref);
-        await s.blockUntilReady();
-        s.dispose();
-      });
-
-      bench(`thin svd ${name}`, async () => {
-        const [u, s, vh] = np.linalg.svd(a.ref);
-        await blockUntilReady([u, s, vh]);
-        u.dispose();
-        s.dispose();
-        vh.dispose();
-      });
     }
   });
 }
