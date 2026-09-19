@@ -116,6 +116,71 @@ type IInfo = Readonly<{
   min: number;
 }>;
 
+/** A dtype or dtype category accepted by the `kind` parameter of `isdtype`. */
+export type DTypeKind =
+  | DType
+  | "bool"
+  | "signed integer"
+  | "unsigned integer"
+  | "integral"
+  | "real floating"
+  | "complex floating"
+  | "numeric";
+
+const dtypeKinds: Record<string, readonly DType[]> = {
+  bool: [DType.Bool],
+  "signed integer": [DType.Int32],
+  "unsigned integer": [DType.Uint32],
+  integral: [DType.Int32, DType.Uint32],
+  "real floating": [DType.Float16, DType.Float32, DType.Float64],
+  "complex floating": [], // Complex numbers are not supported.
+  numeric: [
+    DType.Int32,
+    DType.Uint32,
+    DType.Float16,
+    DType.Float32,
+    DType.Float64,
+  ],
+};
+
+const allDtypes: readonly DType[] = Object.values(DType);
+
+/**
+ * Return a boolean indicating whether a provided dtype is of a specified kind.
+ *
+ * The kind may be a dtype, a kind string, or an array of dtypes and kind
+ * strings (matching if any entry matches). Valid kind strings are:
+ *
+ * - `"bool"`
+ * - `"signed integer"`
+ * - `"unsigned integer"`
+ * - `"integral"` (shorthand for signed and unsigned integer)
+ * - `"real floating"`
+ * - `"complex floating"` (always false, complex numbers are not supported)
+ * - `"numeric"` (shorthand for integral and real floating)
+ */
+export function isdtype(
+  dtype: DType,
+  kind: DTypeKind | readonly DTypeKind[],
+): boolean {
+  const kinds = globalThis.Array.isArray(kind) ? kind : [kind];
+  let result = false;
+  for (const k of kinds as readonly DTypeKind[]) {
+    const members = Object.hasOwn(dtypeKinds, k) ? dtypeKinds[k] : undefined;
+    if (members !== undefined) {
+      result ||= members.includes(dtype);
+    } else if (allDtypes.includes(k as DType)) {
+      result ||= dtype === k;
+    } else {
+      throw new Error(
+        `isdtype: unrecognized kind ${k}, expected a dtype or one of ` +
+          `${Object.keys(dtypeKinds).join(", ")}`,
+      );
+    }
+  }
+  return result;
+}
+
 /** Machine limits for integer types. */
 export function iinfo(dtype: DType): IInfo {
   switch (dtype) {
