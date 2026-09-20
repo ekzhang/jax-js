@@ -3198,10 +3198,12 @@ export const power = jit(function power(x1: Array, x2: Array) {
     where(x1.ref.less(0), -1, 1),
     1,
   );
+  // For ensuring pow(x, +-0) == 1 for every x, and pow(+-1, +-inf) == 1.
+  const isOne = logicalAnd(absolute(x1.ref).equal(1), isinf(x2.ref));
   return where(
-    shouldBeNaN,
-    nan,
-    exp(log(absolute(x1)).mul(x2)).mul(resultSign),
+    logicalOr(x2.ref.equal(0), isOne),
+    1,
+    where(shouldBeNaN, nan, exp(log(absolute(x1)).mul(x2)).mul(resultSign)),
   );
 });
 

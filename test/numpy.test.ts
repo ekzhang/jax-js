@@ -3441,10 +3441,16 @@ suite.each(devices)("device:%s", (device) => {
       expect(z.js()).toEqual([NaN, NaN, NaN]);
     });
 
+    test("one to an infinite power is one", () => {
+      const x = np.array([1, 1, -1, -1]);
+      const e = np.array([Infinity, -Infinity, Infinity, -Infinity]);
+      expect(np.power(x, e).js()).toEqual([1, 1, 1, 1]);
+    });
+
     if (hasStrictNumerics(device)) {
       test("power of zero", () => {
         const y = np.power(0, np.array([-2, -1, 0, 0.5, 1, 2]));
-        expect(y.js()).toEqual([Infinity, Infinity, NaN, 0, 0, 0]);
+        expect(y.js()).toEqual([Infinity, Infinity, 1, 0, 0, 0]);
       });
     }
   });
