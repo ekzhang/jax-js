@@ -3383,6 +3383,26 @@ suite.each(devices)("device:%s", (device) => {
       ]);
     });
 
+    test("handles infinities", () => {
+      const x = np.array([1, Infinity, Infinity]);
+      const y = np.array([Infinity, Infinity, 1]);
+      expect(np.logaddexp(x.ref, y.ref).js()).toEqual([
+        Infinity,
+        Infinity,
+        Infinity,
+      ]);
+      expect(np.logaddexp2(x, y).js()).toEqual([Infinity, Infinity, Infinity]);
+    });
+
+    if (hasStrictNumerics(device)) {
+      test("both inputs -inf", () => {
+        const x = np.array([-Infinity]);
+        const y = np.array([-Infinity]);
+        expect(np.logaddexp(x.ref, y.ref).js()).toEqual([-Infinity]);
+        expect(np.logaddexp2(x, y).js()).toEqual([-Infinity]);
+      });
+    }
+
     test("avoids simple overflow", () => {
       const x = np.logaddexp2(1000, 1000);
       expect(x).toBeAllclose(1001);

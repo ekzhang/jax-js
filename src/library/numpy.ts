@@ -3096,7 +3096,8 @@ export function log1p(x: ArrayLike): Array {
  */
 export const logaddexp = jit(function logaddexp(x1: Array, x2: Array): Array {
   const xmax = maximum(x1.ref, x2.ref);
-  return log(exp(x1.sub(xmax.ref)).add(exp(x2.sub(xmax.ref)))).add(xmax);
+  const shift = where(isinf(xmax.ref), 0, xmax);
+  return log(exp(x1.sub(shift.ref)).add(exp(x2.sub(shift.ref)))).add(shift);
 });
 
 /**
@@ -3105,7 +3106,8 @@ export const logaddexp = jit(function logaddexp(x1: Array, x2: Array): Array {
  */
 export const logaddexp2 = jit(function logaddexp2(x1: Array, x2: Array): Array {
   const xmax = maximum(x1.ref, x2.ref);
-  return log2(exp2(x1.sub(xmax.ref)).add(exp2(x2.sub(xmax.ref)))).add(xmax);
+  const shift = where(isinf(xmax.ref), 0, xmax);
+  return log2(exp2(x1.sub(shift.ref)).add(exp2(x2.sub(shift.ref)))).add(shift);
 });
 
 /** Convert angles from degrees to radians. */
