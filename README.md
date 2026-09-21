@@ -75,6 +75,7 @@ Demos on the jax-js website:
 
 - [Chat with in-browser LLMs](https://jax-js.com/chat)
 - [Training neural networks on MNIST](https://jax-js.com/mnist)
+- [Training a char-RNN on Tiny Shakespeare](https://jax-js.com/char-rnn)
 - [Voice cloning: Kyutai Pocket TTS](https://jax-js.com/tts)
 - [Speech recognition: OpenAI Whisper](https://jax-js.com/tts)
 - [CLIP embeddings for books in-browser](https://jax-js.com/mobileclip)
