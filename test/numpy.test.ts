@@ -2968,6 +2968,30 @@ suite.each(devices)("device:%s", (device) => {
       const y = np.array(9.0).div(0);
       expect(y.js()).toEqual(Infinity);
     });
+
+    test("promotes integer inputs", () => {
+      const x = np.array([1, 2, 3], { dtype: np.int32 });
+      const y = np.reciprocal(x);
+      expect(y.js()).toBeAllclose([1, 0.5, 1 / 3]);
+    });
+  });
+
+  suite("jax.numpy.divide()", () => {
+    test("promotes integers to float", () => {
+      const x = np.array([1, 2, 3], { dtype: np.int32 });
+      const y = np.divide(x.ref, x);
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toBeAllclose([1, 1, 1]);
+    });
+
+    test("works with scalar inputs", () => {
+      for (const dtype of [np.int32, np.uint32, np.float32]) {
+        const x = np.array([1, 2, 3], { dtype });
+        const y = np.divide(x, 2);
+        expect(y.dtype).toBe(np.float32);
+        expect(y.js()).toBeAllclose([0.5, 1, 1.5]);
+      }
+    });
   });
 
   suite("jax.numpy.floorDivide()", () => {
@@ -3076,6 +3100,12 @@ suite.each(devices)("device:%s", (device) => {
       const [q, r] = np.divmod(7, 3);
       expect(q.js()).toBeCloseTo(2, 5);
       expect(r.js()).toBeCloseTo(1, 5);
+
+      // Regression test: https://github.com/ekzhang/jax-js/issues/225
+      const a = np.array([7, 13, -7], { dtype: np.int32 });
+      const [q2, r2] = np.divmod(a, 2);
+      expect(q2.js()).toEqual([3, 6, -4]);
+      expect(r2.js()).toEqual([1, 1, 1]);
     });
 
     test("works with int32 dtype", () => {

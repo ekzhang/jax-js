@@ -1481,8 +1481,6 @@ export const AluGroup = {
     AluOp.Erfc,
     AluOp.Sqrt,
     AluOp.Reciprocal,
-    AluOp.Floor,
-    AluOp.Ceil,
   ]),
 };
 

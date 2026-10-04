@@ -836,7 +836,7 @@ export function trapezoid(
   // Spacing between consecutive sample points, aligned to the last axis of y.
   let dx: Array;
   if (x === null) {
-    if (!isFloatDtype(y.dtype)) y = y.astype(float32);
+    y = core.promoteToFloat(y);
     dx = fudgeArray(opts?.dx ?? 1);
     if (dx.ndim > 0) {
       if (dx.ndim < y.ndim) {
@@ -2301,14 +2301,13 @@ export function polysub(a1: ArrayLike, a2: ArrayLike): Array {
  * @param m - Order of differentiation, a non-negative integer. Default is 1.
  */
 export function polyder(p: ArrayLike, m: number = 1): Array {
-  p = fudgeArray(p);
+  p = fudgeArray(core.promoteToFloat(p));
   if (!Number.isInteger(m) || m < 0) {
     p.dispose();
     throw new Error(
       `polyder: order of derivative must be a non-negative integer, got ${m}`,
     );
   }
-  if (!isFloatDtype(p.dtype)) p = astype(p, float32);
   if (m === 0) return p;
   if (p.ndim === 0) {
     const ndim = p.ndim;
@@ -2864,13 +2863,7 @@ export function subtract(x: ArrayLike, y: ArrayLike): Array {
 
 /** Calculates the floating-point division of x by y element-wise. */
 export function trueDivide(x: ArrayLike, y: ArrayLike): Array {
-  x = fudgeArray(x);
-  y = fudgeArray(y);
-  if (!isFloatDtype(x.dtype) && !isFloatDtype(y.dtype)) {
-    x = x.astype(DType.Float32);
-    y = y.astype(DType.Float32);
-  }
-  return x.div(y);
+  return multiply(core.promoteToFloat(x), reciprocal(y));
 }
 
 export { trueDivide as divide };
@@ -2949,8 +2942,7 @@ export function trunc(x: ArrayLike): Array {
  * @returns Tuple of [fractional part, integral part].
  */
 export function modf(x: ArrayLike): [Array, Array] {
-  x = fudgeArray(x);
-  if (!isFloatDtype(x.dtype)) x = x.astype(DType.Float32);
+  x = fudgeArray(core.promoteToFloat(x));
   const whole = trunc(x.ref);
   return [x.sub(whole.ref), whole];
 }
@@ -3032,8 +3024,7 @@ export function log10(x: ArrayLike): Array {
 
 /** Calculate `exp(x) - 1` element-wise. */
 export function expm1(x: ArrayLike): Array {
-  x = fudgeArray(x);
-  if (!isFloatDtype(x.dtype)) x = x.astype(DType.Float32);
+  x = fudgeArray(core.promoteToFloat(x));
 
   const cutoff = x.dtype === DType.Float64 ? 0.01 : 0.1;
   const useSeries = absolute(x.ref).lessEqual(cutoff);
@@ -3059,8 +3050,7 @@ export function expm1(x: ArrayLike): Array {
 
 /** Calculate the natural logarithm of `1 + x` element-wise. */
 export function log1p(x: ArrayLike): Array {
-  x = fudgeArray(x);
-  if (!isFloatDtype(x.dtype)) x = x.astype(DType.Float32);
+  x = fudgeArray(core.promoteToFloat(x));
 
   const cutoff = x.dtype === DType.Float64 ? 0.01 : 0.2;
   const useSeries = absolute(x.ref).lessEqual(cutoff);
@@ -3145,9 +3135,8 @@ export function unwrap(
   axis: number = -1,
   period: number = 2 * pi,
 ): Array {
-  let x = fudgeArray(p);
+  let x = fudgeArray(core.promoteToFloat(p));
   axis = checkAxis(axis, x.ndim);
-  if (!isFloatDtype(x.dtype)) x = astype(x, float32);
   if (x.shape[axis] <= 1) return x;
 
   // Round scalar constants to the array's dtype so backends agree on
