@@ -1,8 +1,8 @@
 import * as lax from "./lax";
 import { triangularSolve } from "./lax-linalg";
 import * as np from "./numpy";
-import { isFloatDtype } from "../alu";
 import { Array, ArrayLike, fudgeArray } from "../frontend/array";
+import { promoteToFloat } from "../frontend/core";
 import { checkAxis, checkSquare, generalBroadcast, range } from "../utils";
 
 /**
@@ -347,8 +347,7 @@ export function norm(
     keepdims?: boolean;
   } = {},
 ): Array {
-  x = fudgeArray(x);
-  if (!isFloatDtype(x.dtype)) x = x.astype(np.float32);
+  x = fudgeArray(promoteToFloat(x));
   const ndim = x.ndim;
 
   let axes: number[];

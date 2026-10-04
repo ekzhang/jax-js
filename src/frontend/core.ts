@@ -208,7 +208,7 @@ export function neg(x: TracerValue) {
 }
 
 export function reciprocal(x: TracerValue) {
-  return bind1(Primitive.Reciprocal, [x]);
+  return bind1(Primitive.Reciprocal, [promoteToFloat(x)]);
 }
 
 export function floor(x: TracerValue) {
@@ -232,39 +232,39 @@ export function bitcast(x: TracerValue, dtype: DType) {
 }
 
 export function sin(x: TracerValue) {
-  return bind1(Primitive.Sin, [x]);
+  return bind1(Primitive.Sin, [promoteToFloat(x)]);
 }
 
 export function cos(x: TracerValue) {
-  return bind1(Primitive.Cos, [x]);
+  return bind1(Primitive.Cos, [promoteToFloat(x)]);
 }
 
 export function asin(x: TracerValue) {
-  return bind1(Primitive.Asin, [x]);
+  return bind1(Primitive.Asin, [promoteToFloat(x)]);
 }
 
 export function atan(x: TracerValue) {
-  return bind1(Primitive.Atan, [x]);
+  return bind1(Primitive.Atan, [promoteToFloat(x)]);
 }
 
 export function exp(x: TracerValue) {
-  return bind1(Primitive.Exp, [x]);
+  return bind1(Primitive.Exp, [promoteToFloat(x)]);
 }
 
 export function log(x: TracerValue) {
-  return bind1(Primitive.Log, [x]);
+  return bind1(Primitive.Log, [promoteToFloat(x)]);
 }
 
 export function erf(x: TracerValue) {
-  return bind1(Primitive.Erf, [x]);
+  return bind1(Primitive.Erf, [promoteToFloat(x)]);
 }
 
 export function erfc(x: TracerValue) {
-  return bind1(Primitive.Erfc, [x]);
+  return bind1(Primitive.Erfc, [promoteToFloat(x)]);
 }
 
 export function sqrt(x: TracerValue) {
-  return bind1(Primitive.Sqrt, [x]);
+  return bind1(Primitive.Sqrt, [promoteToFloat(x)]);
 }
 
 /** @inline */
@@ -740,6 +740,27 @@ export function promoteAvals(a: AbstractValue, b: AbstractValue): ShapedArray {
   return new ShapedArray(shape, dtype, weakType);
 }
 
+/**
+ * Promote a tracer to a floating-point type.
+ *
+ * Existing floating-point types are unaffected. Other values are interpreted as
+ * if they were a float32 (the default floating-point type).
+ */
+export function promoteToFloat(x: number | boolean): number;
+export function promoteToFloat<T extends Tracer>(x: T): T;
+export function promoteToFloat<T extends Tracer>(
+  x: T | number | boolean,
+): T | number;
+export function promoteToFloat(x: Tracer | number | boolean): Tracer | number {
+  if (x instanceof Tracer) {
+    return isFloatDtype(x.dtype) ? x : cast(x, DType.Float32);
+  } else if (typeof x === "boolean") {
+    return Number(x);
+  } else {
+    return x;
+  }
+}
+
 export abstract class Tracer {
   /** @ignore */
   readonly _trace: Trace;
@@ -951,12 +972,20 @@ export abstract class Tracer {
     return this.add(neg(other));
   }
 
-  /** Divide an array by this one. */
+  /**
+   * Divide an array by this one. Performs truncating integer division if both
+   * arrays are integral, otherwise floating-point division.
+   */
   div(other: this | TracerValue): this {
-    if (isFloatDtype(this.dtype)) {
-      return this.mul(reciprocal(other));
+    const otherAval = getAval(other);
+    if (
+      !isFloatDtype(this.dtype) &&
+      !isFloatDtype(otherAval.dtype) &&
+      (!this.weakType || !otherAval.weakType)
+    ) {
+      return idiv(this, other) as this;
     }
-    return idiv(this, other) as this;
+    return promoteToFloat(this).mul(reciprocal(other));
   }
 
   /** Return specified diagonals. See `jax.numpy.diagonal` for full docs. */

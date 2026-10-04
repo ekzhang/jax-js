@@ -335,6 +335,13 @@ export class Jaxpr implements FpHashable {
       ) {
         // No-op movement operation, just pass through the input.
         context.set(eqn.outBinders[0], eqn.inputs[0]);
+      } else if (
+        (eqn.primitive === Primitive.Floor ||
+          eqn.primitive === Primitive.Ceil) &&
+        !isFloatDtype(eqn.inputs[0].aval.dtype)
+      ) {
+        // No-op floor/ceil operation on non-float type, pass it through.
+        context.set(eqn.outBinders[0], eqn.inputs[0]);
       } else {
         newEqns.push(eqn);
       }
