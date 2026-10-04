@@ -3135,7 +3135,7 @@ export function unwrap(
   axis: number = -1,
   period: number = 2 * pi,
 ): Array {
-  let x = fudgeArray(core.promoteToFloat(p));
+  const x = fudgeArray(core.promoteToFloat(p));
   axis = checkAxis(axis, x.ndim);
   if (x.shape[axis] <= 1) return x;
 
