@@ -175,7 +175,7 @@ Most operations behave the same way as they do in JAX.
 | `broadcast_shapes`    | 🟢      |                                         |
 | `broadcast_to`        | 🟢      |                                         |
 | `c_`                  | ⚪️      | Python-specific                         |
-| `can_cast`            | 🟠      |                                         |
+| `can_cast`            | 🟢      |                                         |
 | `cbrt`                | 🟢      |                                         |
 | `ceil`                | 🟢      |                                         |
 | `choose`              | ⚪️      | confusing API                           |
