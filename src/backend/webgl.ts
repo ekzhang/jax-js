@@ -47,9 +47,11 @@ interface WebGLSlot {
  * to WebGPU, which is only on newer browsers and iOS 26+.
  *
  * Implementation notes:
- * - All data is stored in typed RGBA32F textures, regardless of original dtype.
- *   They are converted to the correct data type when loaded in shaders.
- * - Each texel holds 4 float32 values (128 bits).
+ * - All data is stored as raw bits in RGBA32UI textures, regardless of dtype.
+ *   Float values are bitcast only when loaded or stored in shaders. Using
+ *   integer storage avoids flushing boolean/integer bit patterns as subnormal
+ *   floats or canonicalizing them as NaNs.
+ * - Each texel holds 4 uint32 values (128 bits).
  * - Compute is done by rendering a full-screen quad with a fragment shader.
  * - Output is rendered to a framebuffer-attached texture, then read back.
  */
@@ -74,16 +76,16 @@ export class WebGLBackend implements Backend {
   /**
    * Allocate a buffer with a specific dtype.
    *
-   * All buffers use RGBA32F texture format internally. Data is stored as raw
-   * bits and reinterpreted using floatBitsToInt/intBitsToFloat in shaders.
+   * All buffers use RGBA32UI texture format internally. Data is stored as raw
+   * bits and reinterpreted using uintBitsToFloat/floatBitsToUint in shaders.
    * This mirrors how WebGPU handles untyped byte buffers.
    */
   malloc(size: number, initialData?: Uint8Array): Slot {
     const gl = this.gl;
 
-    // Calculate number of floats needed (4 bytes per float, 4 floats per texel)
-    const numFloats = Math.ceil(size / 4) || 1;
-    const numTexels = Math.ceil(numFloats / 4) || 1;
+    // Calculate the number of 32-bit words needed (4 words per texel).
+    const numWords = Math.ceil(size / 4) || 1;
+    const numTexels = Math.ceil(numWords / 4) || 1;
     const { width, height } = computeTextureDimensions(numTexels);
 
     // Create the texture
@@ -96,22 +98,22 @@ export class WebGLBackend implements Backend {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    const totalFloats = width * height * 4;
-    let pixels: Float32Array<ArrayBuffer> | null = null;
+    const totalWords = width * height * 4;
+    let pixels: Uint32Array<ArrayBuffer> | null = null;
     if (initialData) {
-      // Copy initial data as raw bytes into float array
-      pixels = new Float32Array(totalFloats);
+      // Copy initial data as raw bytes into the uint32 array.
+      pixels = new Uint32Array(totalWords);
       new Uint8Array(pixels.buffer).set(initialData);
     }
     gl.texImage2D(
       gl.TEXTURE_2D,
       0,
-      gl.RGBA32F,
+      gl.RGBA32UI,
       width,
       height,
       0,
-      gl.RGBA,
-      gl.FLOAT,
+      gl.RGBA_INTEGER,
+      gl.UNSIGNED_INT,
       pixels,
     );
     gl.bindTexture(gl.TEXTURE_2D, null);
@@ -158,8 +160,8 @@ export class WebGLBackend implements Backend {
       0,
     );
 
-    const totalBytes = buffer.width * buffer.height * 4 * 4; // 4 floats * 4 bytes
-    const floatData = new Float32Array(totalBytes / 4);
+    const totalBytes = buffer.width * buffer.height * 4 * 4; // 4 words * 4 bytes
+    const wordData = new Uint32Array(totalBytes / 4);
 
     // Create PBO for async readback
     const pbo = gl.createBuffer();
@@ -169,7 +171,15 @@ export class WebGLBackend implements Backend {
     gl.bufferData(gl.PIXEL_PACK_BUFFER, totalBytes, gl.STREAM_READ);
 
     // Kick off GPU readback into the PBO (returns immediately)
-    gl.readPixels(0, 0, buffer.width, buffer.height, gl.RGBA, gl.FLOAT, 0);
+    gl.readPixels(
+      0,
+      0,
+      buffer.width,
+      buffer.height,
+      gl.RGBA_INTEGER,
+      gl.UNSIGNED_INT,
+      0,
+    );
 
     // Check for errors after readPixels
     const readError = gl.getError();
@@ -206,15 +216,15 @@ export class WebGLBackend implements Backend {
       poll();
     });
 
-    // GPU done: copy from PBO into floatData
+    // GPU done: copy from PBO into wordData
     gl.deleteSync(sync);
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo);
-    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, floatData);
+    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, wordData);
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
     gl.deleteBuffer(pbo);
 
     // Convert to bytes and extract requested range
-    const byteData = new Uint8Array(floatData.buffer as ArrayBuffer);
+    const byteData = new Uint8Array(wordData.buffer as ArrayBuffer);
     return new Uint8Array(byteData.slice(start, start + count));
   }
 
@@ -239,19 +249,19 @@ export class WebGLBackend implements Backend {
       0,
     );
 
-    const totalFloats = buffer.width * buffer.height * 4;
-    const floatData = new Float32Array(totalFloats);
+    const totalWords = buffer.width * buffer.height * 4;
+    const wordData = new Uint32Array(totalWords);
     gl.readPixels(
       0,
       0,
       buffer.width,
       buffer.height,
-      gl.RGBA,
-      gl.FLOAT,
-      floatData,
+      gl.RGBA_INTEGER,
+      gl.UNSIGNED_INT,
+      wordData,
     );
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    const byteData = new Uint8Array(floatData.buffer as ArrayBuffer);
+    const byteData = new Uint8Array(wordData.buffer as ArrayBuffer);
     return new Uint8Array(byteData.slice(start, start + count));
   }
 
@@ -396,18 +406,18 @@ function generateShader(kernel: Kernel): ShaderInfo {
     "",
   );
 
-  // All samplers are float textures (RGBA32F) - we use bit reinterpretation
+  // All samplers read raw 32-bit words from integer textures.
   const args = Array.from({ length: nargs }, (_, i) => `in${i}`);
   const resultType = glslType(outputDtype);
   for (let i = 0; i < nargs; i++) {
-    emit(`uniform highp sampler2D ${args[i]};`);
+    emit(`uniform highp usampler2D ${args[i]};`);
   }
 
-  // Output is always vec4 (RGBA32F) - we convert non-float types with bit casts
-  emit("out vec4 out0;");
+  // Output is always uvec4 (RGBA32UI), with floats bitcast to uint.
+  emit("out uvec4 out0;");
 
   // Generate fetch functions for each input dtype
-  // All textures are RGBA32F, but we reinterpret bits based on dtype
+  // Reinterpret the stored words according to each input dtype.
   const fetchFunctions = new Set<DType>();
   for (const dtype of inputDtypes) {
     fetchFunctions.add(dtype);
@@ -468,9 +478,9 @@ function generateShader(kernel: Kernel): ShaderInfo {
     `${resultType} result1 = compute(texelIdx * 4 + 1);`,
     `${resultType} result2 = compute(texelIdx * 4 + 2);`,
     `${resultType} result3 = compute(texelIdx * 4 + 3);`,
-    // Convert output to vec4 (RGBA32F) - use bit casts for non-float types
-    `out0 = vec4(${range(4)
-      .map((i) => toRGBA32F(outputDtype, `result${i}`))
+    // Convert output values to their raw 32-bit storage representation.
+    `out0 = uvec4(${range(4)
+      .map((i) => toRGBA32UI(outputDtype, `result${i}`))
       .join(", ")});`,
   );
   emit(popIndent, "}");
@@ -562,28 +572,28 @@ function generateLoadFunction(dtype: DType): string {
   const funcName = `load_${dtype}`;
   const returnType = glslType(dtype);
 
-  // All textures are sampler2D (RGBA32F), read as vec4
+  // All textures are usampler2D (RGBA32UI), read as uvec4.
   let conversion: string;
   if (isFloatDtype(dtype)) {
-    conversion = "val"; // No conversion needed for floats
+    conversion = "uintBitsToFloat(val)";
   } else if (dtype === DType.Int32) {
-    conversion = "floatBitsToInt(val)";
+    conversion = "int(val)";
   } else if (dtype === DType.Uint32) {
-    conversion = "floatBitsToUint(val)";
+    conversion = "val";
   } else if (dtype === DType.Bool) {
-    conversion = "floatBitsToInt(val) != 0";
+    conversion = "val != 0u";
   } else {
     throw new Error(`Unsupported dtype for WebGL fetch: ${dtype}`);
   }
 
   return `
-${returnType} ${funcName}(highp sampler2D tex, int idx) {
+${returnType} ${funcName}(highp usampler2D tex, int idx) {
   ivec2 texSize = textureSize(tex, 0);
   int texel = idx / 4;
   int component = idx - texel * 4;
   ivec2 coord = ivec2(texel % texSize.x, texel / texSize.x);
-  vec4 texVal = texelFetch(tex, coord, 0);
-  float val;
+  uvec4 texVal = texelFetch(tex, coord, 0);
+  uint val;
   if (component == 0) val = texVal.x;
   else if (component == 1) val = texVal.y;
   else if (component == 2) val = texVal.z;
@@ -593,16 +603,16 @@ ${returnType} ${funcName}(highp sampler2D tex, int idx) {
 `;
 }
 
-function toRGBA32F(dtype: DType, source: string): string {
+function toRGBA32UI(dtype: DType, source: string): string {
   switch (dtype) {
     case DType.Float32:
-      return source;
+      return `floatBitsToUint(${source})`;
     case DType.Int32:
-      return `intBitsToFloat(${source})`;
+      return `uint(${source})`;
     case DType.Uint32:
-      return `uintBitsToFloat(${source})`;
+      return source;
     case DType.Bool:
-      return `intBitsToFloat(${source} ? 1 : 0)`;
+      return `(${source} ? 1u : 0u)`;
     default:
       throw new Error(`Unsupported dtype for WebGL output: ${dtype}`);
   }

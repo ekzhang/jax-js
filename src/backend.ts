@@ -131,8 +131,7 @@ async function createBackend(device: Device): Promise<Backend | null> {
       failIfMajorPerformanceCaveat: true,
     });
     if (!gl) return null;
-    // Required extension for rendering to float textures.
-    if (!gl.getExtension("EXT_color_buffer_float")) return null;
+    // RGBA32UI textures are color-renderable in core WebGL2.
     const { WebGLBackend } = await import("./backend/webgl");
     return new WebGLBackend(gl);
   } else {
