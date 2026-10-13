@@ -90,6 +90,11 @@
       description: "Explore components of a 3D point cloud.",
     },
     {
+      title: "Tiny Shakespeare Char-RNN",
+      href: resolve("/char-rnn"),
+      description: "Train a 2-layer LSTM on Shakespeare text in your browser.",
+    },
+    {
       title: "Benchmarks",
       href: resolve("/bench/matmul"),
       thumbnail: "benchmarks",
