@@ -990,10 +990,13 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
     Primitive.Pad,
   ];
   for (const eqn of jaxpr.eqns) {
-    if (
-      needsCleanShapePrimitives.includes(eqn.primitive) ||
-      routinePrimitives.has(eqn.primitive)
-    ) {
+    if (routinePrimitives.has(eqn.primitive)) {
+      // Routines need dispatched buffers as input, so materialize a view that
+      // feeds one, not just the producer behind it.
+      for (const input of eqn.inputs) {
+        if (input instanceof Var) materializedProducers.add(input);
+      }
+    } else if (needsCleanShapePrimitives.includes(eqn.primitive)) {
       for (const input of eqn.inputs) {
         if (input instanceof Var) markNonViewProducer(input);
       }
