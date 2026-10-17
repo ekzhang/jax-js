@@ -320,6 +320,14 @@ suite("jax.vjp()", () => {
 });
 
 suite("jax.grad()", () => {
+  test("works through a long chain of ops", () => {
+    const f = (x: np.Array) => {
+      for (let i = 0; i < 5000; i++) x = x.mul(1);
+      return x.sum();
+    };
+    expect(grad(f)(np.array([1, 2]))).toBeAllclose([1, 1]);
+  });
+
   test("works for a simple scalar function", () => {
     const f = (x: np.Array) => x.ref.mul(x.ref).mul(x); // d/dx (x^3) = 3x^2
     const df = grad(f);
