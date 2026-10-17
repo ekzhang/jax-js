@@ -5560,6 +5560,19 @@ suite.each(devices)("device:%s", (device) => {
         ]);
       });
 
+      test("sorts a view of the input under jit", () => {
+        const x = np.array([
+          [3, 6],
+          [1, 4],
+          [2, 5],
+        ]);
+        const y = jit((x: np.Array) => np.sort(x.transpose()))(x);
+        expect(y.js()).toEqual([
+          [1, 2, 3],
+          [4, 5, 6],
+        ]);
+      });
+
       test("sorts NaN to the end", () => {
         const x = np.array([3, NaN, 1, NaN, 2]);
         const y = np.sort(x);
@@ -5923,6 +5936,23 @@ suite.each(devices)("device:%s", (device) => {
         const dx = grad((x: np.Array) => np.takeAlongAxis(x, indices, 1).sum())(
           np.zeros([2, 3]),
         );
+        expect(dx).toBeAllclose([
+          [1, 0, 1],
+          [0, 2, 0],
+        ]);
+      });
+
+      test("works with jit(grad)", () => {
+        const indices = np.array(
+          [
+            [2, 0],
+            [1, 1],
+          ],
+          { dtype: np.int32 },
+        );
+        const dx = jit(
+          grad((x: np.Array) => np.takeAlongAxis(x, indices, 1).sum()),
+        )(np.zeros([2, 3]));
         expect(dx).toBeAllclose([
           [1, 0, 1],
           [0, 2, 0],
