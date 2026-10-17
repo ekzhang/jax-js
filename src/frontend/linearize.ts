@@ -248,18 +248,23 @@ class PartialEvalTracer extends Tracer {
     return this;
   }
   dispose() {
-    if (this.#rc <= 0) {
-      throw new UseAfterFreeError(this);
-    }
-    if (--this.#rc === 0) {
-      // Clear reference to the recipe and pval, if needed.
-      if (this.pval.isKnown) {
-        this.pval.val!.dispose();
-      } else if (this.recipe) {
-        if (this.recipe.type === "Const") {
-          this.recipe.val.dispose();
-        } else if (this.recipe.type === "JaxprEqn") {
-          this.recipe.tracersIn.forEach((t) => t.dispose());
+    // A worklist instead of recursion, so long programs don't overflow the stack.
+    const pending: PartialEvalTracer[] = [this];
+    while (pending.length > 0) {
+      const t = pending.pop()!;
+      if (t.#rc <= 0) {
+        throw new UseAfterFreeError(t);
+      }
+      if (--t.#rc === 0) {
+        // Clear reference to the recipe and pval, if needed.
+        if (t.pval.isKnown) {
+          t.pval.val!.dispose();
+        } else if (t.recipe) {
+          if (t.recipe.type === "Const") {
+            t.recipe.val.dispose();
+          } else if (t.recipe.type === "JaxprEqn") {
+            pending.push(...t.recipe.tracersIn);
+          }
         }
       }
     }
