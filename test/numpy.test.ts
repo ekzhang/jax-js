@@ -5087,6 +5087,57 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.resize()", () => {
+    test("repeats data cyclically when growing", () => {
+      const x = np.array([1, 2, 3]);
+      expect(np.resize(x, [7]).js()).toEqual([1, 2, 3, 1, 2, 3, 1]);
+    });
+
+    test("truncates when shrinking", () => {
+      const x = np.array([1, 2, 3, 4, 5]);
+      expect(np.resize(x, [3]).js()).toEqual([1, 2, 3]);
+    });
+
+    test("accepts an integer shape", () => {
+      expect(np.resize(np.array([1, 2, 3]), 5).js()).toEqual([1, 2, 3, 1, 2]);
+    });
+
+    test("changes rank, wrapping across rows", () => {
+      const x = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      expect(np.resize(x.ref, [3, 3]).js()).toEqual([
+        [1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9],
+      ]);
+      expect(np.resize(x, [3, 4]).js()).toEqual([
+        [1, 2, 3, 4],
+        [5, 6, 7, 8],
+        [9, 1, 2, 3],
+      ]);
+    });
+
+    test("broadcasts a scalar", () => {
+      expect(np.resize(np.array(4), [3, 2]).js()).toEqual([
+        [4, 4],
+        [4, 4],
+        [4, 4],
+      ]);
+    });
+
+    test("gives zeros for an empty input or an empty shape", () => {
+      expect(np.resize(np.array([] as number[]), [2, 2]).js()).toEqual([
+        [0, 0],
+        [0, 0],
+      ]);
+      expect(np.resize(np.array([1, 2, 3]), [0, 2]).shape).toEqual([0, 2]);
+    });
+
+    test("rejects a shape that is not non-negative integers", () => {
+      expect(() => np.resize(np.array([1, 2]), [-1])).toThrow(/non-negative/);
+      expect(() => np.resize(np.array([1, 2]), [1.5])).toThrow(/non-negative/);
+    });
+  });
+
   suite("jax.numpy.var_()", () => {
     test("computes variance", () => {
       const x = np.array([1, 2, 3, 4]);

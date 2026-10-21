@@ -1460,6 +1460,40 @@ export function tile(a: ArrayLike, reps: number | number[]): Array {
 }
 
 /**
+ * Return a new array with the specified shape.
+ *
+ * If the new array is larger than the original, the original data is repeated
+ * cyclically to fill it. If it is smaller, the data is truncated. An empty
+ * input, or an output with no elements, gives an array of zeros.
+ */
+export function resize(a: ArrayLike, newShape: number | number[]): Array {
+  const arr = fudgeArray(a);
+  const shape = typeof newShape === "number" ? [newShape] : newShape;
+  if (!shape.every((d) => Number.isInteger(d) && d >= 0)) {
+    throw new Error(
+      `resize: newShape must be non-negative integers, got ${JSON.stringify(shape)}`,
+    );
+  }
+
+  const { dtype, device } = arr;
+  const size = iprod(arr.shape);
+  const total = iprod(shape);
+  if (size === 0 || total === 0) {
+    arr.dispose();
+    return zeros(shape, { dtype, device });
+  }
+
+  const flat = arr.ravel();
+  const reps = Math.ceil(total / size);
+  const tiled = reps > 1 ? tile(flat, reps) : flat;
+  const trimmed =
+    total === tiled.shape[0]
+      ? tiled
+      : take(tiled, arange(0, total, 1, { dtype: int32 }));
+  return trimmed.reshape(shape);
+}
+
+/**
  * Broadcast an array to a shape, with NumPy-style broadcasing rules.
  *
  * In other words, this lets you append axes to the left, and/or expand

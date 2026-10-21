@@ -393,7 +393,7 @@ Most operations behave the same way as they do in JAX.
 | `remainder`           | 🟢      |                                         |
 | `repeat`              | 🟢      |                                         |
 | `reshape`             | 🟢      |                                         |
-| `resize`              | 🟠      |                                         |
+| `resize`              | 🟢      |                                         |
 | `result_type`         | 🟢      |                                         |
 | `right_shift`         | 🟢      |                                         |
 | `rint`                | 🟢      |                                         |
