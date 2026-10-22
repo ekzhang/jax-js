@@ -1921,7 +1921,14 @@ export function matmul(x: ArrayLike, y: ArrayLike) {
     return core.dot(x, y) as Array;
   }
 
-  // Otherwise, we multiply x: [..., N, K] and y: [..., K, M]
+  // Otherwise, we multiply x: [..., N, K] and y: [..., K, M]. Batch dims are
+  // aligned from the right and broadcast, so prepend 1s to the shape of the
+  // operand with fewer dims. A 1D x or 2D y has no batch dims to align.
+  if (x.ndim > 1 && x.ndim < y.ndim) {
+    x = x.reshape([...rep(y.ndim - x.ndim, 1), ...x.shape]);
+  } else if (y.ndim > 2 && y.ndim < x.ndim) {
+    y = y.reshape([...rep(x.ndim - y.ndim, 1), ...y.shape]);
+  }
   const numBatchDims = Math.min(Math.max(x.ndim, 2), y.ndim) - 2;
   return lax.dot(x, y, {
     lhsContractingDims: [-1],
