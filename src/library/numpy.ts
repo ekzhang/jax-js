@@ -1921,21 +1921,34 @@ export function matmul(x: ArrayLike, y: ArrayLike) {
     return core.dot(x, y) as Array;
   }
 
-  // Otherwise, we multiply x: [..., N, K] and y: [..., K, M]. Batch dims are
-  // aligned from the right and broadcast, so prepend 1s to the shape of the
-  // operand with fewer dims. A 1D x or 2D y has no batch dims to align.
-  if (x.ndim > 1 && x.ndim < y.ndim) {
-    x = x.reshape([...rep(y.ndim - x.ndim, 1), ...x.shape]);
-  } else if (y.ndim > 2 && y.ndim < x.ndim) {
-    y = y.reshape([...rep(x.ndim - y.ndim, 1), ...y.shape]);
-  }
+  // Otherwise, we multiply x: [..., N, K] and y: [..., K, M].
   const numBatchDims = Math.min(Math.max(x.ndim, 2), y.ndim) - 2;
-  return lax.dot(x, y, {
+  const xRank = x.ndim;
+  const yRank = y.ndim;
+  const result = lax.dot(x, y, {
     lhsContractingDims: [-1],
     rhsContractingDims: [-2],
     lhsBatchDims: range(-2 - numBatchDims, -2),
     rhsBatchDims: range(-2 - numBatchDims, -2),
   });
+  // dot places shared batch dims before the free dims of x and y. Move any
+  // unmatched leading batch dims before them, keeping matrix dims at the end.
+  if (xRank > yRank && numBatchDims > 0) {
+    return result.transpose([
+      ...range(numBatchDims, xRank - 2),
+      ...range(numBatchDims),
+      xRank - 2,
+      xRank - 1,
+    ]);
+  } else if (xRank > 1 && xRank < yRank) {
+    return result.transpose([
+      ...range(numBatchDims + 1, yRank - 1),
+      ...range(numBatchDims),
+      numBatchDims,
+      yRank - 1,
+    ]);
+  }
+  return result;
 }
 
 /** Matrix-vector product. x1 is [..., M, N], x2 is [..., N] → [..., M]. */

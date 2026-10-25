@@ -2072,6 +2072,47 @@ suite.each(devices)("device:%s", (device) => {
       ]);
     });
 
+    test.each([
+      [
+        [2, 3],
+        [4, 3, 5],
+      ],
+      [
+        [2, 3],
+        [2, 4, 3, 5],
+      ],
+      [
+        [1, 2, 3],
+        [2, 4, 3, 5],
+      ],
+      [
+        [2, 1, 2, 3],
+        [4, 3, 5],
+      ],
+      [
+        [2, 3, 1, 2, 3],
+        [4, 3, 5],
+      ],
+      [
+        [4, 2, 3],
+        [2, 3, 1, 3, 5],
+      ],
+    ])("matches einsum for mixed ranks %j @ %j", (xShape, yShape) => {
+      const x = np
+        .arange(xShape.reduce((a, b) => a * b))
+        .astype(np.float32)
+        .reshape(xShape);
+      const y = np
+        .arange(yShape.reduce((a, b) => a * b))
+        .astype(np.float32)
+        .reshape(yShape);
+      const expected = np.einsum("...ij,...jk->...ik", x.ref, y.ref);
+      expect(np.matmul(x.ref, y.ref)).toBeAllclose(expected.ref);
+      const matmul = jit(np.matmul);
+      onTestFinished(() => matmul.dispose());
+      expect(matmul(x, y)).toBeAllclose(expected);
+    });
+
     test("jit with fused bias and relu", () => {
       const matmulWithBiasAndRelu = jit(
         (x: np.Array, w: np.Array, b: np.Array) => {
