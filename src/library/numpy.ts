@@ -1919,36 +1919,12 @@ export function matmul(x: ArrayLike, y: ArrayLike) {
   if (y.ndim === 1) {
     // Matrix-vector product
     return core.dot(x, y) as Array;
+  } else if (x.ndim === 1) {
+    // Vector-matrix product
+    return core.dot(x, swapaxes(y, -1, -2)) as Array;
   }
-
   // Otherwise, we multiply x: [..., N, K] and y: [..., K, M].
-  const numBatchDims = Math.min(Math.max(x.ndim, 2), y.ndim) - 2;
-  const xRank = x.ndim;
-  const yRank = y.ndim;
-  const result = lax.dot(x, y, {
-    lhsContractingDims: [-1],
-    rhsContractingDims: [-2],
-    lhsBatchDims: range(-2 - numBatchDims, -2),
-    rhsBatchDims: range(-2 - numBatchDims, -2),
-  });
-  // dot places shared batch dims before the free dims of x and y. Move any
-  // unmatched leading batch dims before them, keeping matrix dims at the end.
-  if (xRank > yRank && numBatchDims > 0) {
-    return result.transpose([
-      ...range(numBatchDims, xRank - 2),
-      ...range(numBatchDims),
-      xRank - 2,
-      xRank - 1,
-    ]);
-  } else if (xRank > 1 && xRank < yRank) {
-    return result.transpose([
-      ...range(numBatchDims + 1, yRank - 1),
-      ...range(numBatchDims),
-      numBatchDims,
-      yRank - 1,
-    ]);
-  }
-  return result;
+  return einsum("...nk,...km->...nm", x, y);
 }
 
 /** Matrix-vector product. x1 is [..., M, N], x2 is [..., N] → [..., M]. */
