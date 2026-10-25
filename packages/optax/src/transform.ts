@@ -93,10 +93,14 @@ export function scaleBySchedule(stepSizeFn: Schedule): GradientTransformation {
     update(updates, state, params) {
       tree.dispose(params);
       const { count } = state as { count: np.Array };
-      const countInt = count.item();
-      const stepSize = stepSizeFn(countInt);
-      updates = tree.map((g: np.Array) => g.mul(stepSize), updates);
-      return [updates, { count: u32(countInt + 1) }];
+      const stepSize = stepSizeFn(count.ref);
+      if (stepSize.ndim !== 0) {
+        stepSize.dispose();
+        throw new Error("Schedule must return a scalar array");
+      }
+      updates = tree.map((g: np.Array) => g.mul(stepSize.ref), updates);
+      stepSize.dispose();
+      return [updates, { count: count.add(1) }];
     },
   };
 }
@@ -109,7 +113,7 @@ export function scaleByLearningRate(
   if (learningRate === undefined) return identity();
   const m = flipSign ? -1 : 1;
   if (typeof learningRate === "function") {
-    return scaleBySchedule((count) => m * learningRate(count));
+    return scaleBySchedule((count) => learningRate(count).mul(m));
   }
   return scale(m * learningRate);
 }
@@ -167,13 +171,16 @@ export function addDecayedWeights({
       }
 
       let newState: typeof state;
-      let currentWeightDecay: number;
+      let currentWeightDecay: number | np.Array;
 
       if (isSchedule) {
         const { count } = state as { count: np.Array };
-        const countInt = count.item();
-        currentWeightDecay = (weightDecay as Schedule)(countInt);
-        newState = { count: u32(countInt + 1) };
+        currentWeightDecay = (weightDecay as Schedule)(count.ref);
+        if (currentWeightDecay.ndim !== 0) {
+          currentWeightDecay.dispose();
+          throw new Error("Schedule must return a scalar array");
+        }
+        newState = { count: count.add(1) };
       } else {
         currentWeightDecay = weightDecay as number;
         newState = state;
@@ -184,24 +191,30 @@ export function addDecayedWeights({
         return [updates, newState];
       }
 
+      // Each parameter leaf consumes its own reference to a scheduled scalar.
+      const decayRef = () =>
+        typeof currentWeightDecay === "number"
+          ? currentWeightDecay
+          : currentWeightDecay.ref;
       let decayedParams: JsTree<np.Array>;
       if (mask) {
         const maskTree =
           typeof mask === "function" ? mask(tree.ref(updates)) : mask;
 
         decayedParams = tree.map(
-          (p: np.Array, m: np.Array) => p.mul(m).mul(currentWeightDecay),
+          (p: np.Array, m: np.Array) => p.mul(m).mul(decayRef()),
           tree.ref(params),
           maskTree,
         );
       } else {
         decayedParams = tree.map(
-          (p: np.Array) => p.mul(currentWeightDecay),
+          (p: np.Array) => p.mul(decayRef()),
           tree.ref(params),
         );
       }
 
       tree.dispose(params);
+      if (typeof currentWeightDecay !== "number") currentWeightDecay.dispose();
 
       updates = tree.map(
         (g: np.Array, d: np.Array) => g.add(d),
