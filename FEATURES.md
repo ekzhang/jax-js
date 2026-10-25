@@ -296,7 +296,7 @@ Most operations behave the same way as they do in JAX.
 | `iterable`            | ⚪️      | Python-specific                         |
 | `ix_`                 | ⚪️      | Python-specific                         |
 | `kaiser`              | 🔴      | transcendental                          |
-| `kron`                | 🟠      |                                         |
+| `kron`                | 🟢      |                                         |
 | `lcm`                 | 🔴      |                                         |
 | `ldexp`               | 🟢      |                                         |
 | `left_shift`          | 🟢      |                                         |

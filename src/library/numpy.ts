@@ -1460,6 +1460,32 @@ export function tile(a: ArrayLike, reps: number | number[]): Array {
 }
 
 /**
+ * Kronecker product of two arrays.
+ *
+ * The result has one axis per dimension of the higher-rank input, with size
+ * `a.shape[i] * b.shape[i]`. The lower-rank input is promoted by prepending
+ * singleton dimensions, matching NumPy's broadcasting rules.
+ */
+export function kron(a: ArrayLike, b: ArrayLike): Array {
+  let x = fudgeArray(a);
+  let y = fudgeArray(b);
+  const nd = Math.max(x.ndim, y.ndim);
+  if (nd === 0) return x.mul(y);
+  if (x.ndim < nd) x = x.reshape([...rep(nd - x.ndim, 1), ...x.shape]);
+  if (y.ndim < nd) y = y.reshape([...rep(nd - y.ndim, 1), ...y.shape]);
+  // Interleave singleton axes so that broadcasting multiplies every pair of
+  // elements, then collapse each `(a_i, b_i)` axis pair back into one axis.
+  const xShape: number[] = [];
+  const yShape: number[] = [];
+  for (let i = 0; i < nd; i++) {
+    xShape.push(x.shape[i], 1);
+    yShape.push(1, y.shape[i]);
+  }
+  const outShape = x.shape.map((d, i) => d * y.shape[i]);
+  return x.reshape(xShape).mul(y.reshape(yShape)).reshape(outShape);
+}
+
+/**
  * Return a new array with the specified shape.
  *
  * If the new array is larger than the original, the original data is repeated

@@ -5087,6 +5087,99 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.kron()", () => {
+    test("computes the Kronecker product of two vectors", () => {
+      const a = np.array([1, 2]);
+      const b = np.array([3, 4]);
+      expect(np.kron(a, b).js()).toEqual([3, 4, 6, 8]);
+    });
+
+    test("computes the Kronecker product of two matrices", () => {
+      const a = np.array([
+        [1, 2],
+        [3, 4],
+      ]);
+      const b = np.array([
+        [0, 5],
+        [6, 7],
+      ]);
+      expect(np.kron(a, b).js()).toEqual([
+        [0, 5, 0, 10],
+        [6, 7, 12, 14],
+        [0, 15, 0, 20],
+        [18, 21, 24, 28],
+      ]);
+    });
+
+    test("promotes a lower-rank input by prepending dimensions", () => {
+      const a = np.array([1, 2]);
+      const b = np.array([[1], [2]]);
+      expect(np.kron(a, b).js()).toEqual([
+        [1, 2],
+        [2, 4],
+      ]);
+    });
+
+    test("multiplies a scalar elementwise", () => {
+      const a = np.array(2);
+      const b = np.array([1, 2, 3]);
+      expect(np.kron(a, b).js()).toEqual([2, 4, 6]);
+    });
+
+    test("expands the trailing axis when ranks differ", () => {
+      const a = np.arange(6).reshape([2, 3]);
+      const b = np.array([1, -1]);
+      const c = np.kron(a, b);
+      expect(c.shape).toEqual([2, 6]);
+      // Compare numerically: `0 * -1` is `-0` here, which is equal to `0`.
+      expect(c.js()).toBeAllclose([
+        [0, 0, 1, -1, 2, -2],
+        [3, -3, 4, -4, 5, -5],
+      ]);
+    });
+
+    test("multiplies shapes along every axis", () => {
+      const a = np.array([[1, 2]]);
+      const b = np.array([
+        [1, 2],
+        [3, 4],
+        [5, 6],
+      ]);
+      const c = np.kron(a, b);
+      expect(c.shape).toEqual([3, 4]);
+      expect(c.js()).toEqual([
+        [1, 2, 2, 4],
+        [3, 4, 6, 8],
+        [5, 6, 10, 12],
+      ]);
+    });
+
+    test("handles empty inputs", () => {
+      expect(np.kron(np.array([] as number[]), np.array([1, 2])).shape).toEqual(
+        [0],
+      );
+      expect(np.kron(np.array([1, 2]), np.array([] as number[])).shape).toEqual(
+        [0],
+      );
+    });
+
+    test("promotes dtypes like other binary operations", () => {
+      const a = np.array([1, 2], { dtype: np.float32 });
+      const b = np.array([1, 2], { dtype: np.int32 });
+      expect(np.kron(a, b).dtype).toBe(np.float32);
+    });
+
+    test("consumes both inputs", () => {
+      const a = np.array([1, 2]);
+      const b = np.array([3, 4]);
+      const c = np.kron(a, b);
+      expect(c.refCount).toBe(1);
+      expect(() => a.dispose()).toThrowError(ReferenceError);
+      expect(() => b.dispose()).toThrowError(ReferenceError);
+      c.dispose();
+    });
+  });
+
   suite("jax.numpy.resize()", () => {
     test("repeats data cyclically when growing", () => {
       const x = np.array([1, 2, 3]);
