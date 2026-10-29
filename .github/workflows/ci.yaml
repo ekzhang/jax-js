@@ -27,6 +27,8 @@ jobs:
 
       - run: pnpm lint --max-warnings 0
 
+      - run: pnpm docs:check
+
       - run: pnpm exec playwright install chromium
 
       - run: pnpm test
