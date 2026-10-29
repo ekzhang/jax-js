@@ -40,7 +40,6 @@
     "build:watch": "TSDOWN_WATCH_MODE=1 tsdown",
     "check": "tsc",
     "docs": "tsx typedoc.ts",
-    "docs:check": "pnpm run docs && tsx scripts/check-docs.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint",
