@@ -4,6 +4,8 @@ export {
   type GradientTransformation,
   identity,
   type OptState,
+  type ScalarOrSchedule,
+  type Schedule,
   setToZero,
 } from "./base";
 export { chain } from "./combine";

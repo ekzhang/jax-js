@@ -22,8 +22,17 @@ export interface GradientTransformation {
   ): [Params, OptState];
 }
 
-/** @inline */
-export type Schedule = (count: number) => number;
+/**
+ * A schedule consuming a scalar uint32 step count and returning a scalar array.
+ *
+ * Use array operations rather than JavaScript arithmetic so schedules work
+ * inside `jit`. Cast the count to a floating-point dtype for fractional math.
+ * Like other array functions, a schedule consumes its input reference and
+ * returns an owned reference. Retain captured arrays with `.ref` when needed.
+ *
+ * @inline
+ */
+export type Schedule = (count: np.Array) => np.Array;
 
 /** @inline */
 export type ScalarOrSchedule = number | Schedule;

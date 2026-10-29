@@ -46,7 +46,8 @@ test("addDecayedWeights function with schedule", () => {
   const updates = np.array([0.1, 0.2, 0.3]);
 
   // Weight decay schedule that increases: 0.01, 0.02, 0.03, ...
-  const weightDecaySchedule = (step: number) => 0.01 * (step + 1);
+  const weightDecaySchedule = (step: np.Array) =>
+    step.astype(np.float32).add(1).mul(0.01);
   const transform = addDecayedWeights({ weightDecay: weightDecaySchedule });
   const state = transform.init(params.ref);
 
@@ -94,7 +95,7 @@ test("scaleBySchedule function with dynamic learning rate", () => {
   const updates = np.array([0.1, 0.2, 0.3]);
 
   // Learning rate starts at 1.0 and decreases by 10% each step
-  const schedule = (step: number) => Math.pow(0.9, step);
+  const schedule = (step: np.Array) => np.power(0.9, step.astype(np.float32));
   const transform = scaleBySchedule(schedule);
   const state = transform.init(params.ref);
 
