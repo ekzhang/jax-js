@@ -6,6 +6,7 @@ import {
   numpy as np,
   valueAndGrad,
   vjp,
+  vmap,
 } from "@jax-js/jax";
 import { beforeEach, expect, suite, test } from "vitest";
 
@@ -256,6 +257,56 @@ suite("weak types", () => {
     expect(b.weakType).toBe(false);
     expect(b.js()).toEqual(10);
   });
+
+  // Regression for https://github.com/ekzhang/jax-js/issues/245. Transforming
+  // a JIT function replays its literals, which must retain their weak types.
+  test.each([np.float16, np.int32])(
+    "vmap preserves %s with weak JIT literals",
+    (dtype) => {
+      const f = jit((x: np.Array) => x.mul(2));
+      const y = vmap(f)(np.array([-2, 3], { dtype }));
+      expect(y.dtype).toBe(dtype);
+      expect(y.js()).toEqual([-4, 6]);
+      f.dispose();
+    },
+  );
+
+  test("jvp preserves float16 with weak JIT literals", () => {
+    const f = jit((x: np.Array) => x.mul(0.5));
+    const [y, dy] = jvp(
+      f,
+      [np.array([-2, 3], { dtype: np.float16 })],
+      [np.array([2, -4], { dtype: np.float16 })],
+    );
+    expect(y.dtype).toBe(np.float16);
+    expect(dy.dtype).toBe(np.float16);
+    expect(y.js()).toEqual([-1, 1.5]);
+    expect(dy.js()).toEqual([1, -2]);
+    f.dispose();
+  });
+
+  test("grad preserves float16 with weak JIT literals", () => {
+    const f = jit((x: np.Array) => x.mul(0.5));
+    const dx = grad((x: np.Array) => f(x).sum())(
+      np.array([-2, 3], { dtype: np.float16 }),
+    );
+    expect(dx.dtype).toBe(np.float16);
+    expect(dx.js()).toEqual([0.5, 0.5]);
+    f.dispose();
+  });
+
+  test.each([np.float16, np.int32])(
+    "vmap still promotes %s with explicit float32 JIT literals",
+    (dtype) => {
+      const f = jit((x: np.Array) =>
+        x.mul(np.array(0.5, { dtype: np.float32 })),
+      );
+      const y = vmap(f)(np.array([-2, 3], { dtype }));
+      expect(y.dtype).toBe(np.float32);
+      expect(y.js()).toEqual([-1, 1.5]);
+      f.dispose();
+    },
+  );
 });
 
 suite("resultType", () => {

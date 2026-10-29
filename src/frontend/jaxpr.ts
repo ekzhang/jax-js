@@ -17,7 +17,7 @@ import {
   unzip2,
   zip,
 } from "../utils";
-import { array, Array, ArrayLike, pureArray } from "./array";
+import { Array, ArrayLike, fullInternal, pureArray } from "./array";
 import { checkConvShape, checkPoolShape } from "./convolution";
 import {
   AbstractValue,
@@ -504,7 +504,7 @@ export function evalJaxpr(jaxpr: Jaxpr, args: Tracer[]): Tracer[] {
       remainingRefs.set(x, (remainingRefs.get(x) ?? 0) - 1);
       return env.get(x)!;
     } else {
-      return array(x.value, { dtype: x.dtype });
+      return fullInternal(x.aval, x.value);
     }
   };
 

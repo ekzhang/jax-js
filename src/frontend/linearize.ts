@@ -20,7 +20,7 @@ import {
   toposort,
   unzip2,
 } from "../utils";
-import { array, eye, onesLike, pureArray, zeros } from "./array";
+import { eye, fullInternal, onesLike, pureArray, zeros } from "./array";
 import {
   AbstractValue,
   add,
@@ -602,7 +602,7 @@ function evalJaxprTransposed(
     // values. Tricky!
     const primalsIn = eqn.inputs.map((v) =>
       v instanceof Lit
-        ? array(v.value, { dtype: v.dtype })
+        ? fullInternal(v.aval, v.value)
         : knownPrimals.has(v)
           ? knownPrimals.get(v)!.ref
           : new UndefPrimal(v.aval),
