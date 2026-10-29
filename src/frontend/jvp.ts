@@ -235,7 +235,7 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
       return [[cast(x, dtype)], [cast(dx, dtype)]];
     } else {
       dx.dispose();
-      return [[cast(x.ref, dtype)], [zerosLike(x)]];
+      return [[cast(x.ref, dtype)], [zerosLike(x, { dtype })]];
     }
   },
   [Primitive.Bitcast]([x], [dx], { dtype }) {

@@ -1,8 +1,108 @@
-import { defaultDevice, jit, numpy as np } from "@jax-js/jax";
+import {
+  defaultDevice,
+  grad,
+  jit,
+  jvp,
+  numpy as np,
+  valueAndGrad,
+  vjp,
+} from "@jax-js/jax";
 import { beforeEach, expect, suite, test } from "vitest";
 
 beforeEach(() => {
   defaultDevice("cpu"); // float16 is not available on Wasm
+});
+
+suite("autodiff through casts", () => {
+  const floatCasts = [
+    [np.float16, np.float32],
+    [np.float32, np.float16],
+    [np.float32, np.float64],
+    [np.float64, np.float32],
+    [np.float16, np.float64],
+    [np.float64, np.float16],
+  ];
+
+  test.each(floatCasts)("jvp casts %s tangents to %s", (input, output) => {
+    const [y, dy] = jvp(
+      (x: np.Array) => x.astype(output),
+      [np.array([1.5, 2.5], { dtype: input })],
+      [np.array([3, -4], { dtype: input })],
+    );
+    expect(y.dtype).toBe(output);
+    expect(dy.dtype).toBe(output);
+    expect(y.js()).toEqual([1.5, 2.5]);
+    expect(dy.js()).toEqual([3, -4]);
+  });
+
+  // Regression for https://github.com/ekzhang/jax-js/issues/243.
+  test.each(floatCasts)(
+    "vjp casts %s cotangents back from %s",
+    (input, output) => {
+      const [y, pullback] = vjp(
+        (x: np.Array) => x.astype(output),
+        [np.array([1.5, 2.5], { dtype: input })],
+      );
+      expect(y.dtype).toBe(output);
+      expect(y.js()).toEqual([1.5, 2.5]);
+      const [dx] = pullback(np.array([3, -4], { dtype: output }));
+      pullback.dispose();
+      expect(dx.dtype).toBe(input);
+      expect(dx.js()).toEqual([3, -4]);
+    },
+  );
+
+  test.each(floatCasts)(
+    "valueAndGrad works through %s to %s casts, eager and jit",
+    (input, output) => {
+      const f = valueAndGrad((x: np.Array) => {
+        const y = x.astype(output);
+        return y.ref.mul(y).sum();
+      });
+      const compiled = jit(f);
+      for (const evaluate of [f, compiled]) {
+        const [y, dx] = evaluate(np.array([1.5, 2.5], { dtype: input }));
+        expect(y.dtype).toBe(output);
+        expect(dx.dtype).toBe(input);
+        expect(y.js()).toBe(8.5);
+        expect(dx.js()).toEqual([3, 5]);
+      }
+      compiled.dispose();
+    },
+  );
+
+  test.each([
+    [np.float32, np.int32],
+    [np.int32, np.float32],
+    [np.float32, np.uint32],
+    [np.uint32, np.float32],
+    [np.float32, np.bool],
+    [np.bool, np.float32],
+    [np.int32, np.uint32],
+    [np.uint32, np.int32],
+    [np.bool, np.int32],
+    [np.int32, np.bool],
+  ])("jvp zeros %s to %s tangents in the output dtype", (input, output) => {
+    const [y, dy] = jvp(
+      (x: np.Array) => x.astype(output),
+      [np.array([0, 1], { dtype: input })],
+      [np.ones([2], { dtype: input })],
+    );
+    expect(y.dtype).toBe(output);
+    expect(dy.dtype).toBe(output);
+    expect(dy.shape).toEqual([2]);
+    expect(y.js()).toEqual(output === np.bool ? [false, true] : [0, 1]);
+    expect(dy.js()).toEqual(output === np.bool ? [false, false] : [0, 0]);
+  });
+
+  test("integer round trips preserve fractional tangent weights", () => {
+    const f = (x: np.Array) =>
+      np.minimum(x.ref.astype(np.int32).astype(np.float32), x);
+    const [y, dy] = jvp(f, [np.array(1)], [np.array(1)]);
+    expect(y.js()).toBe(1);
+    expect(dy.js()).toBe(0.5);
+    expect(grad(f)(np.array(1)).js()).toBe(0.5);
+  });
 });
 
 suite("dtype-op edge cases", () => {

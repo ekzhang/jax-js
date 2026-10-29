@@ -26,6 +26,7 @@ import {
   add,
   bind,
   broadcast,
+  cast,
   concatenate,
   conv,
   dot,
@@ -737,6 +738,10 @@ const transposeRules: Partial<{ [P in Primitive]: TransposeRule<P> }> = {
   [Primitive.Neg]([ct], [x]) {
     if (!(x instanceof UndefPrimal)) throw new NonlinearError(Primitive.Neg);
     return [neg(ct)];
+  },
+  [Primitive.Cast]([ct], [x]) {
+    if (!(x instanceof UndefPrimal)) throw new NonlinearError(Primitive.Cast);
+    return [cast(ct, x.aval.dtype)];
   },
   [Primitive.Add]([ct], [x, y]) {
     if (!(x instanceof UndefPrimal || y instanceof UndefPrimal))
