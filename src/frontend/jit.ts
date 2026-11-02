@@ -276,6 +276,9 @@ export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
 
   const blackNodes = splitGraphDataflow(backend, jaxpr);
 
+  // Canonical node for each expression hash, see shareSubexpressions().
+  const sharedExps = new Map<bigint, AluExp>();
+
   // Initialize jaxpr inBinders.
   const ctx = new Map<Var, JitValue>();
   for (let i = 0; i < nargs; i++) {
@@ -392,7 +395,10 @@ export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
     if (inputReduction) {
       // Special case: we are in the fused epilogue of a reduction.
       const jv = inputReduction;
-      const newEpilogue = rule(inputExps, inputAvals, eqn.params as any).exp[0];
+      const newEpilogue = shareSubexpressions(
+        rule(inputExps, inputAvals, eqn.params as any).exp[0],
+        sharedExps,
+      );
       exp = [jv.exp.reindexGids(addArgs(jv.args))];
       reduction = new Reduction(
         jv.reduction.dtype,
@@ -402,7 +408,7 @@ export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
       );
     } else {
       const ruleOutput = rule(inputExps, inputAvals, eqn.params as any);
-      exp = ruleOutput.exp;
+      exp = ruleOutput.exp.map((e) => shareSubexpressions(e, sharedExps));
       reduction = ruleOutput.reduction;
     }
 
@@ -483,6 +489,30 @@ type JitRule<P extends Primitive> = (
   exp: AluExp[]; // One expression for each output
   reduction?: Reduction;
 };
+
+/**
+ * Replace structurally equal subexpressions with one shared node.
+ *
+ * Each input of an equation is rewritten separately to the equation's gid
+ * numbering and shape, so a value reached through two inputs comes out as two
+ * equal but distinct copies. If a value is used as both (y, x) and (x, y), the
+ * copies are not even equal until a later equation renumbers them, and without
+ * this the expression doubles at every such step.
+ *
+ * `cache` maps a hash to its canonical node, whose sources are canonical too.
+ */
+function shareSubexpressions(exp: AluExp, cache: Map<bigint, AluExp>): AluExp {
+  const hash = exp.getHash();
+  let shared = cache.get(hash);
+  if (shared === undefined) {
+    const src = exp.src.map((s) => shareSubexpressions(s, cache));
+    shared = src.every((s, i) => s === exp.src[i])
+      ? exp
+      : new AluExp(exp.op, exp.dtype, src, exp.arg);
+    cache.set(hash, shared);
+  }
+  return shared;
+}
 
 function reshapeViews(
   exp: AluExp,
