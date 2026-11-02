@@ -63,6 +63,7 @@ of late 2025.
 
 Community usage:
 
+- [**grpo-playground**: Demo of RL fine-tuning with GRPO](https://grpo.lucasgelfond.online/)
 - [**jax-realtime**: Full-duplex voice assistant running entirely in your browser](https://jax-realtime.netlify.app)
 - [**fluent**: Tiny language for reactive, differentiable tensors](https://github.com/mlajtos/fluent)
 - [**g9-jaxjs**: Automatically interactive graphics with forward-mode AD](https://srush.github.io/g9jax/)
