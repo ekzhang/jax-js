@@ -226,6 +226,49 @@ suite("jax.jacfwd()", () => {
   });
 });
 
+suite.each([jacfwd, jacrev])("Jacobian axes (%s)", (jacobian) => {
+  test.each([
+    {
+      matrix: [
+        [1, 2],
+        [3, 4],
+        [5, 6],
+      ],
+    },
+    {
+      matrix: [
+        [1, 2, 3],
+        [4, 5, 6],
+      ],
+    },
+    {
+      matrix: [
+        [1, 2],
+        [3, 4],
+      ],
+    },
+    { matrix: [[1, 2]] },
+    { matrix: [[1], [2]] },
+  ])("returns output-by-input axes for $matrix", ({ matrix }) => {
+    const f = (x: np.Array) => np.matmul(np.array(matrix), x);
+    const result = jacobian(f)(np.ones([matrix[0].length]));
+    expect(result.shape).toEqual([matrix.length, matrix[0].length]);
+    expect(result).toBeAllclose(np.array(matrix));
+  });
+
+  test("supports scalar outputs", () => {
+    const result = jacobian((x: np.Array) => x.sum())(np.ones([2]));
+    expect(result.shape).toEqual([2]);
+    expect(result).toBeAllclose(np.ones([2]));
+  });
+
+  test("preserves multidimensional output axes", () => {
+    const result = jacobian((x: np.Array) => x.reshape([2, 2]))(np.ones([4]));
+    expect(result.shape).toEqual([2, 2, 4]);
+    expect(result).toBeAllclose(np.eye(4).reshape([2, 2, 4]));
+  });
+});
+
 suite("jax.hessian()", () => {
   test("computes hessian of sum of squares", () => {
     // f(x) = sum(x^2) => gradient = 2x, hessian = 2*I

@@ -85,6 +85,8 @@ export const vmap = vmapModule.vmap as <
 /**
  * @function
  * Compute the Jacobian evaluated column-by-column by forward-mode AD.
+ *
+ * Supports 1D inputs. Output axes precede the input axis.
  */
 export const jacfwd = vmapModule.jacfwd as <F extends (x: Array) => Array>(
   f: F,
@@ -294,6 +296,8 @@ export const valueAndGrad = linearizeModule.valueAndGrad as <
 /**
  * @function
  * Compute the Jacobian evaluated row-by-row by reverse-mode AD.
+ *
+ * Supports 1D inputs. Output axes precede the input axis.
  */
 export const jacrev = linearizeModule.jacrev as typeof jacfwd;
 
