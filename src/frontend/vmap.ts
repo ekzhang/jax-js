@@ -33,6 +33,7 @@ import {
 import {
   JsTree,
   flatten as treeFlatten,
+  map as treeMap,
   unflatten as treeUnflatten,
 } from "../tree";
 import { ClosedJaxpr, Jaxpr, jaxprAsFun, makeJaxpr } from "./jaxpr";
@@ -607,6 +608,8 @@ export function jacfwd(f: any) {
     }
     const [size] = x.shape;
     const pushfwd = (v: Tracer) => jvp(f, [x], [v])[1];
-    return vmap(pushfwd, [0])(eye(size, undefined, { dtype: x.dtype }));
+    const basis = eye(size, undefined, { dtype: x.dtype });
+    const jacobian = vmap(pushfwd, [0])(basis);
+    return treeMap((leaf: Tracer) => moveaxis(leaf, 0, -1), jacobian);
   };
 }

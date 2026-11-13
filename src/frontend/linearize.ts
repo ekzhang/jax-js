@@ -1158,15 +1158,21 @@ export function jacrev(f: any) {
     if (x.shape.length !== 1) {
       throw new TypeError("jacrev only supports 1D inputs");
     }
-    const [size] = x.shape;
-    const pullback = (ct: Tracer) => {
-      const [y, fVjp] = vjp(f, [x]);
-      y.dispose();
-      const [ret] = fVjp(ct);
+    const inputShape = x.shape;
+    const [y, fVjp] = vjp(f, [x]);
+    const outputShape = y.shape;
+    const basis = eye(y.size, undefined, { dtype: y.dtype }).reshape([
+      y.size,
+      ...outputShape,
+    ]);
+    y.dispose();
+    try {
+      const pullback = (ct: Tracer) => fVjp(ct)[0];
+      const jacobian = vmap(pullback, [0])(basis) as Tracer;
+      return jacobian.reshape([...outputShape, ...inputShape]);
+    } finally {
       fVjp.dispose();
-      return ret;
-    };
-    return vmap(pullback, [1])(eye(size, undefined, { dtype: x.dtype }));
+    }
   };
 }
 
