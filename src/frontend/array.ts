@@ -1338,7 +1338,10 @@ function arrayFromData(
     if (dtype && dtype !== DType.Uint32)
       throw new Error("Uint32Array must have uint32 type");
     dtype ??= DType.Uint32;
-  } else if (data instanceof Float16Array) {
+  } else if (
+    typeof Float16Array !== "undefined" &&
+    data instanceof Float16Array
+  ) {
     if (dtype && dtype !== DType.Float16)
       throw new Error("Float16Array must have float16 type");
     dtype ??= DType.Float16;
