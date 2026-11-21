@@ -68,6 +68,49 @@ suite.each(devices)("device:%s", (device) => {
     expect(result.js()).toEqual([[[-1.5, 0, 1.5, 3, 10.5]]]);
   });
 
+  test.each([2, 3])(
+    "3x3 convolution on a reshaped batch with %i channels",
+    (channels) => {
+      const [clips, frames, size, outputs] = [2, 5, 4, 3];
+      const input = Float32Array.from(
+        { length: clips * channels * frames * size * size },
+        (_, i) => Math.sin(i * 1.3),
+      );
+      const weights = Float32Array.from(
+        { length: outputs * channels * 9 },
+        (_, i) => Math.cos(i * 0.7),
+      );
+      const dimensions = [clips * frames, channels, size, size];
+      const batchFrames = (x: np.Array) =>
+        x
+          .reshape([clips, channels, frames, size, size])
+          .transpose([0, 2, 1, 3, 4])
+          .reshape(dimensions);
+      const conv = (x: np.Array, w: np.Array) =>
+        lax.convGeneralDilated(
+          x,
+          w.reshape([outputs, channels, 3, 3]),
+          [1, 1],
+          "SAME",
+        );
+      const compiled = jit((x: np.Array, w: np.Array) =>
+        conv(batchFrames(x), w),
+      );
+      const expected = conv(
+        np.array(batchFrames(np.array(input)).dataSync()).reshape(dimensions),
+        np.array(weights),
+      ).dataSync();
+      const eager = conv(
+        batchFrames(np.array(input)),
+        np.array(weights),
+      ).dataSync();
+      const jitted = compiled(np.array(input), np.array(weights)).dataSync();
+      compiled.dispose();
+      expect(eager).toBeAllclose(expected, { atol: 1e-6 });
+      expect(jitted).toBeAllclose(expected, { atol: 1e-6 });
+    },
+  );
+
   test("lax ConvTranspose lowers to ordinary primitives", () => {
     const fn = (x: np.Array, kernel: np.Array) =>
       lax.convGeneralDilated(x, kernel, [1], [[2, 2]], {

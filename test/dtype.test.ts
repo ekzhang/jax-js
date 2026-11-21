@@ -107,6 +107,24 @@ suite("autodiff through casts", () => {
 });
 
 suite("dtype-op edge cases", () => {
+  test("jit folds scalar arithmetic at its declared precision", () => {
+    const folded = jit(() => {
+      const uint = np.array(0xffffffff, { dtype: np.uint32 });
+      const float = np.array(2 ** 24, { dtype: np.float32 });
+      return [
+        uint.ref.mul(uint),
+        float.ref.add(np.array(1, { dtype: np.float32 })).sub(float),
+      ];
+    });
+    try {
+      const [product, difference] = folded();
+      expect(product.dataSync()).toEqual(Uint32Array.of(1));
+      expect(difference.dataSync()).toEqual(Float32Array.of(0));
+    } finally {
+      folded.dispose();
+    }
+  });
+
   test("uint32 subtraction underflow", () => {
     const a = np.array(3, { dtype: np.uint32 });
     const b = np.array(5, { dtype: np.uint32 });

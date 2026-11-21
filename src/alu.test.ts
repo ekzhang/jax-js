@@ -67,6 +67,59 @@ test("AluExp range analysis preserves uint32 wrapping arithmetic", () => {
   expect(neg.simplify().op).toBe(AluOp.Sub);
 });
 
+test("AluExp range analysis handles division across zero", () => {
+  const x = AluExp.special(DType.Int32, "x", 2);
+  const n = AluExp.add(x, AluExp.i32(1));
+  const divisor = AluExp.where(
+    AluExp.variable(DType.Bool, "positive"),
+    n,
+    AluExp.sub(AluExp.i32(0), n),
+  );
+  expect(
+    AluExp.idiv(AluExp.i32(1), divisor)
+      .simplify()
+      .evaluate({ x: 0, positive: true }),
+  ).toBe(1);
+});
+
+test("AluExp range analysis handles int32 overflow and wrapping casts", () => {
+  const x = AluExp.special(DType.Int32, "x", 2);
+  const sum = AluExp.add(x, AluExp.i32(0x7fffffff));
+  expect(AluExp.cmplt(sum, AluExp.i32(0)).simplify().evaluate({ x: 1 })).toBe(
+    1,
+  );
+
+  const y = AluExp.special(DType.Int32, "y", 0x80000000);
+  const cast = AluExp.cast(DType.Uint32, AluExp.mul(y, AluExp.i32(3)));
+  expect(
+    AluExp.mod(cast, AluExp.u32(0x80000000))
+      .simplify()
+      .evaluate({ y: 0x40000000 }),
+  ).toBe(0x40000000);
+});
+
+test("AluExp evaluates and folds arithmetic at its declared precision", () => {
+  const u = AluExp.u32(0xffffffff);
+  expect(AluExp.mul(u, u).resolve()).toBe(1);
+
+  const big = AluExp.f32(2 ** 24);
+  const subtract = (x: AluExp) => AluExp.sub(AluExp.add(x, AluExp.f32(1)), x);
+  expect(subtract(big).resolve()).toBe(0);
+  expect(
+    subtract(AluExp.variable(DType.Float32, "x")).evaluate({ x: 2 ** 24 }),
+  ).toBe(0);
+});
+
+test("AluExp preserves floating-point multiplication by zero", () => {
+  const x = AluExp.variable(DType.Float32, "x");
+  const zero = AluExp.f32(0);
+  expect(AluExp.mul(x, zero).simplify().evaluate({ x: Infinity })).toBeNaN();
+  const product = AluExp.mul(zero, AluExp.sin(x));
+  expect(
+    AluExp.add(product, AluExp.f32(1)).simplify().evaluate({ x: NaN }),
+  ).toBeNaN();
+});
+
 test("AluExp raises TypeError for unsupported dtypes", () => {
   expect(() => AluExp.sin(AluExp.bool(true))).toThrow(TypeError);
   expect(() => AluExp.cos(AluExp.bool(false))).toThrow(TypeError);
@@ -254,6 +307,22 @@ test("AluOp.Idiv simplification preserves negative residuals", () => {
   ).toEqual(values.map(normalize));
 });
 
+test("AluExp simplifies nonnegative indices with negative offsets", () => {
+  const a = AluExp.special(DType.Int32, "a", 3);
+  const b = AluExp.special(DType.Int32, "b", 4);
+  const divisor = AluExp.i32(8);
+  const numerator = AluExp.add(
+    AluExp.add(
+      AluExp.mul(a, divisor),
+      AluExp.mul(AluExp.max(b, AluExp.i32(1)), AluExp.i32(2)),
+    ),
+    AluExp.i32(-1),
+  );
+  const context = { a: 0, b: 0 };
+  expect(AluExp.idiv(numerator, divisor).simplify().evaluate(context)).toBe(0);
+  expect(AluExp.mod(numerator, divisor).simplify().evaluate(context)).toBe(1);
+});
+
 test("AluOp.Idiv simplification preserves negative denominators", () => {
   const i = AluExp.special(DType.Int32, "i", 3);
   const e = AluExp.idiv(
@@ -330,7 +399,7 @@ test("AluExp.evaluate computes shared subexpressions once", () => {
     return [-1.5, -0.25, 0.5, 2][bufidx];
   };
   const x = AluExp.globalIndex(
-    DType.Float32,
+    DType.Float64,
     0,
     4,
     AluExp.variable(DType.Int32, "idx"),
@@ -341,7 +410,7 @@ test("AluExp.evaluate computes shared subexpressions once", () => {
       y = AluExp.add(AluExp.sin(y), AluExp.cos(y));
     } else {
       const sq = AluExp.mul(y, y);
-      y = AluExp.where(AluExp.cmplt(y, AluExp.f32(1)), sq, AluExp.sub(y, sq));
+      y = AluExp.where(AluExp.cmplt(y, AluExp.f64(1)), sq, AluExp.sub(y, sq));
     }
   }
 

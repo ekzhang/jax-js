@@ -1,4 +1,4 @@
-import { byteWidth, DType, isFloatDtype } from "../alu";
+import { AluOp, byteWidth, DType, evalTyped, isFloatDtype } from "../alu";
 import { PPrint } from "../pprint";
 import { type Pair } from "../shape";
 import {
@@ -273,14 +273,10 @@ export class Jaxpr implements FpHashable {
         } else if (atomIsLit(b, 0)) {
           context.set(c, a);
         } else if (atomIsLit(a) && atomIsLit(b)) {
+          const aval = promoteAvals(a.aval, b.aval);
           context.set(
             c,
-            new Lit(
-              promoteAvals(a.aval, b.aval),
-              a.dtype === DType.Bool
-                ? Math.min(a.value + b.value, 1) // Special case: Bool ||
-                : a.value + b.value,
-            ),
+            new Lit(aval, evalTyped[AluOp.Add](aval.dtype, a.value, b.value)),
           );
         } else {
           newEqns.push(eqn);
@@ -302,9 +298,10 @@ export class Jaxpr implements FpHashable {
         } else if (atomIsLit(b, 1)) {
           context.set(c, a);
         } else if (atomIsLit(a) && atomIsLit(b)) {
+          const aval = promoteAvals(a.aval, b.aval);
           context.set(
             c,
-            new Lit(promoteAvals(a.aval, b.aval), a.value * b.value),
+            new Lit(aval, evalTyped[AluOp.Mul](aval.dtype, a.value, b.value)),
           );
         } else {
           newEqns.push(eqn);

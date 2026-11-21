@@ -969,7 +969,8 @@ export abstract class Tracer {
 
   /** Subtract an array from this one. */
   sub(other: this | TracerValue): this {
-    return this.add(neg(other));
+    // Keep weak literals unrounded until addition chooses the promoted dtype.
+    return this.add(typeof other === "number" ? -other : neg(other));
   }
 
   /**

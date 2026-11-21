@@ -429,9 +429,22 @@ export class AluExp implements FpHashable {
         break;
       case AluOp.Mul: {
         ret = minMax4((a, b) => a * b);
+        // A zero product can still be NaN, even with finite inferred bounds.
+        if (isFloatDtype(this.dtype) && ret[0] === 0 && ret[1] === 0)
+          ret = [-Infinity, Infinity];
         break;
       }
       case AluOp.Idiv: {
+        const [min, max] = src[1].#computeRange();
+        if (!isFloatDtype(this.dtype) && min <= 0 && max >= 0)
+          return (this.#range = [-Infinity, Infinity]);
+        if (
+          this.dtype === DType.Int32 &&
+          min <= -1 &&
+          max >= -1 &&
+          src[0].min <= -0x80000000
+        )
+          return (this.#range = [-Infinity, Infinity]);
         ret = minMax4((a, b) => Math.trunc(a / b));
         break;
       }
@@ -448,6 +461,8 @@ export class AluExp implements FpHashable {
         // web world and outside of Python. This is a deviation from JAX!
         let divisorRange = src[1].#computeRange();
         if (divisorRange[0] <= 0 && divisorRange[1] >= 0) {
+          if (!isFloatDtype(this.dtype))
+            return (this.#range = [-Infinity, Infinity]);
           divisorRange = [0, Math.max(-divisorRange[0], divisorRange[1])];
         }
         if (divisorRange[1] < 0) {
@@ -578,7 +593,12 @@ export class AluExp implements FpHashable {
       ret[0] = clamp(ret[0], 0, 1);
       ret[1] = clamp(ret[1], 0, 1);
     }
-    if (this.dtype === DType.Uint32) {
+    if (this.dtype === DType.Int32) {
+      // Keep casts from narrowing wrapped arithmetic to the cast endpoints.
+      if (ret[0] < -0x80000000 || ret[1] > 0x7fffffff) {
+        ret = [-0x80000000, 0x7fffffff];
+      }
+    } else if (this.dtype === DType.Uint32) {
       // Integer arithmetic wraps modulo 2^32. If the mathematical range can
       // cross either uint32 boundary, a single interval cannot describe the
       // wrapped result precisely, so use the full dtype range. Clamping would
@@ -705,7 +725,8 @@ export class AluExp implements FpHashable {
         if (op === AluOp.Add && x === 0) return src[1 - i];
         if (op === AluOp.Sub && i === 1 && x === 0) return src[1 - i];
         if (op === AluOp.Mul && x === 1) return src[1 - i];
-        if (op === AluOp.Mul && x === 0) return AluExp.const(this.dtype, 0);
+        if (op === AluOp.Mul && x === 0 && !isFloatDtype(this.dtype))
+          return AluExp.const(this.dtype, 0);
         if (
           op === AluOp.Idiv &&
           i === 1 &&
@@ -992,11 +1013,11 @@ export class AluExp implements FpHashable {
             (r, i) => r === 0 || (r !== factors[i] && op === AluOp.Mod),
           )
         ) {
-          let quo = AluExp.const(x.dtype, Math.floor(constVal / y.arg));
-          let rem = AluExp.const(
-            x.dtype,
-            Math.floor((constVal % y.arg) / gcdVal),
-          );
+          // Pair the floor quotient with a nonnegative remainder.
+          const constQuotient = Math.floor(constVal / y.arg);
+          const constRemainder = constVal - constQuotient * y.arg;
+          let quo = AluExp.const(x.dtype, constQuotient);
+          let rem = AluExp.const(x.dtype, Math.floor(constRemainder / gcdVal));
 
           for (let i = 0; i < terms.length; i++) {
             if (op === AluOp.Idiv && remainders[i] !== 0) {
@@ -1035,7 +1056,7 @@ export class AluExp implements FpHashable {
                     AluExp.const(x.dtype, Math.floor(y.arg / gcdVal)),
                   ),
                 ),
-                AluExp.const(x.dtype, constVal % gcdVal),
+                AluExp.const(x.dtype, constRemainder % gcdVal),
               ).simplify(cache);
             } else {
               return AluExp.add(
@@ -1110,11 +1131,9 @@ export class AluExp implements FpHashable {
       const y = this.src[1].#evaluate(context, globals, memo);
       switch (this.op) {
         case AluOp.Add:
-          return this.dtype === DType.Bool ? Number(x || y) : x + y;
         case AluOp.Sub:
-          return x - y;
         case AluOp.Mul:
-          return this.dtype === DType.Bool ? Number(x && y) : x * y;
+          return evalTyped[this.op](this.dtype, x, y);
         case AluOp.Idiv:
           return Math.trunc(x / y); // Consistent with signed Mod.
         case AluOp.Mod:
@@ -1459,6 +1478,38 @@ export enum AluOp {
   GlobalIndex = "GlobalIndex", // arg = [gid, len]; src = [bufidx]
   GlobalView = "GlobalView", // arg = [gid, ShapeTracker], src = [indices...]
 }
+
+function toArithmetic(dtype: DType, value: number): number {
+  switch (dtype) {
+    case DType.Int32:
+      return value | 0;
+    case DType.Uint32:
+      return value >>> 0;
+    case DType.Float16:
+      return Math.f16round(value);
+    case DType.Float32:
+      return Math.fround(value);
+    case DType.Bool:
+    case DType.Float64:
+      return value;
+  }
+}
+
+export const evalTyped = {
+  [AluOp.Add](dtype: DType, a: number, b: number): number {
+    if (dtype === DType.Bool) return Number(a || b);
+    return toArithmetic(dtype, toArithmetic(dtype, a) + toArithmetic(dtype, b));
+  },
+  [AluOp.Sub](dtype: DType, a: number, b: number): number {
+    return toArithmetic(dtype, toArithmetic(dtype, a) - toArithmetic(dtype, b));
+  },
+  [AluOp.Mul](dtype: DType, a: number, b: number): number {
+    if (dtype === DType.Bool) return Number(a && b);
+    if (dtype === DType.Int32 || dtype === DType.Uint32)
+      return toArithmetic(dtype, Math.imul(a, b));
+    return toArithmetic(dtype, toArithmetic(dtype, a) * toArithmetic(dtype, b));
+  },
+};
 
 export const AluGroup = {
   Binary: new Set([
