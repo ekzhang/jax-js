@@ -1,6 +1,6 @@
 import { PPrint } from "./pprint";
 import { ShapeTracker } from "./shape";
-import { clamp, FpHash, FpHashable, gcd, strip1 } from "./utils";
+import { clamp, deepEqual, FpHash, FpHashable, gcd, strip1 } from "./utils";
 
 /** A numerical data type for array contents. */
 export enum DType {
@@ -123,6 +123,22 @@ export function dtypedJsArray(dtype: DType, data: number[]): DataArray {
   }
 }
 
+function isIntDtype(dtype: DType): boolean {
+  return dtype === DType.Int32 || dtype === DType.Uint32;
+}
+
+function fitsIntDtype(dtype: DType, value: number): boolean {
+  return (
+    Number.isInteger(value) &&
+    (dtype === DType.Int32
+      ? value >= -0x80000000 && value <= 0x7fffffff
+      : value >= 0 && value <= 0xffffffff)
+  );
+}
+
+type AluSimplification = { source: AluExp; result: AluExp };
+export type AluSimplifyCache = Map<bigint, AluSimplification[]>;
+
 /**
  * Mathematical expression on scalar values.
  *
@@ -134,6 +150,7 @@ export class AluExp implements FpHashable {
   #hash?: bigint;
   #simplified?: AluExp;
   #range?: [number, number];
+  #exactIntegerArithmetic = false;
 
   constructor(
     readonly op: AluOp,
@@ -371,6 +388,47 @@ export class AluExp implements FpHashable {
     state.update(this.getHash());
   }
 
+  /** Compare expression structure after using its fingerprint to find candidates. */
+  equals(other: AluExp): boolean {
+    if (this === other) return true;
+    let seen: Map<AluExp, Set<AluExp>> | undefined;
+    const same = (a: AluExp, b: AluExp): boolean => {
+      if (a === b) return true;
+      if (
+        a.op !== b.op ||
+        a.dtype !== b.dtype ||
+        a.src.length !== b.src.length ||
+        a.getHash() !== b.getHash()
+      )
+        return false;
+
+      if (!Object.is(a.arg, b.arg)) {
+        if (
+          !Array.isArray(a.arg) ||
+          !Array.isArray(b.arg) ||
+          a.arg.length !== b.arg.length
+        )
+          return false;
+        if (a.op === AluOp.GlobalView) {
+          if (!Object.is(a.arg[0], b.arg[0]) || !deepEqual(a.arg[1], b.arg[1]))
+            return false;
+        } else if (!a.arg.every((value, i) => Object.is(value, b.arg[i]))) {
+          return false;
+        }
+      }
+
+      if (a.src.length === 0) return true;
+      seen ??= new Map();
+      let matches = seen.get(a);
+      if (matches?.has(b)) return true;
+      if (!matches) seen.set(a, (matches = new Set()));
+      matches.add(b);
+      return a.src.every((src, i) => same(src, b.src[i]));
+    };
+
+    return same(this, other);
+  }
+
   /** Substitute variables in this AluExp to values. */
   substitute(variables: Record<string, AluExp>): AluExp {
     return this.rewrite((exp) => {
@@ -407,6 +465,18 @@ export class AluExp implements FpHashable {
   #computeRange(): [number, number] {
     if (this.#range !== undefined) return this.#range;
 
+    // Floating-point intervals alone cannot justify folds that drop NaN,
+    // rounding, or the sign of zero.
+    if (isFloatDtype(this.dtype)) {
+      return (this.#range = [-Infinity, Infinity]);
+    }
+
+    const fullRange: [number, number] =
+      this.dtype === DType.Int32
+        ? [-0x80000000, 0x7fffffff]
+        : this.dtype === DType.Uint32
+          ? [0, 0xffffffff]
+          : [0, 1];
     const src = this.src;
     const minMax4 = (f: (a: number, b: number) => number) => {
       const [r1, r2] = [src[0].#computeRange(), src[1].#computeRange()];
@@ -419,49 +489,37 @@ export class AluExp implements FpHashable {
       return [Math.min(...values), Math.max(...values)] as [number, number];
     };
 
-    let ret: [number, number];
+    let ret: [number, number] = fullRange;
     switch (this.op) {
       case AluOp.Add:
         ret = [src[0].min + src[1].min, src[0].max + src[1].max];
+        if (this.dtype === DType.Bool)
+          ret = [Math.min(ret[0], 1), Math.min(ret[1], 1)];
         break;
       case AluOp.Sub:
-        ret = [src[0].min - src[1].max, src[0].max - src[1].min];
+        // Bool subtraction has no corresponding boolean operation.
+        if (this.dtype !== DType.Bool)
+          ret = [src[0].min - src[1].max, src[0].max - src[1].min];
         break;
-      case AluOp.Mul: {
+      case AluOp.Mul:
         ret = minMax4((a, b) => a * b);
         break;
-      }
-      case AluOp.Idiv: {
-        ret = minMax4((a, b) => Math.trunc(a / b));
-        break;
-      }
-      case AluOp.Mod: {
-        // Mod is a bit tricky since it can be negative. Two behaviors:
-        //
-        // - C-style: In JS and WGSL, mod depends on the sign of the dividend.
-        //   Matches int division that truncates to zero.
-        // - Python-style: But in NumPy, JAX, and Python, it's based on the sign
-        //   of the divisor (% or the np.remainder function). Matches floor
-        //   division that rounds towards -inf.
-        //
-        // We're going to use the C-style behavior since it's more common in the
-        // web world and outside of Python. This is a deviation from JAX!
-        let divisorRange = src[1].#computeRange();
-        if (divisorRange[0] <= 0 && divisorRange[1] >= 0) {
-          divisorRange = [0, Math.max(-divisorRange[0], divisorRange[1])];
+      case AluOp.Idiv:
+        if (src[1].min > 0 || src[1].max < 0) {
+          ret = minMax4((a, b) => Math.trunc(a / b));
         }
-        if (divisorRange[1] < 0) {
-          divisorRange = [-divisorRange[1], -divisorRange[0]];
-        }
-        const maxDivisor = isFloatDtype(this.dtype)
-          ? divisorRange[1]
-          : divisorRange[1] - 1;
-        ret = [
-          clamp(src[0].min, -maxDivisor, 0),
-          clamp(src[0].max, 0, maxDivisor),
-        ];
         break;
-      }
+      case AluOp.Mod:
+        if (src[1].min > 0 || src[1].max < 0) {
+          // The sign of the remainder is the sign of the dividend.
+          const maxRemainder =
+            Math.max(Math.abs(src[1].min), Math.abs(src[1].max)) - 1;
+          ret = [
+            clamp(src[0].min, -maxRemainder, 0),
+            clamp(src[0].max, 0, maxRemainder),
+          ];
+        }
+        break;
       case AluOp.Min:
         ret = [
           Math.min(src[0].min, src[1].min),
@@ -474,85 +532,21 @@ export class AluExp implements FpHashable {
           Math.max(src[0].max, src[1].max),
         ];
         break;
-
       case AluOp.BitCount:
-        if (src[0].dtype === DType.Bool) ret = [0, 1];
-        else ret = [0, 8 * byteWidth(src[0].dtype)];
+        ret = [0, 32];
         break;
-
-      case AluOp.Sin:
-        ret = [-1, 1];
-        break;
-      case AluOp.Cos:
-        ret = [-1, 1];
-        break;
-      case AluOp.Asin:
-        ret = [-Math.PI / 2, Math.PI / 2];
-        break;
-      case AluOp.Atan:
-        ret = [-Math.PI / 2, Math.PI / 2];
-        break;
-      case AluOp.Exp:
-        ret = [Math.exp(src[0].min), Math.exp(src[0].max)];
-        break;
-      case AluOp.Log:
-        ret = [Math.log(src[0].min), Math.log(src[0].max)];
-        break;
-      case AluOp.Erf:
-        ret = [erf(src[0].min), erf(src[0].max)];
-        break;
-      case AluOp.Erfc:
-        ret = [erfc(src[0].max), erfc(src[0].min)];
-        break;
-      case AluOp.Sqrt:
-        ret = [Math.sqrt(src[0].min), Math.sqrt(src[0].max)];
-        break;
-      case AluOp.Floor:
-        ret = [Math.floor(src[0].min), Math.floor(src[0].max)];
-        break;
-      case AluOp.Ceil:
-        ret = [Math.ceil(src[0].min), Math.ceil(src[0].max)];
-        break;
-      case AluOp.Reciprocal:
-        if (src[0].min <= 0 && src[0].max >= 0) return [-Infinity, Infinity];
-        ret = [1 / src[0].max, 1 / src[0].min];
-        break;
-      case AluOp.Cast: {
-        // Casts change the dtype.
-        const wasFloat = isFloatDtype(src[0].dtype);
-        const bounded =
-          Number.isFinite(src[0].min) && Number.isFinite(src[0].max);
-        if (this.dtype === DType.Bool) {
-          const canBeZero = src[0].min <= 0 && src[0].max >= 0;
-          const mustBeZero = src[0].min === 0 && src[0].max === 0;
-          ret = mustBeZero ? [0, 0] : canBeZero ? [0, 1] : [1, 1];
-        } else if (this.dtype === DType.Int32) {
-          const a = wasFloat
-            ? clamp(src[0].min, -2147483648, 2147483647) | 0
-            : src[0].min | 0;
-          const b = wasFloat
-            ? clamp(src[0].max, -2147483648, 2147483647) | 0
-            : src[0].max | 0;
-          ret = bounded && a <= b ? [a, b] : [-Infinity, Infinity];
-        } else if (this.dtype === DType.Uint32) {
-          const a = wasFloat
-            ? clamp(src[0].min, 0, 4294967295) >>> 0
-            : src[0].min >>> 0;
-          const b = wasFloat
-            ? clamp(src[0].max, 0, 4294967295) >>> 0
-            : src[0].max >>> 0;
-          ret = bounded && a <= b ? [a, b] : [0, Infinity];
-        } else {
-          ret = [src[0].min, src[0].max];
+      case AluOp.Cast:
+        if (!isFloatDtype(src[0].dtype)) {
+          if (this.dtype === DType.Bool) {
+            const canBeZero = src[0].min <= 0 && src[0].max >= 0;
+            const mustBeZero = src[0].min === 0 && src[0].max === 0;
+            ret = mustBeZero ? [0, 0] : canBeZero ? [0, 1] : [1, 1];
+          } else {
+            // If the input range crosses the target's boundary, casting the
+            // endpoints alone can miss wrapped values in the interior.
+            ret = [src[0].min, src[0].max];
+          }
         }
-        break;
-      }
-
-      case AluOp.Cmplt:
-        ret = [0, 1];
-        break;
-      case AluOp.Cmpne:
-        ret = [0, 1];
         break;
       case AluOp.Where:
         ret = [
@@ -560,52 +554,51 @@ export class AluExp implements FpHashable {
           Math.max(src[1].max, src[2].max),
         ];
         break;
-
       case AluOp.Const:
         ret = [this.arg, this.arg];
         break;
       case AluOp.Special:
         ret = [0, this.arg[1] - 1];
         break;
+    }
 
-      default:
-        ret = [-Infinity, Infinity];
+    const fits = ret[0] >= fullRange[0] && ret[1] <= fullRange[1];
+    if (fits) {
+      // A full type interval can describe the result of wrapping. Record the
+      // stronger fact separately for rewrites that distribute div or mod.
+      this.#exactIntegerArithmetic =
+        (ret !== fullRange ||
+          this.op === AluOp.Variable ||
+          this.op === AluOp.Cmplt ||
+          this.op === AluOp.Cmpne) &&
+        src.every((x) => x.#hasExactIntegerArithmetic());
+      if (this.op === AluOp.Special && ret[1] < ret[0])
+        this.#exactIntegerArithmetic = false;
     }
-    if (isNaN(ret[0]) || isNaN(ret[1])) {
-      ret = [-Infinity, Infinity];
-    }
-    if (this.dtype === DType.Bool) {
-      ret[0] = clamp(ret[0], 0, 1);
-      ret[1] = clamp(ret[1], 0, 1);
-    }
-    if (this.dtype === DType.Uint32) {
-      // Integer arithmetic wraps modulo 2^32. If the mathematical range can
-      // cross either uint32 boundary, a single interval cannot describe the
-      // wrapped result precisely, so use the full dtype range. Clamping would
-      // be unsound: for example, 0 - x was narrowed from [-Infinity, 0] to
-      // [0, 0], causing the simplifier to replace uint32 negation with zero.
-      if (ret[0] < 0 || ret[1] > 0xffffffff) {
-        ret = [0, 0xffffffff];
-      }
-    }
-    this.#range = ret;
-    return ret;
+    return (this.#range = fits ? ret : fullRange);
   }
+
+  #hasExactIntegerArithmetic(): boolean {
+    this.#computeRange();
+    return this.#exactIntegerArithmetic;
+  }
+
   get min(): number {
     return this.#computeRange()[0];
   }
+
   get max(): number {
     return this.#computeRange()[1];
   }
 
   /** Largest known integer that divides self. */
   constFactor(): number {
-    if (this.op === AluOp.Const) return Math.abs(this.arg);
+    if (this.op === AluOp.Const) return Math.abs(this.arg) || 1;
     if (this.op === AluOp.Add)
       return gcd(this.src[0].constFactor(), this.src[1].constFactor());
     if (this.op === AluOp.Mul) {
-      if (this.src[0].op === AluOp.Const) return Math.abs(this.src[0].arg);
-      if (this.src[1].op === AluOp.Const) return Math.abs(this.src[1].arg);
+      if (this.src[0].op === AluOp.Const) return Math.abs(this.src[0].arg) || 1;
+      if (this.src[1].op === AluOp.Const) return Math.abs(this.src[1].arg) || 1;
     }
     return 1;
   }
@@ -615,8 +608,11 @@ export class AluExp implements FpHashable {
    */
   divides(v: number): AluExp | null {
     if (v === 1) return this;
+    if (!this.#hasExactIntegerArithmetic()) return null;
     if (this.op === AluOp.Const && this.arg % v === 0)
-      return AluExp.const(this.dtype, this.arg / v);
+      return fitsIntDtype(this.dtype, this.arg / v)
+        ? AluExp.const(this.dtype, this.arg / v)
+        : null;
     if (this.op === AluOp.Add) {
       const a = this.src[0].divides(v);
       if (a !== null) {
@@ -657,62 +653,73 @@ export class AluExp implements FpHashable {
    * Simplify the expression by replacing any known patterns and deduping
    * identical subexpressions.
    */
-  simplify(cache: Map<bigint, AluExp> = new Map()): AluExp {
-    // Cache this to avoid recomputing if it's called twice.
+  simplify(cache: AluSimplifyCache = new Map()): AluExp {
     if (this.#simplified !== undefined) return this.#simplified;
 
-    // Extra help: `cache` can be used across multiple calls.
     const hash = this.getHash();
-    const prevCachedValue = cache.get(hash);
-    if (prevCachedValue !== undefined) {
-      return (this.#simplified = prevCachedValue);
-    }
+    const existing = cache.get(hash)?.find(({ source }) => this.equals(source));
+    if (existing) return (this.#simplified = existing.result);
+
     const simplified = this.#simplifyInner(cache);
     const simplifiedHash = simplified.getHash();
-    const prevSimplified = cache.get(simplifiedHash);
-    if (prevSimplified !== undefined) {
-      cache.set(hash, prevSimplified);
-      this.#simplified = prevSimplified;
-      return prevSimplified;
-    } else {
-      cache.set(hash, simplified);
-      cache.set(simplifiedHash, simplified);
-      this.#simplified = simplified;
-      return simplified;
+    const bucket = cache.get(simplifiedHash) ?? [];
+    const canonical = bucket.find(({ source }) => simplified.equals(source));
+    const result = canonical?.result ?? simplified;
+    if (!canonical) {
+      bucket.push({ source: simplified, result });
+      cache.set(simplifiedHash, bucket);
     }
+    if (this !== simplified) {
+      const sourceBucket = cache.get(hash) ?? [];
+      sourceBucket.push({ source: this, result });
+      cache.set(hash, sourceBucket);
+    }
+    return (this.#simplified = result);
   }
 
-  #simplifyInner(cache: Map<bigint, AluExp>): AluExp {
+  #simplifyInner(cache: AluSimplifyCache): AluExp {
     const src = this.src.map((x) => x.simplify(cache));
     const { op } = this;
 
-    // Constant folding.
-    if (src.every((x) => x.op === AluOp.Const) && !AluGroup.Variable.has(op)) {
-      const newExp = new AluExp(op, this.dtype, src, this.arg);
-      return AluExp.const(this.dtype, newExp.evaluate({}));
+    // Fold integer/boolean operations when their semantics agree across
+    // backends. In particular, leave exceptional division and floating-point
+    // arithmetic (including conversions) to the target backend.
+    const integerResult = !isFloatDtype(this.dtype);
+    if (
+      op !== AluOp.Const &&
+      op !== AluOp.BitShift &&
+      integerResult &&
+      !AluGroup.Variable.has(op) &&
+      src.every((x) => x.op === AluOp.Const && !isFloatDtype(x.dtype)) &&
+      ((op !== AluOp.Idiv && op !== AluOp.Mod) ||
+        (src[1].arg !== 0 &&
+          (op !== AluOp.Idiv ||
+            src[0].arg !== -0x80000000 ||
+            src[1].arg !== -1)))
+    ) {
+      const exp = new AluExp(op, this.dtype, src, this.arg);
+      return AluExp.const(this.dtype, exp.evaluate({}));
     }
 
-    // Replacing empty ranges with constants, if non-constant.
-    if (op !== AluOp.Const && this.min === this.max) {
+    // A singleton interval is sufficient only if evaluating the expression
+    // cannot overflow, trap, or produce a floating-point exceptional value.
+    if (
+      op !== AluOp.Const &&
+      this.#hasExactIntegerArithmetic() &&
+      this.min === this.max
+    ) {
       return AluExp.const(this.dtype, this.min);
     }
 
-    // Folding with one item being a no-op constant.
-    if (AluGroup.Binary.has(op)) {
+    // Integral identities that preserve evaluation of the other operand.
+    if (integerResult && (AluGroup.Binary.has(op) || op === AluOp.Cmpne)) {
       for (let i = 0; i < 2; i++) {
-        if (src[i].op !== AluOp.Const) continue;
+        if (src[i].op !== AluOp.Const || isFloatDtype(src[i].dtype)) continue;
         const x = src[i].arg;
         if (op === AluOp.Add && x === 0) return src[1 - i];
         if (op === AluOp.Sub && i === 1 && x === 0) return src[1 - i];
         if (op === AluOp.Mul && x === 1) return src[1 - i];
-        if (op === AluOp.Mul && x === 0) return AluExp.const(this.dtype, 0);
-        if (
-          op === AluOp.Idiv &&
-          i === 1 &&
-          x === 1 &&
-          !isFloatDtype(this.dtype)
-        )
-          return src[1 - i];
+        if (op === AluOp.Idiv && i === 1 && x === 1) return src[0];
         if (op === AluOp.Cmpne && src[i].dtype === DType.Bool && x === 0)
           return src[1 - i];
       }
@@ -720,7 +727,11 @@ export class AluExp implements FpHashable {
 
     // x + (-1 * y) => x - y
     // x - (-1 * y) => x + y
-    if ((op === AluOp.Add || op === AluOp.Sub) && src[1].op === AluOp.Mul) {
+    if (
+      isIntDtype(this.dtype) &&
+      (op === AluOp.Add || op === AluOp.Sub) &&
+      src[1].op === AluOp.Mul
+    ) {
       const [a, b] = src[1].src;
       const opNeg = op === AluOp.Add ? AluOp.Sub : AluOp.Add;
       if (a.op === AluOp.Const && a.arg === -1) {
@@ -730,35 +741,40 @@ export class AluExp implements FpHashable {
       }
     }
 
-    // Where(cond, 1, 0) => Cast(ty, cond)
-    if (
-      op === AluOp.Where &&
-      src.slice(1).every((s, i) => s.op === AluOp.Const && s.arg === 1 - i)
-    ) {
-      return AluExp.cast(this.dtype, src[0]);
-    }
-
-    // No-op comparisons.
-    if (op === AluOp.Cmplt) {
-      if (src[0].min >= src[1].max) return AluExp.const(DType.Bool, false);
-      if (src[0].max < src[1].min) return AluExp.const(DType.Bool, true);
-    }
-    if (op === AluOp.Cmpne) {
-      if (src[0].max < src[1].min || src[0].min > src[1].max)
-        return AluExp.const(DType.Bool, true);
-    }
-
-    // Select statement.
     if (op === AluOp.Where) {
-      if (src[0].max === 0) return src[2];
-      if (src[0].min === 1) return src[1];
+      // Where(cond, 1, 0) => Cast(ty, cond)
+      if (
+        src
+          .slice(1)
+          .every((s, i) => s.op === AluOp.Const && Object.is(s.arg, 1 - i))
+      ) {
+        return AluExp.cast(this.dtype, src[0]);
+      }
+      if (src[0].#hasExactIntegerArithmetic()) {
+        if (src[0].max === 0) return src[2];
+        if (src[0].min === 1) return src[1];
+      }
+    }
+
+    if (
+      (op === AluOp.Cmplt || op === AluOp.Cmpne) &&
+      src.every((x) => x.#hasExactIntegerArithmetic())
+    ) {
+      if (op === AluOp.Cmplt && src[0].min >= src[1].max)
+        return AluExp.bool(false);
+      if (
+        src[0].max < src[1].min ||
+        (op === AluOp.Cmpne && src[0].min > src[1].max)
+      )
+        return AluExp.bool(true);
     }
 
     // Shape tracking ops (can be made more general).
     // x % C => x
     if (
       op === AluOp.Mod &&
-      src[1].op === AluOp.Const &&
+      src[1].#isConstInt() &&
+      src[0].#hasExactIntegerArithmetic() &&
       src[0].min >= 0 &&
       src[0].max < src[1].arg
     ) {
@@ -777,7 +793,7 @@ export class AluExp implements FpHashable {
         return AluExp.mod(
           src[0].src[0],
           AluExp.const(this.dtype, Math.min(A, B)),
-        ).simplify();
+        ).simplify(cache);
       }
     }
     // (...) * A + (...) % A
@@ -787,6 +803,7 @@ export class AluExp implements FpHashable {
       src[0].src[1].#isConstInt() &&
       src[1].op === AluOp.Mod &&
       src[1].src[1].#isConstInt() &&
+      src[1].src[1].arg > 0 &&
       src[0].src[1].arg === src[1].src[1].arg
     ) {
       const [mul, mod] = src;
@@ -803,14 +820,23 @@ export class AluExp implements FpHashable {
       // (x/A % B) * A + x % A => x % (A*B)
       if (mul.src[0].op === AluOp.Mod) {
         const [x, y] = mul.src[0].src;
-        if (check(x)) {
-          return AluExp.mod(mod.src[0], AluExp.mul(mod.src[1], y)).simplify(
-            cache,
-          );
+        if (check(x) && y.#isConstInt() && y.arg > 0) {
+          const divisor = mod.src[1].arg * y.arg;
+          if (fitsIntDtype(this.dtype, divisor)) {
+            return AluExp.mod(
+              mod.src[0],
+              AluExp.const(this.dtype, divisor),
+            ).simplify(cache);
+          }
         }
       }
     }
-    if (op === AluOp.Idiv && src[1].#isConstInt()) {
+    if (
+      op === AluOp.Idiv &&
+      src[1].#isConstInt() &&
+      src[1].arg > 0 &&
+      src[0].#hasExactIntegerArithmetic()
+    ) {
       const [numer, denom] = src;
       const B: number = denom.arg;
       for (let i = 0; i < 2; i++) {
@@ -839,7 +865,9 @@ export class AluExp implements FpHashable {
               const y = numer.src[1 - j];
               const yOverB = y.divides(B);
               if (yOverB !== null) {
-                return AluExp.add(ret, yOverB).simplify(cache);
+                const sum = AluExp.add(ret, yOverB);
+                if (sum.#hasExactIntegerArithmetic())
+                  return sum.simplify(cache);
               } else if (
                 B > 0 &&
                 ((ret.min >= 0 && y.min >= 0) || (ret.max <= 0 && y.max <= 0))
@@ -848,10 +876,9 @@ export class AluExp implements FpHashable {
                 // `q + trunc(y/B)`. Counterexample: q=1, y=-1, B=2.
                 // Only split non-exact y terms when the quotient and fractional part
                 // cannot point in opposite directions.
-                return AluExp.add(
-                  ret,
-                  AluExp.idiv(y, AluExp.const(ret.dtype, B)),
-                ).simplify(cache);
+                const sum = AluExp.add(ret, AluExp.idiv(y, denom));
+                if (sum.#hasExactIntegerArithmetic())
+                  return sum.simplify(cache);
               }
             }
           }
@@ -862,6 +889,7 @@ export class AluExp implements FpHashable {
       op === AluOp.Mod &&
       src[1].#isConstInt() &&
       src[1].arg > 0 &&
+      src[0].#hasExactIntegerArithmetic() &&
       src[0].min >= 0
     ) {
       const [numer, denom] = src;
@@ -877,7 +905,7 @@ export class AluExp implements FpHashable {
             }
           }
           for (let j = 0; j < 2; j++) {
-            // (x + A * y) * B => x % B, when x>=0, A%B === 0
+            // (x + A * y) % B => x % B, when x>=0, A%B === 0
             if (
               numer.src[i].op === AluOp.Mul &&
               numer.src[i].src[j].#isConstInt()
@@ -911,7 +939,7 @@ export class AluExp implements FpHashable {
     // - (x + A) + y -> (x + y) + A
     // - (x + A) + B -> x + (A + B)
     const commOps = [AluOp.Add, AluOp.Mul, AluOp.Max, AluOp.Min];
-    if (commOps.includes(op)) {
+    if (integerResult && commOps.includes(op)) {
       const p = (a: AluExp, b: AluExp) => new AluExp(op, this.dtype, [a, b]);
       if (src[0].op === AluOp.Const) {
         // A + x -> x + A
@@ -937,7 +965,12 @@ export class AluExp implements FpHashable {
     // These are needed to simplify expressions like pool() in conv2d. Otherwise
     // the resulting expressions are complex and slow.
 
-    if ((op === AluOp.Mod || op === AluOp.Idiv) && src[1].#isConstInt()) {
+    if (
+      (op === AluOp.Mod || op === AluOp.Idiv) &&
+      src[1].#isConstInt() &&
+      src[1].arg > 0 &&
+      src[0].#hasExactIntegerArithmetic()
+    ) {
       const [x, y] = src;
 
       // divide_by_gcd: https://github.com/tinygrad/tinygrad/blob/d1224a7/tinygrad/uop/symbolic.py#L190
@@ -946,8 +979,9 @@ export class AluExp implements FpHashable {
         const terms: AluExp[] = [];
         for (const u of x.splitOp(AluOp.Add)) {
           const factor = u.constFactor();
-          factors.push(factor);
-          terms.push(u.divides(factor)!);
+          const divided = u.divides(factor);
+          factors.push(divided ? factor : 1);
+          terms.push(divided ?? u);
         }
         const g = gcd(y.arg, ...factors);
         if (g !== 1) {
@@ -961,12 +995,12 @@ export class AluExp implements FpHashable {
           ]);
           if (op === AluOp.Mod)
             ret = AluExp.mul(ret, AluExp.const(this.dtype, g));
-          return ret.simplify(cache);
+          if (ret.#hasExactIntegerArithmetic()) return ret.simplify(cache);
         }
       }
 
       // simplify_remainder: https://github.com/tinygrad/tinygrad/blob/d1224a7/tinygrad/uop/symbolic.py#L208
-      if (y.arg > 0 && x.min >= 0) {
+      if (x.min >= 0) {
         let [xNoConst, constVal] = [x, 0];
         if (x.op === AluOp.Add && x.src[1].op === AluOp.Const) {
           [xNoConst, constVal] = [x.src[0], x.src[1].arg];
@@ -986,17 +1020,18 @@ export class AluExp implements FpHashable {
         const gcdVal = remainders.reduce((g, r) => gcd(g, r), y.arg);
 
         if (
-          constVal % y.arg !== constVal ||
-          gcdVal !== 1 ||
-          remainders.some(
-            (r, i) => r === 0 || (r !== factors[i] && op === AluOp.Mod),
-          )
+          factors.every((factor) => fitsIntDtype(x.dtype, factor)) &&
+          (constVal % y.arg !== constVal ||
+            gcdVal !== 1 ||
+            remainders.some(
+              (r, i) => r === 0 || (r !== factors[i] && op === AluOp.Mod),
+            ))
         ) {
-          let quo = AluExp.const(x.dtype, Math.floor(constVal / y.arg));
-          let rem = AluExp.const(
-            x.dtype,
-            Math.floor((constVal % y.arg) / gcdVal),
-          );
+          // Match the floor quotient to a nonnegative remainder.
+          const constQuotient = Math.floor(constVal / y.arg);
+          const constRemainder = constVal - constQuotient * y.arg;
+          let quo = AluExp.const(x.dtype, constQuotient);
+          let rem = AluExp.const(x.dtype, Math.floor(constRemainder / gcdVal));
 
           for (let i = 0; i < terms.length; i++) {
             if (op === AluOp.Idiv && remainders[i] !== 0) {
@@ -1022,30 +1057,19 @@ export class AluExp implements FpHashable {
             }
           }
 
-          // TODO: This is a pretty sad optimization barrier for padded
-          // operations and convolutions, as a result of the behavior of Mod
-          // handling negative numbers strangely. We should try to fix.
           if (rem.min >= 0) {
-            if (op === AluOp.Mod) {
-              return AluExp.add(
-                AluExp.mul(
-                  AluExp.const(x.dtype, gcdVal),
-                  AluExp.mod(
-                    rem,
-                    AluExp.const(x.dtype, Math.floor(y.arg / gcdVal)),
-                  ),
-                ),
-                AluExp.const(x.dtype, constVal % gcdVal),
-              ).simplify(cache);
-            } else {
-              return AluExp.add(
-                AluExp.idiv(
-                  rem,
-                  AluExp.const(x.dtype, Math.floor(y.arg / gcdVal)),
-                ),
-                quo,
-              ).simplify(cache);
-            }
+            const divisor = AluExp.const(x.dtype, y.arg / gcdVal);
+            const ret =
+              op === AluOp.Mod
+                ? AluExp.add(
+                    AluExp.mul(
+                      AluExp.const(x.dtype, gcdVal),
+                      AluExp.mod(rem, divisor),
+                    ),
+                    AluExp.const(x.dtype, constRemainder % gcdVal),
+                  )
+                : AluExp.add(AluExp.idiv(rem, divisor), quo);
+            if (ret.#hasExactIntegerArithmetic()) return ret.simplify(cache);
           }
         }
       }
@@ -1108,17 +1132,32 @@ export class AluExp implements FpHashable {
     if (AluGroup.Binary.has(this.op) || AluGroup.Compare.has(this.op)) {
       const x = this.src[0].#evaluate(context, globals, memo);
       const y = this.src[1].#evaluate(context, globals, memo);
+      const integer = isIntDtype(this.dtype);
+      const castInteger = (value: number) =>
+        this.dtype === DType.Int32 ? value | 0 : value >>> 0;
       switch (this.op) {
         case AluOp.Add:
-          return this.dtype === DType.Bool ? Number(x || y) : x + y;
+          return integer
+            ? castInteger(x + y)
+            : this.dtype === DType.Bool
+              ? Number(x || y)
+              : x + y;
         case AluOp.Sub:
-          return x - y;
+          return integer ? castInteger(x - y) : x - y;
         case AluOp.Mul:
-          return this.dtype === DType.Bool ? Number(x && y) : x * y;
-        case AluOp.Idiv:
-          return Math.trunc(x / y); // Consistent with signed Mod.
-        case AluOp.Mod:
-          return x % y;
+          return integer
+            ? castInteger(Math.imul(x, y))
+            : this.dtype === DType.Bool
+              ? Number(x && y)
+              : x * y;
+        case AluOp.Idiv: {
+          const value = Math.trunc(x / y); // Consistent with signed Mod.
+          return integer && y !== 0 ? castInteger(value) : value;
+        }
+        case AluOp.Mod: {
+          const value = x % y;
+          return integer && y !== 0 ? castInteger(value) : value;
+        }
         case AluOp.Min:
           return Math.min(x, y);
         case AluOp.Max:
@@ -1541,6 +1580,24 @@ export class Kernel implements FpHashable {
     readonly reduction?: Reduction,
   ) {
     this.exp = exp.simplify();
+  }
+
+  equals(other: Kernel): boolean {
+    if (this === other) return true;
+    const a = this.reduction;
+    const b = other.reduction;
+    return (
+      this.nargs === other.nargs &&
+      this.size === other.size &&
+      this.exp.equals(other.exp) &&
+      (a === b ||
+        (a !== undefined &&
+          b !== undefined &&
+          a.dtype === b.dtype &&
+          a.op === b.op &&
+          a.size === b.size &&
+          a.epilogue.equals(b.epilogue)))
+    );
   }
 
   hash(state: FpHash): void {

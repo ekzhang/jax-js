@@ -258,19 +258,24 @@ type JitValue =
   | { type: "exp"; exp: AluExp; args: JitId[] } // Expression, lazily fused
   | { type: "red"; exp: AluExp; reduction: Reduction; args: JitId[] }; // Reduction + epilogue
 
-const jitCompileCache = new Map<string, JitProgram>();
+const jitCompileCache = new Map<
+  string,
+  { source: Jaxpr; program: JitProgram }[]
+>();
 
-export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
-  const cacheKey = backend.type + "," + FpHash.hash(jaxpr);
-
-  const cached = jitCompileCache.get(cacheKey);
-  if (cached) return cached;
+export function jitCompile(backend: Backend, source: Jaxpr): JitProgram {
+  const cacheKey = backend.type + "," + FpHash.hash(source);
+  const bucket = jitCompileCache.get(cacheKey);
+  const cached = bucket?.find(
+    (entry) => entry.program.backend === backend && entry.source.equals(source),
+  );
+  if (cached) return cached.program;
 
   if (DEBUG >= 1) {
-    console.info("=========== JIT Compile ===========\n" + jaxpr.toString());
+    console.info("=========== JIT Compile ===========\n" + source.toString());
   }
 
-  jaxpr = jaxpr.flatten().simplify();
+  const jaxpr = source.flatten().simplify();
   const nargs = jaxpr.inBinders.length;
   const builder = new JitProgramBuilder(backend, nargs);
 
@@ -464,7 +469,8 @@ export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
 
   const jp = new JitProgram(backend, builder.steps, range(0, nargs), outputIds);
   if (DEBUG >= 4) console.info(jp.toString());
-  jitCompileCache.set(cacheKey, jp);
+  if (bucket) bucket.push({ source, program: jp });
+  else jitCompileCache.set(cacheKey, [{ source, program: jp }]);
   return jp;
 }
 

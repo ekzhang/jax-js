@@ -84,12 +84,25 @@ export class Lit {
 
 export type Atom = Var | Lit;
 
-function atomIsLit(
-  atom: Atom,
-  literal?: number | boolean,
-): atom is Lit & boolean {
+function equalParams(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (a instanceof Jaxpr) return b instanceof Jaxpr && a.equals(b);
+  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+  const prototype = Object.getPrototypeOf(a);
+  if (prototype !== Object.getPrototypeOf(b)) return false;
+  if (globalThis.Array.isArray(a)) {
+    if (!globalThis.Array.isArray(b) || a.length !== b.length) return false;
+  } else if (prototype !== Object.prototype && prototype !== null) {
+    return false;
+  }
+  const entries = Object.entries(a);
   return (
-    atom instanceof Lit && (literal === undefined || atom.value === literal)
+    entries.length === Object.keys(b).length &&
+    entries.every(
+      ([key, value]) =>
+        Object.hasOwn(b, key) &&
+        equalParams(value, (b as Record<string, unknown>)[key]),
+    )
   );
 }
 
@@ -250,10 +263,52 @@ export class Jaxpr implements FpHashable {
     state.update(this.getHash());
   }
 
+  /** Checks that the typed computations agree up to renaming bound variables. */
+  equals(other: Jaxpr): boolean {
+    if (this === other) return true;
+    if (
+      this.inBinders.length !== other.inBinders.length ||
+      this.eqns.length !== other.eqns.length ||
+      this.outs.length !== other.outs.length
+    )
+      return false;
+
+    const bindings = new Map<Var, Var>();
+    const equalAvals = (a: ShapedArray, b: ShapedArray) =>
+      a.dtype === b.dtype && a.weakType === b.weakType && a.equals(b);
+    const bind = (a: Var, b: Var) => {
+      if (!equalAvals(a.aval, b.aval)) return false;
+      bindings.set(a, b);
+      return true;
+    };
+    const equalAtoms = (a: Atom, b: Atom) =>
+      a instanceof Var
+        ? bindings.get(a) === b
+        : b instanceof Lit &&
+          Object.is(a.value, b.value) &&
+          equalAvals(a.aval, b.aval);
+
+    if (!this.inBinders.every((v, i) => bind(v, other.inBinders[i])))
+      return false;
+    for (let i = 0; i < this.eqns.length; i++) {
+      const a = this.eqns[i];
+      const b = other.eqns[i];
+      if (
+        a.primitive !== b.primitive ||
+        a.inputs.length !== b.inputs.length ||
+        a.outBinders.length !== b.outBinders.length ||
+        !equalParams(a.params, b.params) ||
+        !a.inputs.every((v, j) => equalAtoms(v, b.inputs[j])) ||
+        !a.outBinders.every((v, j) => bind(v, b.outBinders[j]))
+      )
+        return false;
+    }
+    return this.outs.every((v, i) => equalAtoms(v, other.outs[i]));
+  }
+
   /**
    * Produce a simplified Jaxpr with basic optimizations applied.
    *  - Trim away unused variables.
-   *  - Fold away *1, *0, or +0 operations against literals.
    *  - Remove no-op movement operations.
    */
   simplify(): Jaxpr {
@@ -265,59 +320,7 @@ export class Jaxpr implements FpHashable {
       );
       const eqn = new JaxprEqn(e.primitive, inputs, e.params, e.outBinders);
 
-      if (eqn.primitive === Primitive.Add) {
-        const [a, b] = inputs;
-        const c = eqn.outBinders[0];
-        if (atomIsLit(a, 0)) {
-          context.set(c, b);
-        } else if (atomIsLit(b, 0)) {
-          context.set(c, a);
-        } else if (atomIsLit(a) && atomIsLit(b)) {
-          context.set(
-            c,
-            new Lit(
-              promoteAvals(a.aval, b.aval),
-              a.dtype === DType.Bool
-                ? Math.min(a.value + b.value, 1) // Special case: Bool ||
-                : a.value + b.value,
-            ),
-          );
-        } else {
-          newEqns.push(eqn);
-        }
-      } else if (eqn.primitive === Primitive.Neg) {
-        const [a] = inputs;
-        const c = eqn.outBinders[0];
-        if (atomIsLit(a)) {
-          context.set(c, new Lit(a.aval, -a.value));
-        } else {
-          newEqns.push(eqn);
-        }
-      } else if (eqn.primitive === Primitive.Mul) {
-        const [a, b] = inputs;
-        const c = eqn.outBinders[0];
-        // TODO: handle *0 once we have shaped zero arrays
-        if (atomIsLit(a, 1)) {
-          context.set(c, b);
-        } else if (atomIsLit(b, 1)) {
-          context.set(c, a);
-        } else if (atomIsLit(a) && atomIsLit(b)) {
-          context.set(
-            c,
-            new Lit(promoteAvals(a.aval, b.aval), a.value * b.value),
-          );
-        } else {
-          newEqns.push(eqn);
-        }
-      } else if (eqn.primitive === Primitive.Idiv) {
-        const [a, b] = inputs;
-        const c = eqn.outBinders[0];
-        if (atomIsLit(b, 1) && !isFloatDtype(a.aval.dtype)) {
-          context.set(c, a);
-        } else {
-          newEqns.push(eqn);
-        }
-      } else if (
+      if (
         ((eqn.primitive === Primitive.Broadcast ||
           eqn.primitive === Primitive.Reshape) &&
           deepEqual(eqn.params.shape, eqn.inputs[0].aval.shape)) ||

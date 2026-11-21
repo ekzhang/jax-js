@@ -372,3 +372,96 @@ test("AluExp.evaluate does not evaluate the untaken where branch", () => {
   expect(e.evaluate({ idx: 0 }, globals)).toBe(10);
   expect(e.evaluate({ idx: 3 }, globals)).toBe(-1);
 });
+
+test("AluExp range analysis handles a divisor interval that crosses zero", () => {
+  const x = AluExp.special(DType.Int32, "x", 2);
+  const magnitude = AluExp.add(x, AluExp.i32(1));
+  const divisor = AluExp.where(
+    AluExp.variable(DType.Bool, "positive"),
+    magnitude,
+    AluExp.sub(AluExp.i32(0), magnitude),
+  );
+  const quotient = AluExp.idiv(AluExp.i32(1), divisor).simplify();
+
+  expect(quotient.evaluate({ x: 0, positive: true })).toBe(1);
+  expect(quotient.evaluate({ x: 0, positive: false })).toBe(-1);
+});
+
+test("AluExp range analysis preserves signed overflow and casts", () => {
+  const i = AluExp.special(DType.Int32, "i", 2);
+  const overflow = AluExp.add(i, AluExp.i32(0x7fffffff));
+  const negative = AluExp.cmplt(overflow, AluExp.i32(0)).simplify();
+  expect(negative.evaluate({ i: 1 })).toBe(1);
+
+  const x = AluExp.special(DType.Int32, "x", 0x80000000);
+  const cast = AluExp.cast(DType.Uint32, AluExp.mul(x, AluExp.i32(3)));
+  const remainder = AluExp.mod(cast, AluExp.u32(0x80000000)).simplify();
+  expect(remainder.evaluate({ x: 0x40000000 })).toBe(0x40000000);
+});
+
+test("AluExp evaluates and folds multiplication with 32-bit wrapping", () => {
+  const u = AluExp.u32(0xffffffff);
+  const square = AluExp.mul(u, u);
+  expect(square.evaluate({})).toBe(1);
+  expect(square.resolve()).toBe(1);
+
+  const x = AluExp.variable(DType.Uint32, "x");
+  const two = AluExp.u32(2);
+  const expression = AluExp.idiv(AluExp.mul(x, two), two).simplify();
+  expect(expression.evaluate({ x: 0x80000000 })).toBe(0);
+});
+
+test("AluExp does not combine remainder divisors when their product wraps", () => {
+  const a = AluExp.i32(65537);
+  const x = AluExp.variable(DType.Int32, "x");
+  const nested = AluExp.mod(AluExp.idiv(x, a), a);
+  const expression = AluExp.add(
+    AluExp.mul(nested, a),
+    AluExp.mod(x, a),
+  ).simplify();
+  expect(expression.evaluate({ x: 200000 })).toBe(200000);
+});
+
+test("AluExp simplifies nonnegative indices with negative offsets", () => {
+  const a = AluExp.special(DType.Int32, "a", 3);
+  const b = AluExp.special(DType.Int32, "b", 4);
+  const divisor = AluExp.i32(8);
+  const numerator = AluExp.add(
+    AluExp.add(
+      AluExp.mul(a, divisor),
+      AluExp.mul(AluExp.max(b, AluExp.i32(1)), AluExp.i32(2)),
+    ),
+    AluExp.i32(-1),
+  );
+  const quotient = AluExp.idiv(numerator, divisor).simplify();
+  const remainder = AluExp.mod(numerator, divisor).simplify();
+  for (let a = 0; a < 3; a++) {
+    for (let b = 0; b < 4; b++) {
+      expect(quotient.evaluate({ a, b })).toBe(a);
+      expect(remainder.evaluate({ a, b })).toBe(2 * Math.max(b, 1) - 1);
+    }
+  }
+});
+
+test("AluExp preserves floating-point order and NaN", () => {
+  const x = AluExp.variable(DType.Float64, "x");
+  const big = 2 ** 53;
+  const sum = AluExp.add(
+    AluExp.add(x, AluExp.f64(big)),
+    AluExp.f64(-big),
+  ).simplify();
+  expect(sum.evaluate({ x: 1 })).toBe(0);
+
+  const product = AluExp.mul(x, AluExp.f64(0)).simplify();
+  expect(product.evaluate({ x: Infinity })).toBeNaN();
+
+  const cmp = AluExp.cmplt(AluExp.f64(-1), AluExp.exp(x)).simplify();
+  expect(cmp.evaluate({ x: NaN })).toBe(0);
+});
+
+test("AluExp compares cache entries structurally after fingerprint collisions", () => {
+  const zero = AluExp.f64(0);
+  const other = AluExp.f64(3189052130706901);
+  expect(zero.getHash()).toBe(other.getHash());
+  expect(AluExp.sub(zero, other).simplify().evaluate({})).toBe(-other.arg);
+});
