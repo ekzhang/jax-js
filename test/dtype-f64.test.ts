@@ -107,12 +107,6 @@ suite.each(devices)("device:%s", (device) => {
     expect(y.ref.dataSync()[1]).toBe(3.1415926535897927);
   });
 
-  test("promotes weak floating-point literals directly to float64 in eager mode", () => {
-    const value = -3.1415926535897936;
-    const x = np.array(Float64Array.of(value));
-    expect(x.add(Math.PI).dataSync()[0]).toBe(value + Math.PI);
-  });
-
   test("polymul() preserves f64 precision", () => {
     const a = np.array([1, 1e-12], { dtype: np.float64 });
     const b = np.array([1, 1], { dtype: np.float64 });

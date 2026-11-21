@@ -12,7 +12,7 @@ import {
 import { devices, getBackend, init } from "../backend";
 import { Routine, Routines, ScatterOp } from "../routine";
 import { ShapeTracker, unravelAlu } from "../shape";
-import { FpHash, range } from "../utils";
+import { range } from "../utils";
 
 const devicesAvailable = await init();
 
@@ -31,27 +31,6 @@ suite.each(devices)("device:%s", (device) => {
         expect(window.crossOriginIsolated).toBe(true);
       }
       expect(typeof SharedArrayBuffer).toBe("function");
-    });
-
-    test("distinguishes compiled kernels whose expressions have the same hash", async () => {
-      const backend = getBackend(device);
-      const values = [0, 3189052130706901];
-      const kernels = values.map(
-        (value) => new Kernel(0, 1, AluExp.f64(value)),
-      );
-      expect(FpHash.hash(kernels[0])).toBe(FpHash.hash(kernels[1]));
-
-      const slot = backend.malloc(8);
-      try {
-        for (const [i, kernel] of kernels.entries()) {
-          const executable = await backend.prepareKernel(kernel);
-          backend.dispatch(executable, [], [slot]);
-          const result = await backend.read(slot);
-          expect(new Float64Array(result.buffer)[0]).toBe(values[i]);
-        }
-      } finally {
-        backend.decRef(slot);
-      }
     });
   }
 

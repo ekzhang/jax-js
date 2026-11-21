@@ -29,16 +29,16 @@ ${cpuRoutineJSForWorkers()}
 let memory = null;
 
 const kernelLru = new Map();
-function kernelFunc(kernelId, module) {
-  let func = kernelLru.get(kernelId);
+function kernelFunc(kernelHash, module) {
+  let func = kernelLru.get(kernelHash);
   if (func !== undefined) {
-    kernelLru.delete(kernelId);
-    kernelLru.set(kernelId, func);
+    kernelLru.delete(kernelHash);
+    kernelLru.set(kernelHash, func);
     return func;
   }
   const instance = new WebAssembly.Instance(module, { env: { memory } });
   func = instance.exports.kernel;
-  kernelLru.set(kernelId, func);
+  kernelLru.set(kernelHash, func);
   if (kernelLru.size > ${MAX_CACHED_KERNELS_PER_WORKER}) {
     kernelLru.delete(kernelLru.keys().next().value);
   }
@@ -54,8 +54,8 @@ self.onmessage = (e) => {
   }
   try {
     if (msg.type === "kernel") {
-      const { kernelId, module, ptrs, begin, end } = msg;
-      kernelFunc(kernelId, module)(...ptrs, begin, end);
+      const { kernelHash, module, ptrs, begin, end } = msg;
+      kernelFunc(kernelHash, module)(...ptrs, begin, end);
     } else if (msg.type === "routine") {
       const inputs = msg.inputs.map(({ ptr, size }) =>
         new Uint8Array(memory.buffer, ptr, size)
@@ -147,7 +147,7 @@ export class WasmWorkerPool {
    * which is guaranteed to be monotonically increasing.
    */
   dispatch(
-    kernelId: string,
+    kernelHash: string,
     module: WebAssembly.Module,
     ptrs: number[],
     size: number,
@@ -156,7 +156,7 @@ export class WasmWorkerPool {
   ): bigint {
     return this.#enqueue(() =>
       this.#dispatchNow(
-        kernelId,
+        kernelHash,
         module,
         ptrs,
         size,
@@ -203,7 +203,7 @@ export class WasmWorkerPool {
   }
 
   async #dispatchNow(
-    kernelId: string,
+    kernelHash: string,
     module: WebAssembly.Module,
     ptrs: number[],
     size: number,
@@ -230,7 +230,7 @@ export class WasmWorkerPool {
           };
           worker.postMessage({
             type: "kernel",
-            kernelId,
+            kernelHash,
             module,
             ptrs,
             begin,

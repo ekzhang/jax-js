@@ -258,24 +258,19 @@ type JitValue =
   | { type: "exp"; exp: AluExp; args: JitId[] } // Expression, lazily fused
   | { type: "red"; exp: AluExp; reduction: Reduction; args: JitId[] }; // Reduction + epilogue
 
-const jitCompileCache = new Map<
-  string,
-  { source: Jaxpr; program: JitProgram }[]
->();
+const jitCompileCache = new Map<string, JitProgram>();
 
-export function jitCompile(backend: Backend, source: Jaxpr): JitProgram {
-  const cacheKey = backend.type + "," + FpHash.hash(source);
-  const bucket = jitCompileCache.get(cacheKey);
-  const cached = bucket?.find(
-    (entry) => entry.program.backend === backend && entry.source.equals(source),
-  );
-  if (cached) return cached.program;
+export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
+  const cacheKey = backend.type + "," + FpHash.hash(jaxpr);
+
+  const cached = jitCompileCache.get(cacheKey);
+  if (cached) return cached;
 
   if (DEBUG >= 1) {
-    console.info("=========== JIT Compile ===========\n" + source.toString());
+    console.info("=========== JIT Compile ===========\n" + jaxpr.toString());
   }
 
-  const jaxpr = source.flatten().simplify();
+  jaxpr = jaxpr.flatten().simplify();
   const nargs = jaxpr.inBinders.length;
   const builder = new JitProgramBuilder(backend, nargs);
 
@@ -469,8 +464,7 @@ export function jitCompile(backend: Backend, source: Jaxpr): JitProgram {
 
   const jp = new JitProgram(backend, builder.steps, range(0, nargs), outputIds);
   if (DEBUG >= 4) console.info(jp.toString());
-  if (bucket) bucket.push({ source, program: jp });
-  else jitCompileCache.set(cacheKey, [{ source, program: jp }]);
+  jitCompileCache.set(cacheKey, jp);
   return jp;
 }
 
@@ -542,7 +536,7 @@ function broadcastedJit<P extends Primitive>(
           );
       });
       if (exp.dtype !== newDtype && !skipCastIdx.includes(i)) {
-        exp = AluExp.cast(newDtype, exp, avals[i].weakType);
+        exp = AluExp.cast(newDtype, exp);
       }
       return exp;
     });
@@ -594,9 +588,7 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   [Primitive.Floor]: unopJit(AluExp.floor),
   [Primitive.Ceil]: unopJit(AluExp.ceil),
   [Primitive.StopGradient]: unopJit((a) => a), // No-op, just return the input.
-  [Primitive.Cast]([a], [aval], { dtype }) {
-    return { exp: [AluExp.cast(dtype, a, aval.weakType)] };
-  },
+  [Primitive.Cast]: unopJit((a, { dtype }) => AluExp.cast(dtype, a)),
   [Primitive.Bitcast]: unopJit((a, { dtype }) => AluExp.bitcast(dtype, a)),
   [Primitive.Sin]: unopJit(AluExp.sin),
   [Primitive.Cos]: unopJit(AluExp.cos),

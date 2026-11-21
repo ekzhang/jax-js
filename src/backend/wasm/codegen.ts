@@ -707,28 +707,24 @@ export function codegenWasm(kernel: Kernel): WasmCodegenResult {
       const pointerMaps = groups.map(
         () => new Map<AluExp, ReductionPointerPlan>(),
       );
-      const sharedPointers = new Map<string, ReductionPointerPlan[]>();
+      const sharedPointers = new Map<string, ReductionPointerPlan>();
       const uniquePointers: ReductionPointerPlan[] = [];
 
       for (let i = 0; i < groups.length; i++) {
         const group = groups[i];
         for (const candidate of candidates) {
           const key = keyFor(candidate, group, i);
-          const bucket = sharedPointers.get(key);
-          let plan = bucket?.find((pointer) =>
-            pointer.exp.equals(candidate.exp),
-          );
+          let plan = sharedPointers.get(key);
           if (!plan) {
             plan = initializeReductionPointer(
               cg,
               funcs,
               candidate,
               ctxFor(group),
-              `${key}:${bucket?.length ?? 0}`,
+              key,
               ridxOffset,
             );
-            if (bucket) bucket.push(plan);
-            else sharedPointers.set(key, [plan]);
+            sharedPointers.set(key, plan);
             uniquePointers.push(plan);
           }
           pointerMaps[i].set(candidate.exp, plan);

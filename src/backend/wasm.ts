@@ -2,7 +2,7 @@ import { Kernel } from "../alu";
 import { Backend, Device, Executable, Slot, SlotError } from "../backend";
 import { Routine, runCpuRoutine } from "../routine";
 import { emitTrace, isTracing, traceSourceInfo } from "../tracing";
-import { FpHash } from "../utils";
+import { FpHash, runWithCache, runWithCacheAsync } from "../utils";
 import { WasmAllocator } from "./wasm/allocator";
 import { codegenWasm } from "./wasm/codegen";
 import {
@@ -23,34 +23,14 @@ interface WasmExecutableData {
 }
 
 interface WasmProgram {
-  kernelId: string;
+  kernelHash: string;
   module: WebAssembly.Module;
   workSize: number;
   chunkAlignment: number;
   minWorkPerWorker?: number;
 }
 
-interface WasmProgramEntry {
-  kernel: Kernel;
-  kernelId: string;
-  program?: WasmProgram;
-}
-
-const compiledProgramCache = new Map<bigint, WasmProgramEntry[]>();
-let nextKernelId = 0n;
-
-function programEntry(kernel: Kernel): WasmProgramEntry {
-  const hash = FpHash.hash(kernel);
-  const bucket = compiledProgramCache.get(hash);
-  const cached = bucket?.find((entry) => entry.kernel.equals(kernel));
-  if (cached) return cached;
-
-  // Workers use this ID to cache instances across structured clones.
-  const entry = { kernel, kernelId: String(nextKernelId++) };
-  if (bucket) bucket.push(entry);
-  else compiledProgramCache.set(hash, [entry]);
-  return entry;
-}
+const compiledProgramCache = new Map<string, WasmProgram>();
 
 /** Backend that compiles into WebAssembly bytecode for immediate execution. */
 export class WasmBackend implements Backend {
@@ -143,23 +123,27 @@ export class WasmBackend implements Backend {
   }
 
   async prepareKernel(kernel: Kernel): Promise<Executable<WasmExecutableData>> {
-    const entry = programEntry(kernel);
-    if (!entry.program) {
-      const { bytes, ...metadata } = codegenWasm(kernel);
-      const module = await WebAssembly.compile(bytes);
-      entry.program ??= { kernelId: entry.kernelId, module, ...metadata };
-    }
-    return new Executable(kernel, { program: entry.program, sync: false });
+    const kernelHash = FpHash.hash(kernel).toString();
+    const program = await runWithCacheAsync(
+      compiledProgramCache,
+      kernelHash,
+      async () => {
+        const { bytes, ...metadata } = codegenWasm(kernel);
+        const module = await WebAssembly.compile(bytes);
+        return { kernelHash, module, ...metadata };
+      },
+    );
+    return new Executable(kernel, { program, sync: false });
   }
 
   prepareKernelSync(kernel: Kernel): Executable<WasmExecutableData> {
-    const entry = programEntry(kernel);
-    if (!entry.program) {
+    const kernelHash = FpHash.hash(kernel).toString();
+    const compiled = runWithCache(compiledProgramCache, kernelHash, () => {
       const { bytes, ...metadata } = codegenWasm(kernel);
       const module = new WebAssembly.Module(bytes);
-      entry.program = { kernelId: entry.kernelId, module, ...metadata };
-    }
-    return new Executable(kernel, { program: entry.program, sync: true });
+      return { kernelHash, module, ...metadata };
+    });
+    return new Executable(kernel, { program: compiled, sync: true });
   }
 
   async prepareRoutine(
@@ -244,7 +228,7 @@ export class WasmBackend implements Backend {
         const retainedSlots = [...inputs, ...outputs];
         for (const slot of retainedSlots) this.incRef(slot);
         const epoch = this.#workerPool.dispatch(
-          program.kernelId,
+          program.kernelHash,
           program.module,
           ptrs,
           program.workSize,

@@ -110,7 +110,7 @@ function repeatsAcrossGidxTile(exp: AluExp, tileSize: number): boolean {
   const shifted = rewriteSymbol(exp, "gidx", (node) =>
     AluExp.add(node, AluExp.i32(tileSize)),
   );
-  return shifted.equals(exp);
+  return shifted.getHash() === exp.getHash();
 }
 
 function divisorAtMost(value: number, limit: number): number {

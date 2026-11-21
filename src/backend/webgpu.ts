@@ -1,4 +1,4 @@
-import { AluExp, AluOp, type AluSimplifyCache, DType, Kernel } from "../alu";
+import { AluExp, AluOp, DType, Kernel } from "../alu";
 import { Backend, Device, Executable, Slot, SlotError } from "../backend";
 import { Routine } from "../routine";
 import { tuneWebgpu } from "../tuner";
@@ -43,10 +43,7 @@ export class WebGPUBackend implements Backend {
   >;
   nextSlot: number;
 
-  #cachedShaderMap = new Map<
-    bigint,
-    { kernel: Kernel; shader: ShaderInfo }[]
-  >();
+  #cachedShaderMap = new Map<bigint, ShaderInfo>();
   #reusableZsb: GPUBuffer;
   #bufferPool = new Map<number, GPUBuffer[]>();
 
@@ -166,13 +163,12 @@ export class WebGPUBackend implements Backend {
 
   #cachedShader(kernel: Kernel): ShaderInfo {
     const cacheKey = FpHash.hash(kernel);
-    const bucket = this.#cachedShaderMap.get(cacheKey);
-    const cached = bucket?.find((entry) => entry.kernel.equals(kernel));
-    if (cached) return cached.shader;
-    const shader = pipelineSource(this.device, kernel);
-    if (bucket) bucket.push({ kernel, shader });
-    else this.#cachedShaderMap.set(cacheKey, [{ kernel, shader }]);
-    return shader;
+    let result = this.#cachedShaderMap.get(cacheKey);
+    if (!result) {
+      result = pipelineSource(this.device, kernel);
+      this.#cachedShaderMap.set(cacheKey, result);
+    }
+    return result;
   }
 
   async prepareKernel(kernel: Kernel): Promise<Executable<ShaderDispatch[]>> {
@@ -420,7 +416,7 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
 
     // Now generate (shared) expressions for each accumulator and unroll value.
     const exps: AluExp[][] = [];
-    const cache: AluSimplifyCache = new Map();
+    const cache = new Map<bigint, AluExp>();
     for (let up = 0; up < upcast; up++) {
       exps.push([]);
       for (let un = 0; un < unroll; un++) {
