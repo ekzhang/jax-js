@@ -123,37 +123,45 @@ export function dtypedJsArray(dtype: DType, data: number[]): DataArray {
   }
 }
 
-/** Evaluate scalar addition, subtraction, or multiplication at the declared precision. */
-export function evalTypedArithmetic(
-  dtype: DType,
-  op: AluOp.Add | AluOp.Sub | AluOp.Mul,
-  a: number,
-  b: number,
-): number {
-  if (dtype === DType.Bool && op !== AluOp.Sub)
-    return Number(op === AluOp.Add ? Boolean(a || b) : Boolean(a && b));
-  const round =
-    dtype === DType.Float32
-      ? Math.fround
-      : dtype === DType.Float16
-        ? Math.f16round
-        : undefined;
-  if (round) {
-    a = round(a);
-    b = round(b);
+function toArithmeticDtype(dtype: DType, value: number): number {
+  switch (dtype) {
+    case DType.Int32:
+      return value | 0;
+    case DType.Uint32:
+      return value >>> 0;
+    case DType.Float16:
+      return Math.f16round(value);
+    case DType.Float32:
+      return Math.fround(value);
+    case DType.Bool:
+    case DType.Float64:
+      return value;
   }
-  const integer = dtype === DType.Int32 || dtype === DType.Uint32;
-  if (integer) {
-    a |= 0;
-    b |= 0;
-  }
-  let result: number;
-  if (op === AluOp.Add) result = a + b;
-  else if (op === AluOp.Sub) result = a - b;
-  else result = integer ? Math.imul(a, b) : a * b;
-  if (dtype === DType.Int32) return result | 0;
-  if (dtype === DType.Uint32) return result >>> 0;
-  return round ? round(result) : result;
+}
+
+export function evalTypedAdd(dtype: DType, a: number, b: number): number {
+  if (dtype === DType.Bool) return Number(a || b);
+  return toArithmeticDtype(
+    dtype,
+    toArithmeticDtype(dtype, a) + toArithmeticDtype(dtype, b),
+  );
+}
+
+function evalTypedSub(dtype: DType, a: number, b: number): number {
+  return toArithmeticDtype(
+    dtype,
+    toArithmeticDtype(dtype, a) - toArithmeticDtype(dtype, b),
+  );
+}
+
+export function evalTypedMul(dtype: DType, a: number, b: number): number {
+  if (dtype === DType.Bool) return Number(a && b);
+  if (dtype === DType.Int32 || dtype === DType.Uint32)
+    return toArithmeticDtype(dtype, Math.imul(a, b));
+  return toArithmeticDtype(
+    dtype,
+    toArithmeticDtype(dtype, a) * toArithmeticDtype(dtype, b),
+  );
 }
 
 /**
@@ -741,10 +749,10 @@ export class AluExp implements FpHashable {
 
     // Constant folding.
     if (src.every((x) => x.op === AluOp.Const) && !AluGroup.Variable.has(op)) {
-      const value =
-        op === AluOp.Add || op === AluOp.Sub || op === AluOp.Mul
-          ? evalTypedArithmetic(this.dtype, op, src[0].arg, src[1].arg)
-          : new AluExp(op, this.dtype, src, this.arg).evaluate({});
+      const arithmetic = typedArithmetic[op];
+      const value = arithmetic
+        ? arithmetic(this.dtype, src[0].arg, src[1].arg)
+        : new AluExp(op, this.dtype, src, this.arg).evaluate({});
       return AluExp.const(this.dtype, value);
     }
 
@@ -1165,21 +1173,17 @@ export class AluExp implements FpHashable {
     if (AluGroup.Binary.has(this.op) || AluGroup.Compare.has(this.op)) {
       const x = this.src[0].#evaluate(context, globals, memo);
       const y = this.src[1].#evaluate(context, globals, memo);
-      if (
-        (this.dtype === DType.Int32 || this.dtype === DType.Uint32) &&
-        (this.op === AluOp.Add ||
-          this.op === AluOp.Sub ||
-          this.op === AluOp.Mul)
-      ) {
-        return evalTypedArithmetic(this.dtype, this.op, x, y);
-      }
+      // The CPU evaluator uses JavaScript number precision for float arithmetic.
+      const arithmeticDtype = isFloatDtype(this.dtype)
+        ? DType.Float64
+        : this.dtype;
       switch (this.op) {
         case AluOp.Add:
-          return this.dtype === DType.Bool ? Number(x || y) : x + y;
+          return evalTypedAdd(arithmeticDtype, x, y);
         case AluOp.Sub:
-          return x - y;
+          return evalTypedSub(arithmeticDtype, x, y);
         case AluOp.Mul:
-          return this.dtype === DType.Bool ? Number(x && y) : x * y;
+          return evalTypedMul(arithmeticDtype, x, y);
         case AluOp.Idiv:
           return Math.trunc(x / y); // Consistent with signed Mod.
         case AluOp.Mod:
@@ -1524,6 +1528,12 @@ export enum AluOp {
   GlobalIndex = "GlobalIndex", // arg = [gid, len]; src = [bufidx]
   GlobalView = "GlobalView", // arg = [gid, ShapeTracker], src = [indices...]
 }
+
+const typedArithmetic: Partial<Record<AluOp, typeof evalTypedAdd>> = {
+  [AluOp.Add]: evalTypedAdd,
+  [AluOp.Sub]: evalTypedSub,
+  [AluOp.Mul]: evalTypedMul,
+};
 
 export const AluGroup = {
   Binary: new Set([

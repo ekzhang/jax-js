@@ -1,8 +1,8 @@
 import {
-  AluOp,
   byteWidth,
   DType,
-  evalTypedArithmetic,
+  evalTypedAdd,
+  evalTypedMul,
   isFloatDtype,
 } from "../alu";
 import { PPrint } from "../pprint";
@@ -282,10 +282,7 @@ export class Jaxpr implements FpHashable {
           const aval = promoteAvals(a.aval, b.aval);
           context.set(
             c,
-            new Lit(
-              aval,
-              evalTypedArithmetic(aval.dtype, AluOp.Add, a.value, b.value),
-            ),
+            new Lit(aval, evalTypedAdd(aval.dtype, a.value, b.value)),
           );
         } else {
           newEqns.push(eqn);
@@ -310,10 +307,7 @@ export class Jaxpr implements FpHashable {
           const aval = promoteAvals(a.aval, b.aval);
           context.set(
             c,
-            new Lit(
-              aval,
-              evalTypedArithmetic(aval.dtype, AluOp.Mul, a.value, b.value),
-            ),
+            new Lit(aval, evalTypedMul(aval.dtype, a.value, b.value)),
           );
         } else {
           newEqns.push(eqn);
