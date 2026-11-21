@@ -123,47 +123,6 @@ export function dtypedJsArray(dtype: DType, data: number[]): DataArray {
   }
 }
 
-function toArithmeticDtype(dtype: DType, value: number): number {
-  switch (dtype) {
-    case DType.Int32:
-      return value | 0;
-    case DType.Uint32:
-      return value >>> 0;
-    case DType.Float16:
-      return Math.f16round(value);
-    case DType.Float32:
-      return Math.fround(value);
-    case DType.Bool:
-    case DType.Float64:
-      return value;
-  }
-}
-
-export function evalTypedAdd(dtype: DType, a: number, b: number): number {
-  if (dtype === DType.Bool) return Number(a || b);
-  return toArithmeticDtype(
-    dtype,
-    toArithmeticDtype(dtype, a) + toArithmeticDtype(dtype, b),
-  );
-}
-
-function evalTypedSub(dtype: DType, a: number, b: number): number {
-  return toArithmeticDtype(
-    dtype,
-    toArithmeticDtype(dtype, a) - toArithmeticDtype(dtype, b),
-  );
-}
-
-export function evalTypedMul(dtype: DType, a: number, b: number): number {
-  if (dtype === DType.Bool) return Number(a && b);
-  if (dtype === DType.Int32 || dtype === DType.Uint32)
-    return toArithmeticDtype(dtype, Math.imul(a, b));
-  return toArithmeticDtype(
-    dtype,
-    toArithmeticDtype(dtype, a) * toArithmeticDtype(dtype, b),
-  );
-}
-
 /**
  * Mathematical expression on scalar values.
  *
@@ -749,11 +708,8 @@ export class AluExp implements FpHashable {
 
     // Constant folding.
     if (src.every((x) => x.op === AluOp.Const) && !AluGroup.Variable.has(op)) {
-      const arithmetic = typedArithmetic[op];
-      const value = arithmetic
-        ? arithmetic(this.dtype, src[0].arg, src[1].arg)
-        : new AluExp(op, this.dtype, src, this.arg).evaluate({});
-      return AluExp.const(this.dtype, value);
+      const newExp = new AluExp(op, this.dtype, src, this.arg);
+      return AluExp.const(this.dtype, newExp.evaluate({}));
     }
 
     // Replacing empty ranges with constants, if non-constant.
@@ -1173,17 +1129,11 @@ export class AluExp implements FpHashable {
     if (AluGroup.Binary.has(this.op) || AluGroup.Compare.has(this.op)) {
       const x = this.src[0].#evaluate(context, globals, memo);
       const y = this.src[1].#evaluate(context, globals, memo);
-      // The CPU evaluator uses JavaScript number precision for float arithmetic.
-      const arithmeticDtype = isFloatDtype(this.dtype)
-        ? DType.Float64
-        : this.dtype;
       switch (this.op) {
         case AluOp.Add:
-          return evalTypedAdd(arithmeticDtype, x, y);
         case AluOp.Sub:
-          return evalTypedSub(arithmeticDtype, x, y);
         case AluOp.Mul:
-          return evalTypedMul(arithmeticDtype, x, y);
+          return evalTyped[this.op](this.dtype, x, y);
         case AluOp.Idiv:
           return Math.trunc(x / y); // Consistent with signed Mod.
         case AluOp.Mod:
@@ -1529,10 +1479,36 @@ export enum AluOp {
   GlobalView = "GlobalView", // arg = [gid, ShapeTracker], src = [indices...]
 }
 
-const typedArithmetic: Partial<Record<AluOp, typeof evalTypedAdd>> = {
-  [AluOp.Add]: evalTypedAdd,
-  [AluOp.Sub]: evalTypedSub,
-  [AluOp.Mul]: evalTypedMul,
+function toArithmetic(dtype: DType, value: number): number {
+  switch (dtype) {
+    case DType.Int32:
+      return value | 0;
+    case DType.Uint32:
+      return value >>> 0;
+    case DType.Float16:
+      return Math.f16round(value);
+    case DType.Float32:
+      return Math.fround(value);
+    case DType.Bool:
+    case DType.Float64:
+      return value;
+  }
+}
+
+export const evalTyped = {
+  [AluOp.Add](dtype: DType, a: number, b: number): number {
+    if (dtype === DType.Bool) return Number(a || b);
+    return toArithmetic(dtype, toArithmetic(dtype, a) + toArithmetic(dtype, b));
+  },
+  [AluOp.Sub](dtype: DType, a: number, b: number): number {
+    return toArithmetic(dtype, toArithmetic(dtype, a) - toArithmetic(dtype, b));
+  },
+  [AluOp.Mul](dtype: DType, a: number, b: number): number {
+    if (dtype === DType.Bool) return Number(a && b);
+    if (dtype === DType.Int32 || dtype === DType.Uint32)
+      return toArithmetic(dtype, Math.imul(a, b));
+    return toArithmetic(dtype, toArithmetic(dtype, a) * toArithmetic(dtype, b));
+  },
 };
 
 export const AluGroup = {

@@ -98,12 +98,16 @@ test("AluExp range analysis handles int32 overflow and wrapping casts", () => {
   ).toBe(0x40000000);
 });
 
-test("AluExp folds arithmetic at its declared precision", () => {
+test("AluExp evaluates and folds arithmetic at its declared precision", () => {
   const u = AluExp.u32(0xffffffff);
   expect(AluExp.mul(u, u).resolve()).toBe(1);
 
   const big = AluExp.f32(2 ** 24);
-  expect(AluExp.sub(AluExp.add(big, AluExp.f32(1)), big).resolve()).toBe(0);
+  const subtract = (x: AluExp) => AluExp.sub(AluExp.add(x, AluExp.f32(1)), x);
+  expect(subtract(big).resolve()).toBe(0);
+  expect(
+    subtract(AluExp.variable(DType.Float32, "x")).evaluate({ x: 2 ** 24 }),
+  ).toBe(0);
 });
 
 test("AluExp preserves floating-point multiplication by zero", () => {
@@ -395,7 +399,7 @@ test("AluExp.evaluate computes shared subexpressions once", () => {
     return [-1.5, -0.25, 0.5, 2][bufidx];
   };
   const x = AluExp.globalIndex(
-    DType.Float32,
+    DType.Float64,
     0,
     4,
     AluExp.variable(DType.Int32, "idx"),
@@ -406,7 +410,7 @@ test("AluExp.evaluate computes shared subexpressions once", () => {
       y = AluExp.add(AluExp.sin(y), AluExp.cos(y));
     } else {
       const sq = AluExp.mul(y, y);
-      y = AluExp.where(AluExp.cmplt(y, AluExp.f32(1)), sq, AluExp.sub(y, sq));
+      y = AluExp.where(AluExp.cmplt(y, AluExp.f64(1)), sq, AluExp.sub(y, sq));
     }
   }
 

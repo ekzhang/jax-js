@@ -1,10 +1,4 @@
-import {
-  byteWidth,
-  DType,
-  evalTypedAdd,
-  evalTypedMul,
-  isFloatDtype,
-} from "../alu";
+import { AluOp, byteWidth, DType, evalTyped, isFloatDtype } from "../alu";
 import { PPrint } from "../pprint";
 import { type Pair } from "../shape";
 import {
@@ -282,7 +276,7 @@ export class Jaxpr implements FpHashable {
           const aval = promoteAvals(a.aval, b.aval);
           context.set(
             c,
-            new Lit(aval, evalTypedAdd(aval.dtype, a.value, b.value)),
+            new Lit(aval, evalTyped[AluOp.Add](aval.dtype, a.value, b.value)),
           );
         } else {
           newEqns.push(eqn);
@@ -307,7 +301,7 @@ export class Jaxpr implements FpHashable {
           const aval = promoteAvals(a.aval, b.aval);
           context.set(
             c,
-            new Lit(aval, evalTypedMul(aval.dtype, a.value, b.value)),
+            new Lit(aval, evalTyped[AluOp.Mul](aval.dtype, a.value, b.value)),
           );
         } else {
           newEqns.push(eqn);
