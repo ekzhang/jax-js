@@ -361,10 +361,6 @@ export function strip1(str: string): string {
   return str;
 }
 
-export interface FpHashable {
-  hash(state: FpHash): void;
-}
-
 const _stagingbuf = new DataView(new ArrayBuffer(8));
 
 /**
@@ -385,9 +381,7 @@ export class FpHash {
     this.value = (this.value * base + x) % modulus;
   }
 
-  update(
-    x: string | boolean | number | bigint | null | undefined | FpHashable,
-  ): this {
+  update(x: string | boolean | number | bigint | null | undefined): this {
     if (typeof x === "string") {
       this.#update(BigInt(x.length));
       for (let i = 0; i < x.length; i++) {
@@ -408,29 +402,10 @@ export class FpHash {
       this.#update(x ^ 71657401n);
     } else if (x === null) {
       this.#update(37832657n);
-    } else if (x === undefined) {
-      this.#update(18145117n);
     } else {
-      // If the object has a hash method, call it.
-      x.hash(this);
+      this.#update(18145117n);
     }
     return this;
-  }
-
-  static hash(
-    ...values: (
-      | string
-      | boolean
-      | number
-      | bigint
-      | null
-      | undefined
-      | FpHashable
-    )[]
-  ): bigint {
-    const h = new FpHash();
-    for (const x of values) h.update(x);
-    return h.value;
   }
 }
 

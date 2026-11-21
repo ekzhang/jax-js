@@ -1,6 +1,14 @@
 import { expect, test } from "vitest";
 
-import { AluExp, AluOp, DType } from "./alu";
+import {
+  AluExp,
+  AluOp,
+  AluSimplifyCache,
+  DType,
+  Kernel,
+  Reduction,
+} from "./alu";
+import { ShapeTracker, View } from "./shape";
 
 test("AluExp can be evaluated", () => {
   const e = AluExp.i32(3);
@@ -387,6 +395,61 @@ test("AluOp.Ceil", () => {
 
   const e3 = AluExp.ceil(AluExp.f32(0.0));
   expect(e3.evaluate({})).toBe(0);
+});
+
+test("AluExp reuses structurally equal inputs and outputs", () => {
+  const cache = new AluSimplifyCache();
+  const x = () => AluExp.special(DType.Int32, "x", 10);
+  const withZero = () => AluExp.add(x(), AluExp.i32(0));
+
+  const simplified = withZero().simplify(cache);
+  expect(withZero().simplify(cache)).toBe(simplified);
+  expect(x().simplify(cache)).toBe(simplified);
+  expect(simplified.evaluate({ x: 3 })).toBe(3);
+});
+
+test("AluExp deduplicates views only if their shapes and masks match", () => {
+  const cache = new AluSimplifyCache();
+  const view = (offset: number, start: number) =>
+    AluExp.globalView(
+      DType.Float32,
+      0,
+      new ShapeTracker([
+        View.create([2, 3], [3, 1], offset, [
+          [0, 2],
+          [start, 3],
+        ]),
+      ]),
+      [AluExp.variable(DType.Int32, "i"), AluExp.variable(DType.Int32, "j")],
+    );
+
+  const expected = view(1, 1).simplify(cache);
+  expect(view(1, 1).simplify(cache)).toBe(expected);
+  expect(view(2, 1).simplify(cache)).not.toBe(expected);
+  expect(view(1, 2).simplify(cache)).not.toBe(expected);
+});
+
+test("AluExp keeps literals distinct after legacy fingerprint collisions", () => {
+  const cache = new AluSimplifyCache();
+  const zero = AluExp.f64(0);
+  const large = AluExp.f64(3189052130706901);
+  expect(AluExp.sub(zero, large).simplify(cache).evaluate({})).toBe(-large.arg);
+  expect(AluExp.f64(-0).simplify(cache).evaluate({})).toBe(-0);
+});
+
+test("Kernel cache keys encode the expression and reduction", () => {
+  const x = () => AluExp.special(DType.Float32, "x", 8);
+  const kernel = (op: AluOp, size: number) =>
+    new Kernel(1, 8, x(), new Reduction(DType.Float32, op, size));
+  const sum = kernel(AluOp.Add, 8).getCacheKey();
+  expect(sum).toMatch(/^[0-9a-f]{64}$/);
+  expect(kernel(AluOp.Add, 8).getCacheKey()).toBe(sum);
+  expect(kernel(AluOp.Add, 4).getCacheKey()).not.toBe(sum);
+  expect(kernel(AluOp.Max, 8).getCacheKey()).not.toBe(sum);
+  expect(new Kernel(1, 8, x()).getCacheKey()).not.toBe(sum);
+  expect(new Kernel(0, 1, AluExp.f64(0)).getCacheKey()).not.toBe(
+    new Kernel(0, 1, AluExp.f64(3189052130706901)).getCacheKey(),
+  );
 });
 
 test("AluExp.evaluate computes shared subexpressions once", () => {

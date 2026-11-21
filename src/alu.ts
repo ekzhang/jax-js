@@ -1,6 +1,7 @@
 import { PPrint } from "./pprint";
+import { sha256Hex } from "./sha256";
 import { ShapeTracker } from "./shape";
-import { clamp, FpHash, FpHashable, gcd, strip1 } from "./utils";
+import { clamp, FpHash, gcd, strip1 } from "./utils";
 
 /** A numerical data type for array contents. */
 export enum DType {
@@ -123,6 +124,85 @@ export function dtypedJsArray(dtype: DType, data: number[]): DataArray {
   }
 }
 
+const literalBits = new DataView(new ArrayBuffer(8));
+
+// Preserve signed zero and NaN payloads. Other JS numbers have unique
+// round-tripping string representations.
+function numberKey(value: number): string {
+  if (Object.is(value, -0)) return "-0";
+  if (!Number.isNaN(value)) return String(value);
+  literalBits.setFloat64(0, value);
+  return `NaN:${literalBits.getUint32(0)}:${literalBits.getUint32(4)}`;
+}
+
+/** Exact keys for expression DAGs. An ID is local to one key table. */
+export class AluStructuralKeys {
+  #nodeIds = new WeakMap<AluExp, number>();
+  #keys = new Map<string, number>();
+  #viewKeys = new WeakMap<ShapeTracker, string>();
+
+  /** Node descriptions in ID order, with children before their parents. */
+  keys(): IterableIterator<string> {
+    return this.#keys.keys();
+  }
+
+  id(exp: AluExp): number {
+    const previous = this.#nodeIds.get(exp);
+    if (previous !== undefined) return previous;
+
+    const arg = this.#argument(exp);
+    let key = `${exp.op}|${exp.dtype}|${arg.length}:${arg}`;
+    for (const child of exp.src) key += `|${this.id(child)}`;
+
+    let id = this.#keys.get(key);
+    if (id === undefined) {
+      id = this.#keys.size;
+      this.#keys.set(key, id);
+    }
+    this.#nodeIds.set(exp, id);
+    return id;
+  }
+
+  #argument(exp: AluExp): string {
+    const arg = exp.arg;
+    if (arg === undefined) return "";
+    if (typeof arg === "number") return `n${numberKey(arg)}`;
+    if (typeof arg === "string") return `s${arg}`;
+    if (exp.op === AluOp.Special) {
+      return `${numberKey(arg[1])}:${arg[0]}`;
+    }
+    if (exp.op === AluOp.GlobalIndex) {
+      return `${numberKey(arg[0])},${numberKey(arg[1])}`;
+    }
+    if (exp.op === AluOp.GlobalView) {
+      const tracker = arg[1] as ShapeTracker;
+      let key = this.#viewKeys.get(tracker);
+      if (key === undefined) {
+        key = tracker.views
+          .map((v) =>
+            [
+              v.shape.map(numberKey).join(","),
+              v.strides.map(numberKey).join(","),
+              numberKey(v.offset),
+              v.mask === null
+                ? "-"
+                : v.mask.map((pair) => pair.map(numberKey).join(",")).join(";"),
+            ].join("|"),
+          )
+          .join("#");
+        this.#viewKeys.set(tracker, key);
+      }
+      return `${numberKey(arg[0])};${key}`;
+    }
+    throw new Error(`Unsupported structural key argument for ${exp.op}`);
+  }
+}
+
+/** A simplification pass can share results across several roots. */
+export class AluSimplifyCache extends AluStructuralKeys {
+  readonly results: (AluExp | undefined)[] = [];
+}
+
 /**
  * Mathematical expression on scalar values.
  *
@@ -130,7 +210,7 @@ export function dtypedJsArray(dtype: DType, data: number[]): DataArray {
  * to just math on scalars. We're doing this to avoid the complexity of a full
  * graph rewrite engine.
  */
-export class AluExp implements FpHashable {
+export class AluExp {
   #hash?: bigint;
   #simplified?: AluExp;
   #range?: [number, number];
@@ -362,13 +442,9 @@ export class AluExp implements FpHashable {
       hasher.update(JSON.stringify(this.arg));
     }
     hasher.update(this.src.length);
-    for (const s of this.src) hasher.update(s);
+    for (const s of this.src) hasher.update(s.getHash());
     this.#hash = hasher.value;
     return this.#hash;
-  }
-
-  hash(state: FpHash): void {
-    state.update(this.getHash());
   }
 
   /** Substitute variables in this AluExp to values. */
@@ -677,32 +753,22 @@ export class AluExp implements FpHashable {
    * Simplify the expression by replacing any known patterns and deduping
    * identical subexpressions.
    */
-  simplify(cache: Map<bigint, AluExp> = new Map()): AluExp {
-    // Cache this to avoid recomputing if it's called twice.
+  simplify(cache = new AluSimplifyCache()): AluExp {
     if (this.#simplified !== undefined) return this.#simplified;
 
-    // Extra help: `cache` can be used across multiple calls.
-    const hash = this.getHash();
-    const prevCachedValue = cache.get(hash);
-    if (prevCachedValue !== undefined) {
-      return (this.#simplified = prevCachedValue);
-    }
+    const id = cache.id(this);
+    const previous = cache.results[id];
+    if (previous !== undefined) return (this.#simplified = previous);
+
     const simplified = this.#simplifyInner(cache);
-    const simplifiedHash = simplified.getHash();
-    const prevSimplified = cache.get(simplifiedHash);
-    if (prevSimplified !== undefined) {
-      cache.set(hash, prevSimplified);
-      this.#simplified = prevSimplified;
-      return prevSimplified;
-    } else {
-      cache.set(hash, simplified);
-      cache.set(simplifiedHash, simplified);
-      this.#simplified = simplified;
-      return simplified;
-    }
+    const resultId = cache.id(simplified);
+    const result = cache.results[resultId] ?? simplified;
+    cache.results[id] = result;
+    cache.results[resultId] = result;
+    return (this.#simplified = result);
   }
 
-  #simplifyInner(cache: Map<bigint, AluExp>): AluExp {
+  #simplifyInner(cache: AluSimplifyCache): AluExp {
     const src = this.src.map((x) => x.simplify(cache));
     const { op } = this;
 
@@ -1573,6 +1639,8 @@ export const AluVar = {
   upcast: AluExp.variable(DType.Int32, "upcast"), // upcast index, inside loop
 };
 
+const kernelKeyEncoder = new TextEncoder();
+
 /**
  * Description of a kernel to be compiled.
  *
@@ -1580,7 +1648,9 @@ export const AluVar = {
  * representation. It consists of one or more fused operations, optionally
  * indexing into a buffer.
  */
-export class Kernel implements FpHashable {
+export class Kernel {
+  #cacheKey?: string;
+
   constructor(
     /** Number of global arguments / arrays. */
     readonly nargs: number,
@@ -1594,12 +1664,26 @@ export class Kernel implements FpHashable {
     this.exp = exp.simplify();
   }
 
-  hash(state: FpHash): void {
-    state
-      .update(this.nargs)
-      .update(this.size)
-      .update(this.exp)
-      .update(this.reduction);
+  getCacheKey(): string {
+    if (this.#cacheKey !== undefined) return this.#cacheKey;
+    const keys = new AluStructuralKeys();
+    const root = keys.id(this.exp);
+    const reduction = this.reduction
+      ? [
+          this.reduction.dtype,
+          this.reduction.op,
+          numberKey(this.reduction.size),
+          keys.id(this.reduction.epilogue),
+        ]
+      : null;
+    const description = JSON.stringify([
+      numberKey(this.nargs),
+      numberKey(this.size),
+      root,
+      reduction,
+      [...keys.keys()],
+    ]);
+    return (this.#cacheKey = sha256Hex(kernelKeyEncoder.encode(description)));
   }
 
   pprint(): PPrint {
@@ -1645,7 +1729,7 @@ export class Kernel implements FpHashable {
  * passing through some optimization strategy. But optimizations are not coded
  * at this level since they depend on GPU, versus CPU or Wasm.
  */
-export class Reduction implements FpHashable {
+export class Reduction {
   constructor(
     /** Data type of the values being reduced over. */
     readonly dtype: DType,
@@ -1670,14 +1754,6 @@ export class Reduction implements FpHashable {
       });
       this.dtype = DType.Float32;
     }
-  }
-
-  hash(state: FpHash): void {
-    state
-      .update(this.dtype)
-      .update(this.op)
-      .update(this.size)
-      .update(this.epilogue);
   }
 
   toString(): string {

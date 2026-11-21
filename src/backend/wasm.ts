@@ -2,7 +2,7 @@ import { Kernel } from "../alu";
 import { Backend, Device, Executable, Slot, SlotError } from "../backend";
 import { Routine, runCpuRoutine } from "../routine";
 import { emitTrace, isTracing, traceSourceInfo } from "../tracing";
-import { FpHash, runWithCache, runWithCacheAsync } from "../utils";
+import { runWithCache, runWithCacheAsync } from "../utils";
 import { WasmAllocator } from "./wasm/allocator";
 import { codegenWasm } from "./wasm/codegen";
 import {
@@ -123,7 +123,7 @@ export class WasmBackend implements Backend {
   }
 
   async prepareKernel(kernel: Kernel): Promise<Executable<WasmExecutableData>> {
-    const kernelHash = FpHash.hash(kernel).toString();
+    const kernelHash = kernel.getCacheKey();
     const program = await runWithCacheAsync(
       compiledProgramCache,
       kernelHash,
@@ -137,7 +137,7 @@ export class WasmBackend implements Backend {
   }
 
   prepareKernelSync(kernel: Kernel): Executable<WasmExecutableData> {
-    const kernelHash = FpHash.hash(kernel).toString();
+    const kernelHash = kernel.getCacheKey();
     const compiled = runWithCache(compiledProgramCache, kernelHash, () => {
       const { bytes, ...metadata } = codegenWasm(kernel);
       const module = new WebAssembly.Module(bytes);

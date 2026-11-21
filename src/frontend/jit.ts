@@ -13,15 +13,7 @@ import { Backend, Slot } from "../backend";
 import { PPrint } from "../pprint";
 import { Routine } from "../routine";
 import { Pair, ShapeTracker, unravelAlu } from "../shape";
-import {
-  DEBUG,
-  deepEqual,
-  FpHash,
-  generalBroadcast,
-  prod,
-  range,
-  rep,
-} from "../utils";
+import { DEBUG, deepEqual, generalBroadcast, prod, range, rep } from "../utils";
 import { aluCompare, PendingExecute } from "./array";
 import { pool, poolTranspose, prepareConv } from "./convolution";
 import {
@@ -261,7 +253,7 @@ type JitValue =
 const jitCompileCache = new Map<string, JitProgram>();
 
 export function jitCompile(backend: Backend, jaxpr: Jaxpr): JitProgram {
-  const cacheKey = backend.type + "," + FpHash.hash(jaxpr);
+  const cacheKey = backend.type + "," + jaxpr.getCacheKey();
 
   const cached = jitCompileCache.get(cacheKey);
   if (cached) return cached;

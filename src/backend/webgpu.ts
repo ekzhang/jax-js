@@ -1,8 +1,8 @@
-import { AluExp, AluOp, DType, Kernel } from "../alu";
+import { AluExp, AluOp, AluSimplifyCache, DType, Kernel } from "../alu";
 import { Backend, Device, Executable, Slot, SlotError } from "../backend";
 import { Routine } from "../routine";
 import { tuneWebgpu } from "../tuner";
-import { DEBUG, findPow2, FpHash, prod, range, strip1 } from "../utils";
+import { DEBUG, findPow2, prod, range, strip1 } from "../utils";
 import {
   calculateGrid,
   constToWgsl,
@@ -43,7 +43,7 @@ export class WebGPUBackend implements Backend {
   >;
   nextSlot: number;
 
-  #cachedShaderMap = new Map<bigint, ShaderInfo>();
+  #cachedShaderMap = new Map<string, ShaderInfo>();
   #reusableZsb: GPUBuffer;
   #bufferPool = new Map<number, GPUBuffer[]>();
 
@@ -162,7 +162,7 @@ export class WebGPUBackend implements Backend {
   }
 
   #cachedShader(kernel: Kernel): ShaderInfo {
-    const cacheKey = FpHash.hash(kernel);
+    const cacheKey = kernel.getCacheKey();
     let result = this.#cachedShaderMap.get(cacheKey);
     if (!result) {
       result = pipelineSource(this.device, kernel);
@@ -416,7 +416,7 @@ function pipelineSource(device: GPUDevice, kernel: Kernel): ShaderInfo {
 
     // Now generate (shared) expressions for each accumulator and unroll value.
     const exps: AluExp[][] = [];
-    const cache = new Map<bigint, AluExp>();
+    const cache = new AluSimplifyCache();
     for (let up = 0; up < upcast; up++) {
       exps.push([]);
       for (let un = 0; un < unroll; un++) {

@@ -1,5 +1,6 @@
 import { AluOp, byteWidth, DType, evalTyped, isFloatDtype } from "../alu";
 import { PPrint } from "../pprint";
+import { sha256Hex } from "../sha256";
 import { type Pair } from "../shape";
 import {
   JsTreeDef,
@@ -9,8 +10,7 @@ import {
 } from "../tree";
 import {
   deepEqual,
-  FpHash,
-  FpHashable,
+  type FpHash,
   generalBroadcast,
   prod,
   runWithCache,
@@ -173,9 +173,58 @@ export class JaxprEqn {
   }
 }
 
+type JaxprKeyPart = string | number | boolean | null | JaxprKeyPart[];
+
+const jaxprKeyEncoder = new TextEncoder();
+const jaxprKeyNumberBits = new DataView(new ArrayBuffer(8));
+
+function jaxprNumberKey(value: number): JaxprKeyPart {
+  if (Object.is(value, -0)) return ["number", "-0"];
+  if (Number.isFinite(value)) return value;
+  if (Number.isNaN(value)) {
+    jaxprKeyNumberBits.setFloat64(0, value);
+    return ["nan", jaxprKeyNumberBits.getBigUint64(0).toString(16)];
+  }
+  return ["number", String(value)];
+}
+
+function jaxprAvalKey({ dtype, shape, weakType }: ShapedArray): JaxprKeyPart {
+  return [dtype, shape.map(jaxprNumberKey), weakType];
+}
+
+/** Encode primitive parameters as typed JSON, with ordered record fields. */
+function jaxprParamKey(value: unknown): JaxprKeyPart {
+  if (value === null || typeof value === "string" || typeof value === "boolean")
+    return value;
+  if (value === undefined) return ["undefined"];
+  if (typeof value === "number") return jaxprNumberKey(value);
+  if (value instanceof Jaxpr) return ["jaxpr", value.getCacheKey()];
+  if (globalThis.Array.isArray(value)) {
+    return [
+      "array",
+      globalThis.Array.from(value, (item, i) =>
+        i in value ? jaxprParamKey(item) : ["hole"],
+      ),
+    ];
+  }
+  if (typeof value === "object") {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype === Object.prototype || prototype === null) {
+      const record = value as Record<string, unknown>;
+      return [
+        "record",
+        Object.keys(record)
+          .sort()
+          .map((key) => [key, jaxprParamKey(record[key])]),
+      ];
+    }
+  }
+  throw new TypeError("Unsupported Jaxpr primitive parameter");
+}
+
 /** Typed intermediate representation for traced computations. */
-export class Jaxpr implements FpHashable {
-  #hash?: bigint;
+export class Jaxpr {
+  #cacheKey?: string;
 
   constructor(
     readonly inBinders: Var[],
@@ -211,43 +260,44 @@ export class Jaxpr implements FpHashable {
     return this.pprint().toString();
   }
 
-  /**
-   * Gets a hash of this Jaxpr.
-   *
-   * Var identity is not considered in the hash, so two Jaxprs with the same
-   * order of assignments and operators but different variable IDs will resolve
-   * to the same hash (and toString representation).
-   */
+  /** Gets a hash of this Jaxpr as a bigint. */
   getHash(): bigint {
-    if (this.#hash !== undefined) return this.#hash;
-    const hasher = new FpHash();
-    const varIds = new Map<Var, bigint>();
-    const vi = (v: Var) => {
-      if (varIds.has(v)) return varIds.get(v)!;
-      const id = varIds.size + 1; // Start from 1, why not?
-      varIds.set(v, FpHash.hash(id, v.aval.dtype, ...v.aval.shape));
-      return id;
-    };
-    hasher.update(this.inBinders.length);
-    for (const x of this.inBinders) hasher.update(vi(x));
-    hasher.update(this.eqns.length);
-    for (const eqn of this.eqns) {
-      hasher.update(eqn.primitive);
-      hasher.update(eqn.inputs.length);
-      for (const x of eqn.inputs)
-        hasher.update(x instanceof Var ? vi(x) : x.value);
-      hasher.update(JSON.stringify(eqn.params));
-      hasher.update(eqn.outBinders.length);
-      for (const x of eqn.outBinders) hasher.update(vi(x));
-    }
-    hasher.update(this.outs.length);
-    for (const x of this.outs)
-      hasher.update(x instanceof Var ? vi(x) : x.value);
-    return (this.#hash = hasher.value);
+    return BigInt(`0x${this.getCacheKey()}`);
   }
 
   hash(state: FpHash): void {
     state.update(this.getHash());
+  }
+
+  /** @internal Full SHA-256 of the typed graph, with variables in binding order. */
+  getCacheKey(): string {
+    if (this.#cacheKey !== undefined) return this.#cacheKey;
+    const varIds = new Map<Var, number>();
+    const bind = (v: Var): JaxprKeyPart => {
+      varIds.set(v, varIds.size);
+      return jaxprAvalKey(v.aval);
+    };
+    const atomKey = (atom: Atom): JaxprKeyPart => {
+      if (atom instanceof Lit) {
+        return ["literal", jaxprAvalKey(atom.aval), jaxprNumberKey(atom.value)];
+      }
+      const id = varIds.get(atom);
+      if (id === undefined) throw new TypeError(`Unknown variable: ${atom}`);
+      return ["var", id];
+    };
+    const key: JaxprKeyPart = [
+      this.inBinders.map(bind),
+      this.eqns.map((eqn) => [
+        eqn.primitive,
+        eqn.inputs.map(atomKey),
+        jaxprParamKey(eqn.params),
+        eqn.outBinders.map(bind),
+      ]),
+      this.outs.map(atomKey),
+    ];
+    return (this.#cacheKey = sha256Hex(
+      jaxprKeyEncoder.encode(JSON.stringify(key)),
+    ));
   }
 
   /**
