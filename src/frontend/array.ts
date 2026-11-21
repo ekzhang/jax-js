@@ -420,7 +420,10 @@ export class Array extends Tracer {
     this.#check();
     // Short circuit if the array is already AluExp.
     if (this.#source instanceof AluExp) {
-      const exp = new AluExp(op, dtypeOutput, [this.#source]);
+      const exp =
+        op === AluOp.Cast
+          ? AluExp.cast(dtypeOutput, this.#source, this.#weakType)
+          : new AluExp(op, dtypeOutput, [this.#source]);
       this.dispose();
       return this.#newArrayFrom({
         source: exp.simplify(),
@@ -508,7 +511,7 @@ export class Array extends Tracer {
     if (arrays.every((ar) => ar.#source instanceof AluExp) && !reduceAxis) {
       const sources = arrays.map((ar, i) => {
         if (!dtypeOverride?.[i]) {
-          return AluExp.cast(castDtype!, ar.#source as AluExp);
+          return AluExp.cast(castDtype!, ar.#source as AluExp, ar.#weakType);
         } else {
           return ar.#source as AluExp;
         }
@@ -568,7 +571,8 @@ export class Array extends Tracer {
         }
         nextSrc = AluExp.globalView(ar.#dtype, gid, ar.#st, indices);
       }
-      if (!dtypeOverride?.[i]) nextSrc = AluExp.cast(castDtype!, nextSrc);
+      if (!dtypeOverride?.[i])
+        nextSrc = AluExp.cast(castDtype!, nextSrc, ar.#weakType);
       src.push(nextSrc);
     }
 

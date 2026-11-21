@@ -18,7 +18,8 @@ suite("jax.makeJaxpr()", () => {
     const { jaxpr } = makeJaxpr(() => np.multiply(2, 2))();
     expect(jaxpr.toString()).toMatchInlineSnapshot(`
       "{ lambda  .
-        ( 4 ) }"
+        let a:float32[] = mul 2 2
+        in ( a ) }"
     `);
     expect(jaxpr.consts).toEqual([]);
   });
@@ -51,8 +52,10 @@ suite("jax.makeJaxpr()", () => {
     expect(jaxpr.toString()).toMatchInlineSnapshot(`
       "{ lambda a:float32[] .
         let b:float32[] = add a 2
-            c:float32[] = add b a
-        in ( c ) }"
+            c:float32[] = add 1 0
+            d:float32[] = mul c a
+            e:float32[] = add b d
+        in ( e ) }"
     `);
     expect(jaxpr.consts).toEqual([]);
   });

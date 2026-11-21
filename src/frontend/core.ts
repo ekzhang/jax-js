@@ -969,7 +969,7 @@ export abstract class Tracer {
 
   /** Subtract an array from this one. */
   sub(other: this | TracerValue): this {
-    return this.add(neg(other));
+    return this.add(typeof other === "number" ? -other : neg(other));
   }
 
   /**

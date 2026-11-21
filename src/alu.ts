@@ -274,8 +274,16 @@ export class AluExp implements FpHashable {
   static reciprocal(a: AluExp): AluExp {
     return new AluExp(AluOp.Reciprocal, a.dtype, [a]);
   }
-  static cast(dtype: DType, a: AluExp): AluExp {
+  static cast(dtype: DType, a: AluExp, weakType = false): AluExp {
     if (a.dtype === dtype) return a;
+    // Weak literals hold a JavaScript number until promotion chooses a dtype.
+    if (
+      weakType &&
+      a.op === AluOp.Const &&
+      isFloatDtype(a.dtype) &&
+      isFloatDtype(dtype)
+    )
+      return AluExp.const(dtype, a.arg);
     return new AluExp(AluOp.Cast, dtype, [a]);
   }
   static bitcast(dtype: DType, a: AluExp): AluExp {
@@ -709,6 +717,21 @@ export class AluExp implements FpHashable {
       this.min === this.max
     ) {
       return AluExp.const(this.dtype, this.min);
+    }
+
+    // Multiplication by positive one preserves signed zero as well as
+    // the numeric value of finite inputs, infinities, and NaN.
+    if (!integerResult && op === AluOp.Mul) {
+      for (let i = 0; i < 2; i++) {
+        if (
+          src[i].op === AluOp.Const &&
+          src[i].arg === 1 &&
+          src[i].dtype === this.dtype &&
+          src[1 - i].dtype === this.dtype
+        ) {
+          return src[1 - i];
+        }
+      }
     }
 
     // Integral identities that preserve evaluation of the other operand.

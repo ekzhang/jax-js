@@ -542,7 +542,7 @@ function broadcastedJit<P extends Primitive>(
           );
       });
       if (exp.dtype !== newDtype && !skipCastIdx.includes(i)) {
-        exp = AluExp.cast(newDtype, exp);
+        exp = AluExp.cast(newDtype, exp, avals[i].weakType);
       }
       return exp;
     });
@@ -594,7 +594,9 @@ const jitRules: { [P in Primitive]: JitRule<P> } = {
   [Primitive.Floor]: unopJit(AluExp.floor),
   [Primitive.Ceil]: unopJit(AluExp.ceil),
   [Primitive.StopGradient]: unopJit((a) => a), // No-op, just return the input.
-  [Primitive.Cast]: unopJit((a, { dtype }) => AluExp.cast(dtype, a)),
+  [Primitive.Cast]([a], [aval], { dtype }) {
+    return { exp: [AluExp.cast(dtype, a, aval.weakType)] };
+  },
   [Primitive.Bitcast]: unopJit((a, { dtype }) => AluExp.bitcast(dtype, a)),
   [Primitive.Sin]: unopJit(AluExp.sin),
   [Primitive.Cos]: unopJit(AluExp.cos),

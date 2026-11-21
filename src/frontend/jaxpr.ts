@@ -84,6 +84,10 @@ export class Lit {
 
 export type Atom = Var | Lit;
 
+function equalAvals(a: ShapedArray, b: ShapedArray): boolean {
+  return a.dtype === b.dtype && a.weakType === b.weakType && a.equals(b);
+}
+
 function equalParams(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
   if (a instanceof Jaxpr) return b instanceof Jaxpr && a.equals(b);
@@ -274,8 +278,6 @@ export class Jaxpr implements FpHashable {
       return false;
 
     const bindings = new Map<Var, Var>();
-    const equalAvals = (a: ShapedArray, b: ShapedArray) =>
-      a.dtype === b.dtype && a.weakType === b.weakType && a.equals(b);
     const bind = (a: Var, b: Var) => {
       if (!equalAvals(a.aval, b.aval)) return false;
       bindings.set(a, b);
@@ -309,7 +311,7 @@ export class Jaxpr implements FpHashable {
   /**
    * Produce a simplified Jaxpr with basic optimizations applied.
    *  - Trim away unused variables.
-   *  - Remove no-op movement operations.
+   *  - Remove identity multiplications and no-op movement operations.
    */
   simplify(): Jaxpr {
     const context = new Map<Var, Atom>();
@@ -319,6 +321,22 @@ export class Jaxpr implements FpHashable {
         x instanceof Var ? (context.get(x) ?? x) : x,
       );
       const eqn = new JaxprEqn(e.primitive, inputs, e.params, e.outBinders);
+
+      if (eqn.primitive === Primitive.Mul) {
+        const [a, b] = inputs;
+        const input =
+          a instanceof Lit && a.value === 1
+            ? b
+            : b instanceof Lit && b.value === 1
+              ? a
+              : undefined;
+        const output = eqn.outBinders[0];
+        // Multiplication can still change the dtype or weak type by promotion.
+        if (input && equalAvals(input.aval, output.aval)) {
+          context.set(output, input);
+          continue;
+        }
+      }
 
       if (
         ((eqn.primitive === Primitive.Broadcast ||
