@@ -1325,6 +1325,74 @@ suite.each(devices)("device:%s", (device) => {
     });
   });
 
+  suite("jax.numpy.trilIndices()", () => {
+    test("returns indices for the lower triangle of a square array", () => {
+      const [rows, cols] = np.trilIndices(3);
+      expect(rows.dtype).toBe(np.int32);
+      expect(cols.dtype).toBe(np.int32);
+      expect(rows.js()).toEqual([0, 1, 1, 2, 2, 2]);
+      expect(cols.js()).toEqual([0, 0, 1, 0, 1, 2]);
+    });
+
+    test("supports diagonal offsets", () => {
+      const [rowsAbove, colsAbove] = np.trilIndices(3, 1);
+      expect(rowsAbove.js()).toEqual([0, 0, 1, 1, 1, 2, 2, 2]);
+      expect(colsAbove.js()).toEqual([0, 1, 0, 1, 2, 0, 1, 2]);
+
+      const [rowsBelow, colsBelow] = np.trilIndices(3, -1);
+      expect(rowsBelow.js()).toEqual([1, 2, 2]);
+      expect(colsBelow.js()).toEqual([0, 0, 1]);
+    });
+
+    test("supports rectangular arrays", () => {
+      const [wideRows, wideCols] = np.trilIndices(2, 0, 4);
+      expect(wideRows.js()).toEqual([0, 1, 1]);
+      expect(wideCols.js()).toEqual([0, 0, 1]);
+
+      const [tallRows, tallCols] = np.trilIndices(4, 0, 2);
+      expect(tallRows.js()).toEqual([0, 1, 1, 2, 2, 3, 3]);
+      expect(tallCols.js()).toEqual([0, 0, 1, 0, 1, 0, 1]);
+    });
+
+    test("can be used to access the lower triangle", () => {
+      const x = np.arange(9).reshape([3, 3]);
+      const [rows, cols] = np.trilIndices(3);
+      expect(x.slice(rows, cols).js()).toEqual([0, 3, 4, 6, 7, 8]);
+    });
+
+    test("matches the mask from tri", () => {
+      const n = 4;
+      const m = 6;
+      for (const k of [-2, 0, 3, 7]) {
+        const [rows, cols] = np.trilIndices(n, k, m);
+        const mask = np.tri(n, m, k);
+        const count = rows.shape[0];
+        expect(count).toBe(np.sum(mask.ref).js());
+        expect(mask.slice(rows, cols).js()).toEqual(new Array(count).fill(1));
+      }
+    });
+
+    test("handles empty results", () => {
+      const [rows, cols] = np.trilIndices(0);
+      expect(rows.js()).toEqual([]);
+      expect(cols.js()).toEqual([]);
+
+      const [rows2, cols2] = np.trilIndices(3, -3);
+      expect(rows2.js()).toEqual([]);
+      expect(cols2.js()).toEqual([]);
+    });
+
+    test("throws on invalid arguments", () => {
+      expect(() => np.trilIndices(-1)).toThrow(
+        "n must be a nonnegative integer",
+      );
+      expect(() => np.trilIndices(3, 0, -2)).toThrow(
+        "m must be a nonnegative integer",
+      );
+      expect(() => np.trilIndices(3, 0.5)).toThrow("k must be an integer");
+    });
+  });
+
   suite("jax.numpy.arange()", () => {
     test("can be called with 1 argument", () => {
       let x = np.arange(5);

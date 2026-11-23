@@ -440,7 +440,7 @@ Most operations behave the same way as they do in JAX.
 | `transpose`           | 🟢      |                                         |
 | `tri`                 | 🟢      |                                         |
 | `tril`                | 🟢      |                                         |
-| `tril_indices`        | 🟠      |                                         |
+| `tril_indices`        | 🟢      |                                         |
 | `tril_indices_from`   | 🟠      |                                         |
 | `trim_zeros`          | 🟠      |                                         |
 | `triu`                | 🟢      |                                         |
