@@ -1,4 +1,81 @@
 import { DType, isFloatDtype } from "../../alu";
+import type { Array } from "../../frontend/array";
+
+/** @inline */
+type Casting = "no" | "equiv" | "safe" | "same_kind" | "unsafe";
+
+// Which dtypes each dtype can be safely cast to, following NumPy's rules: a
+// cast is safe if every value of the source type is exactly representable in
+// the target type. (float32 has a 24-bit mantissa, so int32 and uint32 can
+// only be safely cast to float64.)
+const safeCasts: Readonly<Record<DType, readonly DType[]>> = {
+  [DType.Bool]: [
+    DType.Bool,
+    DType.Uint32,
+    DType.Int32,
+    DType.Float16,
+    DType.Float32,
+    DType.Float64,
+  ],
+  [DType.Uint32]: [DType.Uint32, DType.Float64],
+  [DType.Int32]: [DType.Int32, DType.Float64],
+  [DType.Float16]: [DType.Float16, DType.Float32, DType.Float64],
+  [DType.Float32]: [DType.Float32, DType.Float64],
+  [DType.Float64]: [DType.Float64],
+};
+
+// Follow NumPy's "same_kind" ordering: uint32 can cast to int32, but not vice versa.
+const kindRank = (dtype: DType): number => {
+  switch (dtype) {
+    case DType.Bool:
+      return 0;
+    case DType.Uint32:
+      return 1;
+    case DType.Int32:
+      return 2;
+    case DType.Float16:
+    case DType.Float32:
+    case DType.Float64:
+      return 3;
+    default:
+      dtype satisfies never;
+      throw new Error(`canCast: unsupported dtype ${dtype}`);
+  }
+};
+
+/**
+ * Returns true if a cast between data types can occur according to the given
+ * casting rule.
+ *
+ * The casting rules match NumPy:
+ *
+ * - `"no"` / `"equiv"`: the dtypes must be equal.
+ * - `"safe"`: only casts that preserve values are allowed.
+ * - `"same_kind"`: safe casts, plus casts within a kind (like float64 to
+ *   float16 or uint32 to int32).
+ * - `"unsafe"`: any cast is allowed.
+ */
+export function canCast(
+  from: DType | Array,
+  to: DType,
+  casting: Casting = "safe",
+): boolean {
+  const src = typeof from === "string" ? from : from.dtype;
+  switch (casting) {
+    case "no":
+    case "equiv":
+      return src === to;
+    case "safe":
+      return safeCasts[src].includes(to);
+    case "same_kind":
+      return kindRank(to) >= kindRank(src);
+    case "unsafe":
+      return true;
+    default:
+      casting satisfies never; // completeness check
+      throw new Error(`canCast: unsupported casting rule ${casting}`);
+  }
+}
 
 /** @inline */
 type FInfo = Readonly<{
